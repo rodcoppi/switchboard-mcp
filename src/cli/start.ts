@@ -260,10 +260,16 @@ export async function runKickoffAgent(options: KickoffOptions): Promise<NudgeRes
 // start runner.
 // ---------------------------------------------------------------------------
 
-/** Narrow tmux surface `start` needs (injectable for integration tests). */
+/** Narrow tmux surface `start` (and `wire`) need (injectable for integration tests). */
 export interface StartTmux {
   hasSession(session: string): Promise<boolean>;
   newSession(session: string, cwd: string, cmd?: string | string[]): Promise<void>;
+  /**
+   * Used ONLY by wire mode to SUBSTITUTE an existing session (kill it before
+   * recreating). Optional so start's callers/test doubles need not provide it;
+   * runAgentSession asserts its presence when mode === "wire".
+   */
+  killSession?(session: string): Promise<void>;
 }
 
 export interface StartOptions {
@@ -301,7 +307,7 @@ export interface StartOptions {
 }
 
 /** Expands a leading "~" (the shell does not expand it inside --dir values). */
-function expandHome(dir: string): string {
+export function expandHome(dir: string): string {
   if (dir === "~") return os.homedir();
   if (dir.startsWith("~/")) return path.join(os.homedir(), dir.slice(2));
   return dir;
@@ -397,6 +403,16 @@ export interface StartResult {
  */
 export const START_SETTLE_MS = 400;
 
+/**
+ * Wire uses a longer settle: `claude -c` does NOT fail instantly — it launches,
+ * tries to resume the folder's conversation, and only then may exit non-zero
+ * (observed ~1-2s: e.g. a conversation created in `-p`/print mode makes
+ * interactive `-c` abort with "No deferred tool marker found in the resumed
+ * session. Provide a prompt to continue."). 400ms would miss that death and
+ * print a false "wired" success over a dead session, so wire waits longer.
+ */
+export const WIRE_SETTLE_MS = 2500;
+
 /** Shared guidance for the concurrent-start race (two starts, same name). */
 function concurrentStartHint(name: string): string {
   return (
@@ -406,8 +422,82 @@ function concurrentStartHint(name: string): string {
   );
 }
 
+export interface AgentSessionOptions extends Omit<StartOptions, "claudeArgs"> {
+  /**
+   * The single behavioral switch between the two entry points: "start" REFUSES
+   * an already-existing session (P7); "wire" SUBSTITUTES it (kills the previous
+   * incarnation, then recreates). Everything else — register → token →
+   * new-session → attach → kickoff — is identical, which is why they share this
+   * core instead of copying it.
+   */
+  mode: "start" | "wire";
+  /**
+   * Raw --claude-args string (start parses it here) OR a pre-parsed argv array
+   * (wire pre-parses in runWire to prepend `-c --dangerously-skip-permissions`,
+   * deduped). Either way the fail-fast on bad quoting happens before any HTTP.
+   */
+  claudeArgs?: string | string[];
+}
+
+/**
+ * Kills an existing session so wire can re-adopt the name. NEVER asks for
+ * confirmation and NEVER refuses — the deliberate opposite of start's P7 guard
+ * (owner's decision): wire's contract is "adopt THIS window", so the previous
+ * incarnation of the same name is meant to be superseded, silently and fast.
+ */
+async function replaceExistingSession(
+  tmux: StartTmux,
+  session: string,
+  name: string,
+  out: OutFn,
+  context: string,
+): Promise<void> {
+  if (typeof tmux.killSession !== "function") {
+    // Only reachable if a caller injects a tmux without killSession in wire
+    // mode — a programming error, surfaced clearly instead of crashing.
+    throw new CliError(
+      `Internal error: "wire" needs a tmux able to kill sessions to replace "${session}".`,
+    );
+  }
+  try {
+    await tmux.killSession(session);
+  } catch (err) {
+    // Benign race: the session may have vanished between the hasSession check
+    // and this kill (the user or another process killed it in that window).
+    // tmux kill-session then exits non-zero, but the desired end-state — "no
+    // old session" — is already true, so only RE-THROW if it is somehow STILL
+    // there (a real kill failure); otherwise fall through as a success.
+    if (await tmux.hasSession(session)) {
+      throw err;
+    }
+  }
+  out(
+    `Replaced the existing tmux session "${session}" (${context}) — the previous ` +
+      `incarnation of agent "${name}" was terminated before re-adopting the window.`,
+  );
+}
+
+/** Thin wrapper: `start` is `runAgentSession` in "start" mode (refuse P7). */
 export async function runStart(options: StartOptions): Promise<StartResult> {
+  return runAgentSession({ ...options, mode: "start" });
+}
+
+/**
+ * Shared core of `start` and `wire` (PRD section 11 + the wire addendum).
+ * The two differ in exactly two spots, both keyed on `options.mode`:
+ *   - an already-existing tmux session: start REFUSES it (P7); wire SUBSTITUTES
+ *     it (kills + recreates);
+ *   - the claude argv: start passes the user's --claude-args as-is; wire
+ *     prepends `-c --dangerously-skip-permissions` (runWire does that before
+ *     calling here, so this function only sees the final argv array).
+ * Every other step — name/dir validation, the sb-hub reservation, the hub
+ * liveness check, register → capability token (kept local, NEVER printed),
+ * new-session with argv as an ARRAY, the settle re-check, attach and the
+ * detached kickoff — is identical.
+ */
+export async function runAgentSession(options: AgentSessionOptions): Promise<StartResult> {
   const out = options.out ?? console.log;
+  const mode = options.mode;
   const name = options.name;
 
   // 1a. Name validation — same regex as the store (fail fast, before HTTP).
@@ -418,10 +508,13 @@ export async function runStart(options: StartOptions): Promise<StartResult> {
     );
   }
 
-  // 1a. --claude-args parse also fails fast, BEFORE any HTTP: parsing only in
-  // step 4 would leave a ghost registration (agent registered, token
-  // regenerated, no session) when the quoting is bad.
-  const claudeArgs = parseClaudeArgs(options.claudeArgs);
+  // 1a. --claude-args parse fails fast, BEFORE any HTTP: parsing only in step 4
+  // would leave a ghost registration (agent registered, token regenerated, no
+  // session) when the quoting is bad. A pre-parsed array (wire) is used as-is —
+  // its parse already ran in runWire, equally before any HTTP.
+  const claudeArgv = Array.isArray(options.claudeArgs)
+    ? options.claudeArgs
+    : parseClaudeArgs(options.claudeArgs);
 
   // Working dir must exist — tmux new-session -c with a bad dir fails late
   // and cryptically; fail here with a clear message instead.
@@ -447,9 +540,18 @@ export async function runStart(options: StartOptions): Promise<StartResult> {
   const hubUrl = options.hubUrl ?? defaultHubUrl(options.baseDir);
   await checkHubHealth(hubUrl);
 
-  // 2. Refuse an existing session (P7): never two starts on the same name.
+  // 2. Existing session. start REFUSES it here (P7, never two starts on one
+  // name) — a fast fail BEFORE touching the Hub. wire does NOT kill here: the
+  // substitution is DEFERRED to after the register (step 3b). Killing before
+  // the register would, if the register then failed (hub crash/validation/rate
+  // limit in that small window), leave the user with a dead agent and NO
+  // replacement; register-first means a failed register never destroys a
+  // running session. wire only REMEMBERS whether the session was already there,
+  // so step 3b can word its message accurately ("already open" vs "appeared
+  // during registration").
   const tmux: StartTmux = options.tmux ?? createTmux();
-  if (await tmux.hasSession(tmuxSession)) {
+  const sessionPreexisted = await tmux.hasSession(tmuxSession);
+  if (sessionPreexisted && mode !== "wire") {
     throw new CliError(
       `The tmux session "${tmuxSession}" already exists — the agent "${name}" seems to be running. ` +
         `To see it: tmux attach -t ${tmuxSession}. ` +
@@ -470,12 +572,26 @@ export async function runStart(options: StartOptions): Promise<StartResult> {
   });
   const token = registration.token;
 
-  // 3b. TOCTOU re-check (P7): a concurrent start may have created the session
-  // during the register HTTP round-trip — fail cleanly BEFORE new-session.
+  // 3b. Substitution / TOCTOU. A session may exist now either because it was
+  // already there before the register (sessionPreexisted — wire deferred it
+  // from step 2) OR because a concurrent start/wire raced one in during the
+  // register HTTP round-trip. wire, whose contract is "always adopt", kills +
+  // recreates it (the ONLY place wire ever kills — register succeeded first);
+  // start fails cleanly BEFORE new-session so it never clashes with a duplicate.
   if (await tmux.hasSession(tmuxSession)) {
-    throw new CliError(
-      `The tmux session "${tmuxSession}" appeared during registration. ` + concurrentStartHint(name),
-    );
+    if (mode === "wire") {
+      await replaceExistingSession(
+        tmux,
+        tmuxSession,
+        name,
+        out,
+        sessionPreexisted ? "already open" : "appeared during registration",
+      );
+    } else {
+      throw new CliError(
+        `The tmux session "${tmuxSession}" appeared during registration. ` + concurrentStartHint(name),
+      );
+    }
   }
 
   // 4. Detached session running env + claude, argv as ARRAY (exact argv
@@ -491,7 +607,7 @@ export async function runStart(options: StartOptions): Promise<StartResult> {
       buildAgentCommand({
         name,
         token,
-        claudeArgs,
+        claudeArgs: claudeArgv,
         claudeBin: options.claudeBin,
       }),
     );
@@ -508,8 +624,19 @@ export async function runStart(options: StartOptions): Promise<StartResult> {
   // --claude-args) and take the session with it — reporting success there
   // would be a lie. Give it a settle window and re-check.
   const sleep = options.sleep ?? realSleep;
-  await sleep(options.settleMs ?? START_SETTLE_MS);
+  const settleMs =
+    options.settleMs ?? (mode === "wire" ? WIRE_SETTLE_MS : START_SETTLE_MS);
+  await sleep(settleMs);
   if (!(await tmux.hasSession(tmuxSession))) {
+    if (mode === "wire") {
+      throw new CliError(
+        `The tmux session "${tmuxSession}" died right after opening — "claude -c" could not ` +
+          `resume this folder's conversation. Most likely there is no resumable conversation ` +
+          `here, or the last one was created in -p/print mode (interactive -c then aborts). ` +
+          `The agent's registration stays in the Hub. To open a FRESH session (no resume) ` +
+          `instead, use start: "switchboard start ${name} --dir ${cwd}".`,
+      );
+    }
     throw new CliError(
       `The tmux session "${tmuxSession}" died right after opening — the agent command failed ` +
         `at birth. Is the "claude" binary on the PATH? Are the --claude-args valid? ` +
@@ -517,7 +644,21 @@ export async function runStart(options: StartOptions): Promise<StartResult> {
     );
   }
 
-  out(`Agent "${name}" registered in the Hub and tmux session "${tmuxSession}" created in ${cwd}.`);
+  if (mode === "wire") {
+    // Word it from the ACTUAL argv: wire normally forces -c (continue), but the
+    // user may express continue as --continue, or override it with -r/--resume
+    // (buildWireClaudeArgs then omits -c). Hardcoding "claude -c" would misstate
+    // those cases, so describe the intent instead of a literal flag.
+    const continuing = claudeArgv.includes("-c") || claudeArgv.includes("--continue");
+    out(
+      `Agent "${name}" wired into the Hub and reopened in tmux session "${tmuxSession}"` +
+        (continuing
+          ? `, continuing this folder's conversation in ${cwd}.`
+          : ` in ${cwd}.`),
+    );
+  } else {
+    out(`Agent "${name}" registered in the Hub and tmux session "${tmuxSession}" created in ${cwd}.`);
+  }
   printPermissionsReminderOnce(options.baseDir ?? defaultBaseDir(), out);
 
   // 6 (spawned BEFORE the blocking attach of step 5): detached kickoff.

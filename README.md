@@ -132,12 +132,36 @@ What happens:
 `start` flags: `--role "<description>"`, `--dir <path>`, `--no-kickoff`,
 `--claude-args "<extra args for claude>"`.
 
+### Adopting an already-open agent (`wire`)
+
+Already have a Claude Code window open (a plain `claude` in bash, **without** tmux) and want to
+join it to the network **without losing the conversation**? Use `wire` instead of `start`:
+
+1. In that window, **leave claude** (`Ctrl-C` twice, or `/exit`).
+2. In the **same folder**, run:
+   ```bash
+   switchboard wire
+   ```
+3. The conversation **comes back** — now inside a tmux session, connected to the Hub. The agent
+   **name defaults to the folder name** (sanitized to lowercase letters, digits and hyphens; pass
+   `--name <name>` if the folder name can't be used).
+
+Under the hood `wire` reopens claude with `-c` (continue the folder's conversation) and
+`--dangerously-skip-permissions` (so the agent reads its token and calls `join` with no prompt) —
+these are the `wire` defaults, unlike `start`. Any extra `--claude-args` are added **after** them.
+If a tmux session for that name already exists, `wire` **replaces it** (kills the old one and
+recreates it — no confirmation), then runs the same automatic kickoff as `start`.
+
+`wire` flags: `--name <name>`, `--role "<description>"`, `--dir <path>` (default: current folder),
+`--no-kickoff`, `--claude-args "<extra args for claude>"`.
+
 ---
 
 ## Other subcommands
 
 | Command | What it does |
 |---------|--------------|
+| `switchboard wire` | **Adopts the current window** into the network, continuing its conversation (see below). |
 | `switchboard status` | Table of registered agents: NAME, ROLE, STATUS, MCP, UNREAD, LAST SEEN. |
 | `switchboard send <to> <message...>` | Sends a message as **operator** (the human) to an agent, or `all` for broadcast. Handy for scripts and for testing without the dashboard. |
 | `switchboard stop <name>` | Stops the agent's tmux session (asks for confirmation if there are unread messages; `--yes` skips it). The **registration** in the Hub stays — a new `start <name>` reuses the name (re-attach). |

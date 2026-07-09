@@ -1,7 +1,7 @@
 // CLI entry point (PRD sections 6 and 11): dispatches the subcommands
-// serve | start <name> | status | send <to> <msg...> | stop <name> | down |
-// logs [-f], each implemented in src/cli/*.ts. Also mounts the hidden
-// kickoff-agent re-entry used by the detached kickoff of `start`.
+// serve | start <name> | wire | status | send <to> <msg...> | stop <name> |
+// down | logs [-f], each implemented in src/cli/*.ts. Also mounts the hidden
+// kickoff-agent re-entry used by the detached kickoff of `start`/`wire`.
 //
 // `bin.switchboard` (package.json) points at bin/switchboard.mjs, a plain-node
 // shim that resolves the tsx pinned in THIS repo (never from the caller's
@@ -12,6 +12,7 @@
 import { Command } from "commander";
 import { registerServeCommand } from "./cli/serve.js";
 import { registerKickoffAgentCommand, registerStartCommand } from "./cli/start.js";
+import { registerWireCommand } from "./cli/wire.js";
 import { registerStatusCommand } from "./cli/status.js";
 import { registerSendCommand } from "./cli/send.js";
 import { registerStopCommands } from "./cli/stop.js";
@@ -29,6 +30,7 @@ program
 
 registerServeCommand(program);
 registerStartCommand(program);
+registerWireCommand(program);
 registerKickoffAgentCommand(program);
 registerStatusCommand(program);
 registerSendCommand(program);
