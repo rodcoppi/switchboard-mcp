@@ -3,6 +3,14 @@
 // Every test uses a fresh temp dir (NEVER ~/.switchboard) and a config.json
 // injected with a tight pairRateLimitPerMinute. No blind sleeps: everything
 // asynchronous is polled with a deadline.
+//
+// This file exercises the MCP/REST/store surface in ISOLATION: the hub is
+// started with the deterministic Phase 2 delivery stub as onMessage (muted →
+// queued_muted, otherwise queued_offline), so no tmux is ever touched and the
+// SDK clients (which join without any tmux session) keep deterministic
+// deliveries. The Phase 3 dispatcher has its own suites
+// (test/dispatcher.test.ts and test/dispatcher.integration.test.ts); the
+// manual-nudge endpoint test below spins a dedicated hub WITH the dispatcher.
 
 import fs from "node:fs";
 import os from "node:os";
@@ -141,7 +149,14 @@ beforeEach(async () => {
     JSON.stringify({ pairRateLimitPerMinute: RATE_LIMIT }),
   );
   clients = [];
-  hub = await startHub({ baseDir: dir, port: 0, quiet: true });
+  hub = await startHub({
+    baseDir: dir,
+    port: 0,
+    quiet: true,
+    // Delivery stub (see header): keeps this file dispatcher/tmux-free.
+    onMessage: (_message, recipient) =>
+      recipient.muted ? "queued_muted" : "queued_offline",
+  });
 });
 
 afterEach(async () => {
@@ -178,7 +193,7 @@ describe("fluxo alpha → beta via MCP", () => {
           message: "contrato pronto em /tmp/a.md",
         });
         expect(sent.ok).toBe(true);
-        // Phase 2: no dispatcher yet — delivery reports what the store knows.
+        // Delivery vem do stub injetado (sem dispatcher/tmux neste arquivo).
         expect(sent.delivery).toBe("queued_offline");
       },
     );
@@ -708,13 +723,47 @@ describe("endpoints auxiliares", () => {
     expect(typeof body.version).toBe("string");
   });
 
-  it("POST /api/agents/:name/nudge responde 501 com erro claro (dispatcher é Phase 3)", async () => {
+  it("POST /api/agents/:name/nudge (hub com dispatcher): 404 desconhecido; 409 guard abortado", async () => {
+    // Phase 3: o endpoint dispara um nudge manual REAL, então este teste usa
+    // um hub dedicado SEM o stub de onMessage (dispatcher default). Sessão
+    // tmux com nome único que garantidamente não existe → a guarda de pane
+    // falha fechada (não foi possível ler o pane) → abortado, nada digitado,
+    // 409. Mesmo comportamento com tmux ausente (execFile ENOENT → fail-closed).
+    const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), "switchboard-int-nudge-"));
+    const hub2 = await startHub({ baseDir: dir2, port: 0, quiet: true });
+    try {
+      const base = `http://127.0.0.1:${hub2.port}`;
+      const ghostSession = `sb-int-nudge-${process.pid}-${Date.now()}`;
+      const res0 = await fetch(`${base}/api/agents/register`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: "alpha", tmuxSession: ghostSession }),
+      });
+      expect(res0.status).toBe(201);
+
+      const res = await fetch(`${base}/api/agents/alpha/nudge`, { method: "POST" });
+      expect(res.status).toBe(409);
+      const body = (await res.json()) as any;
+      expect(body.ok).toBe(false);
+      expect(body.error).toContain("Nudge manual não entregue");
+      expect(body.error).toContain("check_messages");
+
+      const unknown = await fetch(`${base}/api/agents/zeta/nudge`, { method: "POST" });
+      expect(unknown.status).toBe(404);
+      expect(((await unknown.json()) as any).ok).toBe(false);
+    } finally {
+      await hub2.close();
+      fs.rmSync(dir2, { recursive: true, force: true });
+    }
+  }, 15_000);
+
+  it("POST /api/agents/:name/nudge com onMessage injetado (sem dispatcher) responde 501", async () => {
     await registerAgent("alpha");
     const res = await fetch(api("/api/agents/alpha/nudge"), { method: "POST" });
     expect(res.status).toBe(501);
     const body = (await res.json()) as any;
     expect(body.ok).toBe(false);
-    expect(body.error).toContain("Phase 3");
+    expect(body.error).toContain("sem o dispatcher");
   });
 
   it("body JSON malformado responde JSON, nunca HTML (achado 5)", async () => {

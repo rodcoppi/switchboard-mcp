@@ -196,13 +196,24 @@ export function deliverMessage(
 // REST + SSE router (PRD section 10.1, endpoint by endpoint).
 // ---------------------------------------------------------------------------
 
+/**
+ * Manual-nudge surface of the Phase 3 dispatcher (structural type so api.ts
+ * does not need to import dispatcher.ts). Undefined when the hub was started
+ * with a custom onMessage override (no dispatcher — tests).
+ */
+export interface ManualNudger {
+  forceNudge(name: string): Promise<{ sent: boolean; reason?: string }>;
+}
+
 export interface ApiOptions {
   store: Store;
   config: Config;
   log: Logger;
   bus: EventBus;
-  /** Delivery extension point (Phase 2 default lives in hub.ts; Phase 3 = dispatcher). */
+  /** Delivery extension point (Phase 3 dispatcher; hub.ts wires it). */
   onMessage: OnMessage;
+  /** Manual nudge executor for POST /api/agents/:name/nudge (dispatcher). */
+  nudger?: ManualNudger;
   /** Hub start timestamp (epoch ms) for /api/health uptime. */
   startedAt: number;
   /** Hub version string for /api/health (from package.json). */
@@ -212,7 +223,7 @@ export interface ApiOptions {
 }
 
 export function createApiRouter(options: ApiOptions): express.Router {
-  const { store, config, log, bus, onMessage, startedAt, version } = options;
+  const { store, config, log, bus, onMessage, nudger, startedAt, version } = options;
   const heartbeatMs = options.heartbeatMs ?? 25_000;
   const router = express.Router();
 
@@ -348,19 +359,38 @@ export function createApiRouter(options: ApiOptions): express.Router {
     res.json({ ok: true, agent });
   });
 
-  // POST /api/agents/:name/nudge — manual nudge button. The tmux dispatcher
-  // only arrives in Phase 3; answer 501 clearly instead of pretending.
-  router.post("/api/agents/:name/nudge", (req, res) => {
+  // POST /api/agents/:name/nudge — manual nudge button (PRD 10.1: "força um
+  // nudge manual"). "Força" = bypasses cooldown AND mute (politeness controls
+  // the human operator may override), but NEVER the pane-command guard —
+  // security invariant (PRD 10.3 / 15 / P2), enforced inside the dispatcher.
+  router.post("/api/agents/:name/nudge", async (req, res) => {
     const name = req.params.name;
     if (!store.getAgent(name)) {
       res.status(404).json({ ok: false, error: `Agente desconhecido: "${name}".` });
       return;
     }
-    res.status(501).json({
+    if (!nudger) {
+      // Hub started with a custom onMessage override (no dispatcher — tests).
+      res.status(501).json({
+        ok: false,
+        error:
+          "Nudge manual indisponível: este hub foi iniciado sem o dispatcher de nudge " +
+          "(onMessage customizado).",
+      });
+      return;
+    }
+    const result = await nudger.forceNudge(name);
+    if (result.sent) {
+      log.info(`[api] nudge manual entregue para ${name}.`);
+      res.json({ ok: true, nudged: true });
+      return;
+    }
+    // Not an unknown route nor bad input: the nudge was attempted and aborted
+    // (pane guard / dead session) → 409 with the reason.
+    res.status(409).json({
       ok: false,
-      error:
-        "Nudge manual ainda não implementado: o dispatcher de nudge (tmux) chega na Phase 3. " +
-        "A mensagem continua sendo gravada e entregue via check_messages.",
+      error: `Nudge manual não entregue: ${result.reason ?? "falha desconhecida"}. ` +
+        `A mensagem continua gravada e será entregue via check_messages.`,
     });
   });
 

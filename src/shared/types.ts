@@ -32,9 +32,10 @@ export interface Message {
 
 // ---------------------------------------------------------------------------
 // Delivery outcome of a stored message (PRD section 9.2 — output of the
-// send_message tool). In Phase 2 there is no dispatcher yet, so only the
-// queued_* values occur; Phase 3 plugs the nudge dispatcher into the hub's
-// onMessage extension point and starts producing "nudged"/"coalesced".
+// send_message tool). Produced by the Phase 3 nudge dispatcher wired into the
+// hub's onMessage extension point: "nudged" (tmux nudge fired), "coalesced"
+// (cooldown active, joined the pending set), "queued_offline" (tmux session
+// not alive) or "queued_muted" (recipient muted on the dashboard).
 // ---------------------------------------------------------------------------
 
 export type Delivery = "nudged" | "coalesced" | "queued_offline" | "queued_muted";

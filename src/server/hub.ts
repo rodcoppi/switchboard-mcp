@@ -8,13 +8,15 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AddressInfo } from "node:net";
 import express from "express";
-import type { Config, Delivery, LogLevel, OnMessage } from "../shared/types.js";
+import type { Config, LogLevel, OnMessage } from "../shared/types.js";
 import { BIND_HOST, defaultBaseDir, ensureConfigFile, loadConfig } from "./config.js";
 import { Logger, createLogger } from "./log.js";
 import { Store } from "./store.js";
 import { PairRateLimiter } from "./ratelimit.js";
 import { EventBus, createApiRouter } from "./api.js";
 import { createMcpEndpoint } from "./mcp.js";
+import { createTmux } from "./tmux.js";
+import { Dispatcher } from "./dispatcher.js";
 
 export interface HubOptions {
   /** Data directory (default ~/.switchboard). Tests MUST inject a temp dir. */
@@ -26,9 +28,11 @@ export interface HubOptions {
   /** Suppresses stdout logging (tests); the log file is still written. */
   quiet?: boolean;
   /**
-   * Delivery extension point: Phase 3 plugs the tmux nudge dispatcher here.
-   * The Phase 2 default only reports what the store knows: "queued_muted"
-   * for muted recipients, "queued_offline" otherwise (no nudge exists yet).
+   * Delivery extension point override. When omitted (production), the hub
+   * creates the Phase 3 tmux nudge Dispatcher (cooldown, coalescing, status
+   * polling) and uses dispatcher.onNewMessage. When provided (tests), the
+   * override replaces the dispatcher entirely: no tmux is ever touched and
+   * the manual-nudge endpoint answers 501.
    */
   onMessage?: OnMessage;
   /** MCP session idle expiry / sweep cadence — injectable for tests. */
@@ -99,14 +103,17 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
     limitPerMinute: config.pairRateLimitPerMinute,
   });
 
-  // Phase 2 placeholder delivery: no dispatcher, so nothing is ever nudged —
-  // messages are stored and wait for check_messages. Phase 3 replaces this
-  // via options.onMessage with dispatcher.onNewMessage (tmux nudge + cooldown
-  // + coalescing), returning "nudged"/"coalesced" as well.
-  const onMessage: OnMessage =
-    options.onMessage ??
-    ((_message, recipient): Delivery =>
-      recipient.muted ? "queued_muted" : "queued_offline");
+  // Phase 3 delivery: the tmux nudge Dispatcher (PRD 10.2) is the default
+  // onMessage. Tests may inject options.onMessage instead — then no
+  // dispatcher (and no tmux) exists at all.
+  let dispatcher: Dispatcher | undefined;
+  let onMessage: OnMessage;
+  if (options.onMessage) {
+    onMessage = options.onMessage;
+  } else {
+    dispatcher = new Dispatcher({ store, config, log, bus, tmux: createTmux() });
+    onMessage = dispatcher.onNewMessage;
+  }
 
   const version = readVersion();
   const startedAt = Date.now();
@@ -141,6 +148,7 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
       log,
       bus,
       onMessage,
+      nudger: dispatcher,
       startedAt,
       version,
       heartbeatMs: options.heartbeatMs,
@@ -221,6 +229,9 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
   const effectivePort = (server.address() as AddressInfo).port;
   const url = `http://${BIND_HOST}:${effectivePort}`;
 
+  // Phase 3: flush (5s) + status polling timers live and die with the hub.
+  dispatcher?.start();
+
   log.info(`Switchboard Hub no ar em ${url} (versão ${version}).`);
   log.info(`Dashboard:    ${url}/`);
   log.info(`Endpoint MCP: ${url}/mcp`);
@@ -236,6 +247,7 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
     if (closed) return;
     closed = true;
     log.info(`[hub] encerrando…`);
+    dispatcher?.stop();
     await mcp.close();
     const serverClosed = new Promise<void>((resolve) => {
       server.close(() => resolve());
