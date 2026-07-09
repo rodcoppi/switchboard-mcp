@@ -1,0 +1,1125 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Switchboard</title>
+  <!-- Inline favicon to avoid a /favicon.ico 404 in the hub logs. -->
+  <link
+    rel="icon"
+    href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%230d1117'/%3E%3Ccircle cx='4.5' cy='8' r='1.6' fill='%2358a6ff'/%3E%3Ccircle cx='11.5' cy='8' r='1.6' fill='%233fb950'/%3E%3Cpath d='M6 8h4' stroke='%238b949e' stroke-width='1'/%3E%3C/svg%3E"
+  />
+  <style>
+    /* ---------------------------------------------------------------------
+       Design tokens — ONE block at the top so the owner (a designer) can
+       reskin the whole dashboard from here (PRD section 13). The markup below
+       uses stable semantic classes (.agent-card, .msg-row, .msg-from, …) that
+       are a contract for that later redesign.
+       --------------------------------------------------------------------- */
+    :root {
+      --bg:          #0d1117;
+      --bg-elev:     #161b22;
+      --bg-inset:    #010409;
+      --bg-hover:    #1c2431;
+      --border:      #30363d;
+      --border-soft: #21262d;
+      --text:        #e6edf3;
+      --text-dim:    #8b949e;
+      --text-faint:  #6e7681;
+      --accent:      #58a6ff;
+      --accent-bg:   #132033;
+      --online:      #3fb950;
+      --offline:     #6e7681;
+      --unread-bg:   #d29922;
+      --unread-fg:   #1c1400;
+      --danger:      #f85149;
+      --warn:        #d29922;
+      --ok:          #3fb950;
+
+      --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+        "Liberation Mono", monospace;
+      --sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial,
+        sans-serif;
+
+      --sidebar-w: 300px;
+      --radius: 6px;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+      font-size: 13px;
+      line-height: 1.45;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+    button { font-family: inherit; cursor: pointer; }
+    a { color: var(--accent); }
+
+    /* ------------------------------- Header ------------------------------ */
+    .app-header {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 8px 14px;
+      background: var(--bg-elev);
+      border-bottom: 1px solid var(--border);
+      flex-wrap: wrap;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 600;
+      letter-spacing: 0.2px;
+      white-space: nowrap;
+    }
+    .brand .logo {
+      width: 10px; height: 10px; border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 8px var(--accent);
+    }
+    .hub-status {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      font-family: var(--mono);
+      font-size: 12px;
+      color: var(--text-dim);
+      flex-wrap: wrap;
+    }
+    .hub-status .metric { white-space: nowrap; }
+    .hub-status .metric b { color: var(--text); font-weight: 600; }
+    .conn-state {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 2px 8px; border-radius: 999px;
+      border: 1px solid var(--border);
+      font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;
+    }
+    .conn-state .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-faint); }
+    .conn-state[data-state="live"]        { color: var(--online); border-color: color-mix(in srgb, var(--online) 40%, transparent); }
+    .conn-state[data-state="live"] .dot   { background: var(--online); box-shadow: 0 0 6px var(--online); }
+    .conn-state[data-state="connecting"]  { color: var(--warn); }
+    .conn-state[data-state="connecting"] .dot { background: var(--warn); }
+    .conn-state[data-state="reconnecting"]{ color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, transparent); }
+    .conn-state[data-state="reconnecting"] .dot { background: var(--danger); animation: blink 1s steps(2) infinite; }
+    @keyframes blink { 50% { opacity: 0.25; } }
+
+    .header-spacer { flex: 1 1 auto; }
+    .mcp-add {
+      display: flex; align-items: center; gap: 8px;
+      background: var(--bg-inset);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 4px 6px 4px 10px;
+      max-width: 100%;
+      min-width: 0;
+    }
+    .mcp-add code {
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--text-dim);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 46ch;
+    }
+    .btn {
+      background: var(--bg-elev);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 4px 10px;
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .btn:hover { background: var(--bg-hover); border-color: var(--accent); }
+    .btn-copy { color: var(--accent); }
+
+    /* ------------------------------- Layout ------------------------------ */
+    .layout { flex: 1 1 auto; display: flex; min-height: 0; }
+
+    /* ----------------------------- Sidebar ------------------------------- */
+    .sidebar {
+      flex: 0 0 var(--sidebar-w);
+      width: var(--sidebar-w);
+      border-right: 1px solid var(--border);
+      background: var(--bg);
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+    .sidebar-head {
+      flex: 0 0 auto;
+      display: flex; align-items: baseline; justify-content: space-between;
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border-soft);
+      color: var(--text-dim);
+      font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px;
+    }
+    .agents { flex: 1 1 auto; overflow-y: auto; padding: 6px; }
+    .empty-hint { padding: 18px 12px; color: var(--text-faint); font-size: 12px; }
+
+    .agent-card {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      grid-template-areas:
+        "dot name badges"
+        "dot role actions";
+      column-gap: 8px;
+      row-gap: 2px;
+      align-items: center;
+      padding: 8px 10px;
+      margin-bottom: 6px;
+      background: var(--bg-elev);
+      border: 1px solid var(--border-soft);
+      border-radius: var(--radius);
+      cursor: pointer;
+      transition: border-color 0.1s, background 0.1s;
+    }
+    .agent-card:hover { background: var(--bg-hover); border-color: var(--border); }
+    .agent-card.active { border-color: var(--accent); background: var(--accent-bg); }
+    .agent-card.offline { opacity: 0.72; }
+
+    .status-dot {
+      grid-area: dot;
+      width: 10px; height: 10px; border-radius: 50%;
+      background: var(--offline);
+      align-self: start;
+      margin-top: 4px;
+    }
+    .status-dot.online { background: var(--online); box-shadow: 0 0 6px var(--online); }
+    .status-dot.offline { background: var(--offline); }
+
+    .agent-name {
+      grid-area: name;
+      font-family: var(--mono);
+      font-weight: 600;
+      font-size: 13px;
+      color: var(--text);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .agent-role {
+      grid-area: role;
+      color: var(--text-dim);
+      font-size: 11px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .agent-badges {
+      grid-area: badges;
+      display: flex; align-items: center; gap: 6px; justify-self: end;
+    }
+    .agent-actions {
+      grid-area: actions;
+      display: flex; align-items: center; gap: 6px; justify-self: end;
+    }
+
+    .mcp-icon {
+      font-family: var(--mono);
+      font-size: 9.5px;
+      letter-spacing: 0.5px;
+      padding: 1px 5px;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+      color: var(--text-faint);
+    }
+    .mcp-icon.connected {
+      color: var(--accent);
+      border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+      background: var(--accent-bg);
+    }
+    .unread-badge {
+      min-width: 18px;
+      height: 18px;
+      padding: 0 5px;
+      display: inline-flex; align-items: center; justify-content: center;
+      background: var(--unread-bg);
+      color: var(--unread-fg);
+      font-family: var(--mono);
+      font-size: 11px; font-weight: 700;
+      border-radius: 999px;
+    }
+    .mute-toggle, .nudge-btn {
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--text-dim);
+      font-size: 11px;
+      padding: 2px 7px;
+      line-height: 1.3;
+    }
+    .mute-toggle:hover, .nudge-btn:hover { color: var(--text); border-color: var(--accent); }
+    .mute-toggle.muted { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+    .nudge-btn.nudging { animation: pulse 0.6s ease-out; }
+    @keyframes pulse {
+      0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 70%, transparent); border-color: var(--accent); color: var(--accent); }
+      100% { box-shadow: 0 0 0 10px transparent; }
+    }
+
+    /* ------------------------------- Main -------------------------------- */
+    .main { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+
+    .filter-bar {
+      flex: 0 0 auto;
+      display: none;
+      align-items: center;
+      gap: 10px;
+      padding: 6px 12px;
+      background: var(--accent-bg);
+      border-bottom: 1px solid var(--border-soft);
+      font-family: var(--mono);
+      font-size: 12px;
+    }
+    .filter-bar.active { display: flex; }
+    .filter-bar .label { color: var(--text-dim); }
+    .filter-bar .target { color: var(--accent); font-weight: 600; }
+    .filter-clear {
+      margin-left: auto;
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+      border-radius: 4px;
+      padding: 1px 8px;
+      font-size: 12px;
+    }
+    .filter-clear:hover { color: var(--text); border-color: var(--accent); }
+
+    .feed {
+      flex: 1 1 auto;
+      overflow-y: auto;
+      padding: 8px 0;
+      font-family: var(--mono);
+      font-size: 12.5px;
+      background: var(--bg);
+    }
+    .feed .empty-hint { font-family: var(--sans); }
+
+    .msg-row {
+      display: block;
+      padding: 5px 14px;
+      border-bottom: 1px solid var(--border-soft);
+    }
+    .msg-row:hover { background: var(--bg-elev); }
+    .msg-row.unread { border-left: 2px solid var(--unread-bg); }
+    .msg-row.read   { border-left: 2px solid transparent; }
+    .msg-row.broadcast { border-left: 2px solid var(--accent); }
+
+    .msg-meta {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      flex-wrap: wrap;
+      color: var(--text-faint);
+    }
+    .msg-time { color: var(--text-faint); font-size: 11px; }
+    .msg-from { color: var(--accent); font-weight: 600; }
+    .msg-from.operator { color: var(--warn); }
+    .msg-arrow { color: var(--text-faint); }
+    .msg-to { color: var(--online); font-weight: 600; }
+    .msg-to.all { color: var(--accent); }
+    .msg-read-flag { margin-left: auto; font-size: 11px; }
+    .msg-read-flag.pending { color: var(--unread-bg); }
+    .msg-read-flag.read { color: var(--text-faint); }
+    .msg-body {
+      margin-top: 2px;
+      color: var(--text);
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+
+    /* ----------------------------- Composer ------------------------------ */
+    .composer {
+      flex: 0 0 auto;
+      border-top: 1px solid var(--border);
+      background: var(--bg-elev);
+      padding: 10px 12px;
+    }
+    .composer-row { display: flex; gap: 10px; align-items: stretch; }
+    .composer-side { display: flex; flex-direction: column; gap: 8px; min-width: 150px; }
+    .composer label {
+      font-size: 10px; text-transform: uppercase; letter-spacing: 0.6px;
+      color: var(--text-faint); display: block; margin-bottom: 3px;
+    }
+    .field { flex: 1 1 auto; display: flex; flex-direction: column; }
+    select, textarea {
+      background: var(--bg-inset);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 7px 9px;
+      font-family: var(--mono);
+      font-size: 12.5px;
+      resize: none;
+    }
+    select:focus, textarea:focus { outline: none; border-color: var(--accent); }
+    textarea { min-height: 58px; width: 100%; }
+    .send-btn {
+      background: var(--accent);
+      color: #041018;
+      border: none;
+      border-radius: var(--radius);
+      font-weight: 600;
+      padding: 8px 16px;
+    }
+    .send-btn:hover { filter: brightness(1.08); }
+    .send-btn:disabled { opacity: 0.55; cursor: default; }
+    .composer-hint { color: var(--text-faint); font-size: 11px; margin-top: 6px; }
+    .composer-as { font-family: var(--mono); color: var(--warn); }
+
+    /* ------------------------------ Toasts ------------------------------- */
+    .toasts {
+      position: fixed;
+      bottom: 14px; right: 14px;
+      display: flex; flex-direction: column; gap: 8px;
+      z-index: 50;
+      max-width: min(420px, 90vw);
+    }
+    .toast {
+      background: var(--bg-elev);
+      border: 1px solid var(--border);
+      border-left-width: 3px;
+      border-radius: var(--radius);
+      padding: 8px 12px;
+      font-size: 12px;
+      color: var(--text);
+      box-shadow: 0 6px 24px rgba(0,0,0,0.45);
+      animation: toast-in 0.12s ease-out;
+    }
+    .toast.ok    { border-left-color: var(--ok); }
+    .toast.warn  { border-left-color: var(--warn); }
+    .toast.error { border-left-color: var(--danger); }
+    @keyframes toast-in { from { opacity: 0; transform: translateY(6px); } }
+
+    /* Scrollbars — keep the terminal density readable. */
+    ::-webkit-scrollbar { width: 10px; height: 10px; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+
+    /* ----------------------------- Responsive --------------------------- */
+    @media (max-width: 760px) {
+      .layout { flex-direction: column; }
+      .sidebar {
+        flex: 0 0 auto;
+        width: 100%;
+        max-height: 38vh;
+        border-right: none;
+        border-bottom: 1px solid var(--border);
+      }
+      .mcp-add code { max-width: 30ch; }
+      .composer-row { flex-direction: column; }
+      .composer-side { flex-direction: row; align-items: flex-end; }
+    }
+  </style>
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand"><span class="logo"></span> Switchboard</div>
+    <div class="hub-status">
+      <span class="conn-state" id="conn-state" data-state="connecting">
+        <span class="dot"></span><span id="conn-label">conectando</span>
+      </span>
+      <span class="metric">online <b id="online-count">0</b>/<span id="agent-count">0</span></span>
+      <span class="metric">uptime <b id="uptime">—</b></span>
+      <span class="metric">v<span id="version">—</span></span>
+    </div>
+    <div class="header-spacer"></div>
+    <div class="mcp-add">
+      <code id="mcp-cmd" title=""></code>
+      <button class="btn btn-copy" id="copy-mcp" type="button">copiar</button>
+    </div>
+  </header>
+
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-head">
+        <span>Agentes</span>
+        <span id="sidebar-count">0</span>
+      </div>
+      <div class="agents" id="agents"></div>
+    </aside>
+
+    <main class="main">
+      <div class="filter-bar" id="filter-bar">
+        <span class="label">filtrando por</span>
+        <span class="target" id="filter-target"></span>
+        <button class="filter-clear" id="filter-clear" type="button">limpar filtro ✕</button>
+      </div>
+
+      <div class="feed" id="feed"></div>
+
+      <form class="composer" id="composer" autocomplete="off">
+        <div class="composer-row">
+          <div class="composer-side">
+            <div>
+              <label for="recipient">destinatário</label>
+              <select id="recipient" name="recipient"></select>
+            </div>
+            <button class="send-btn" id="send-btn" type="submit">enviar</button>
+          </div>
+          <div class="field">
+            <label for="composer-body">mensagem (como <span class="composer-as">operator</span>)</label>
+            <textarea id="composer-body" name="body"
+              placeholder="Mensagem factual e acionável para o agente…&#10;Ctrl/⌘+Enter envia."></textarea>
+          </div>
+        </div>
+        <div class="composer-hint">
+          Envia como <span class="composer-as">operator</span> (o humano). Broadcast = destinatário “all”.
+        </div>
+      </form>
+    </main>
+  </div>
+
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+
+  <script>
+    "use strict";
+
+    // =====================================================================
+    // Switchboard dashboard — vanilla JS + SSE. No framework, no build, no
+    // external asset (localhost, local trust boundary — everything inline).
+    //
+    // SECURITY / XSS: every value that comes from the hub (agent names, roles,
+    // message bodies, from/to) is treated as untrusted — an agent on the
+    // network can be adversarial/hallucinated (PRD section 15). We NEVER assign
+    // server data to innerHTML: the DOM is built with createElement +
+    // textContent only. The capability token never leaves the hub in the
+    // shapes we read (PublicAgent / Message), so it can never reach here.
+    // =====================================================================
+
+    const $ = (sel) => document.querySelector(sel);
+
+    const state = {
+      agents: new Map(),   // name -> agent object (incl. unreadCount)
+      messages: [],        // newest-first (matches GET /api/messages)
+      msgIds: new Set(),   // dedup guard for message_created vs bootstrap
+      filter: null,        // active agent-name filter, or null
+      sse: null,
+      uptimeBase: null,    // { seconds, at }  — server uptime + local anchor
+    };
+
+    // --- tiny DOM helper: text is set via textContent (never innerHTML) -----
+    function el(tag, cls, text) {
+      const node = document.createElement(tag);
+      if (cls) node.className = cls;
+      if (text != null) node.textContent = text;
+      return node;
+    }
+
+    function fmtTime(iso) {
+      const d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return String(iso);
+      return d.toLocaleTimeString("pt-BR", { hour12: false });
+    }
+
+    function fmtUptime(totalSeconds) {
+      const s = Math.max(0, Math.floor(totalSeconds));
+      const h = Math.floor(s / 3600);
+      const m = Math.floor((s % 3600) / 60);
+      const sec = s % 60;
+      if (h > 0) return `${h}h ${m}m ${sec}s`;
+      if (m > 0) return `${m}m ${sec}s`;
+      return `${sec}s`;
+    }
+
+    // --- toasts -----------------------------------------------------------
+    function toast(message, kind = "ok", ttl = 4200) {
+      const box = $("#toasts");
+      const t = el("div", `toast ${kind}`, message);
+      box.appendChild(t);
+      setTimeout(() => {
+        t.style.opacity = "0";
+        t.style.transition = "opacity 0.25s";
+        setTimeout(() => t.remove(), 260);
+      }, ttl);
+    }
+
+    // --- agent state merge ------------------------------------------------
+    // GET /api/agents carries unreadCount; the SSE agent_updated payload is a
+    // PublicAgent and does NOT — so we PRESERVE the previous unreadCount when a
+    // partial update arrives, and track deltas from message_created/read.
+    function mergeAgent(incoming) {
+      const prev = state.agents.get(incoming.name);
+      const unreadCount =
+        incoming.unreadCount != null
+          ? incoming.unreadCount
+          : prev
+            ? prev.unreadCount
+            : 0;
+      state.agents.set(incoming.name, { ...prev, ...incoming, unreadCount });
+    }
+
+    function sortedAgents() {
+      return [...state.agents.values()].sort((a, b) => {
+        // online first, then by name — stable ordering for the redesign.
+        if (a.status !== b.status) return a.status === "online" ? -1 : 1;
+        return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+      });
+    }
+
+    // =====================================================================
+    // Rendering
+    // =====================================================================
+
+    function renderHeader() {
+      const agents = [...state.agents.values()];
+      const online = agents.filter((a) => a.status === "online").length;
+      $("#online-count").textContent = String(online);
+      $("#agent-count").textContent = String(agents.length);
+      $("#sidebar-count").textContent = String(agents.length);
+    }
+
+    function renderUptime() {
+      if (!state.uptimeBase) return;
+      const secs =
+        state.uptimeBase.seconds + (Date.now() - state.uptimeBase.at) / 1000;
+      $("#uptime").textContent = fmtUptime(secs);
+    }
+
+    function setConnState(stateName, label) {
+      const node = $("#conn-state");
+      node.dataset.state = stateName;
+      $("#conn-label").textContent = label;
+    }
+
+    function renderAgents() {
+      const container = $("#agents");
+      container.textContent = "";
+      const agents = sortedAgents();
+      if (agents.length === 0) {
+        container.appendChild(
+          el(
+            "div",
+            "empty-hint",
+            "Nenhum agente registrado. Rode `switchboard start <nome>`.",
+          ),
+        );
+        renderHeader();
+        return;
+      }
+      for (const agent of agents) {
+        container.appendChild(buildAgentCard(agent));
+      }
+      renderHeader();
+    }
+
+    function buildAgentCard(agent) {
+      const card = el("div", "agent-card");
+      card.classList.add(agent.status === "online" ? "online" : "offline");
+      if (state.filter === agent.name) card.classList.add("active");
+      card.dataset.name = agent.name;
+
+      const dot = el("span", `status-dot ${agent.status === "online" ? "online" : "offline"}`);
+      dot.title = agent.status;
+
+      const name = el("div", "agent-name", agent.name);
+      name.title = agent.name;
+      const role = el("div", "agent-role", agent.role || "—");
+      role.title = agent.role || "";
+
+      // Badges: MCP chip + unread count.
+      const badges = el("div", "agent-badges");
+      const mcp = el("span", `mcp-icon${agent.mcpConnected ? " connected" : ""}`, "MCP");
+      mcp.title = agent.mcpConnected
+        ? "MCP conectado (join confirmado)"
+        : "MCP não conectado ainda";
+      badges.appendChild(mcp);
+      if (agent.unreadCount > 0) {
+        const badge = el("span", "unread-badge", String(agent.unreadCount));
+        badge.title = `${agent.unreadCount} não lida(s)`;
+        badges.appendChild(badge);
+      }
+
+      // Actions: mute toggle + nudge button. Stop propagation so a control
+      // click never toggles the card's feed filter.
+      const actions = el("div", "agent-actions");
+      const mute = el(
+        "button",
+        `mute-toggle${agent.muted ? " muted" : ""}`,
+        agent.muted ? "unmute" : "mute",
+      );
+      mute.type = "button";
+      mute.title = agent.muted ? "Reativar nudges" : "Silenciar nudges (mensagens ainda são gravadas)";
+      mute.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        toggleMute(agent.name, !agent.muted);
+      });
+
+      const nudge = el("button", "nudge-btn", "nudge");
+      nudge.type = "button";
+      nudge.dataset.nudgeFor = agent.name;
+      nudge.title = "Forçar um nudge manual (respeita a guarda de pane)";
+      nudge.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        forceNudge(agent.name);
+      });
+
+      actions.append(mute, nudge);
+
+      card.append(dot, name, badges, role, actions);
+      card.addEventListener("click", () => setFilter(agent.name));
+      return card;
+    }
+
+    // Group broadcast records (same broadcastId) into one visual row; single
+    // messages stay one row. Iterating newest-first keeps chronological order.
+    function feedRows() {
+      const filter = state.filter;
+      const seen = new Set();
+      const rows = [];
+      for (const m of state.messages) {
+        if (m.broadcastId) {
+          if (seen.has(m.broadcastId)) continue;
+          seen.add(m.broadcastId);
+          const group = state.messages.filter((x) => x.broadcastId === m.broadcastId);
+          if (filter && !group.some((x) => x.from === filter || x.to === filter)) continue;
+          rows.push({ kind: "broadcast", group });
+        } else {
+          if (filter && m.from !== filter && m.to !== filter) continue;
+          rows.push({ kind: "single", msg: m });
+        }
+      }
+      return rows;
+    }
+
+    function renderFeed() {
+      const feed = $("#feed");
+      feed.textContent = "";
+      const rows = feedRows();
+      if (rows.length === 0) {
+        feed.appendChild(
+          el(
+            "div",
+            "empty-hint",
+            state.filter
+              ? `Nenhuma mensagem envolvendo "${state.filter}".`
+              : "Nenhuma mensagem ainda. As trocas entre agentes aparecem aqui em tempo real.",
+          ),
+        );
+        return;
+      }
+      for (const row of rows) {
+        feed.appendChild(row.kind === "broadcast" ? buildBroadcastRow(row.group) : buildMsgRow(row.msg));
+      }
+    }
+
+    function buildMetaLine(from, to, opts) {
+      const meta = el("div", "msg-meta");
+      const time = el("span", "msg-time", fmtTime(opts.createdAt));
+      const fromEl = el("span", `msg-from${from === "operator" ? " operator" : ""}`, from);
+      const arrow = el("span", "msg-arrow", "→");
+      const toEl = el("span", `msg-to${to === "all" ? " all" : ""}`, to);
+      meta.append(time, fromEl, arrow, toEl);
+      if (opts.readFlag) meta.appendChild(opts.readFlag);
+      return meta;
+    }
+
+    function buildMsgRow(m) {
+      const row = el("div", "msg-row");
+      row.classList.add(m.readAt ? "read" : "unread");
+      const flag = m.readAt
+        ? Object.assign(el("span", "msg-read-flag read", "✓ lida"), { title: fmtTime(m.readAt) })
+        : el("span", "msg-read-flag pending", "• não lida");
+      row.appendChild(buildMetaLine(m.from, m.to, { createdAt: m.createdAt, readFlag: flag }));
+      row.appendChild(el("div", "msg-body", m.body));
+      return row;
+    }
+
+    function buildBroadcastRow(group) {
+      // All records of a broadcast share from + body; each has its own to/readAt.
+      const first = group[0];
+      const row = el("div", "msg-row broadcast");
+      const readCount = group.filter((x) => x.readAt).length;
+      const flag = el(
+        "span",
+        `msg-read-flag ${readCount === group.length ? "read" : "pending"}`,
+        `${readCount}/${group.length} lidas`,
+      );
+      flag.title = group.map((x) => `${x.to}: ${x.readAt ? "lida" : "não lida"}`).join(" · ");
+      const meta = buildMetaLine(first.from, "all", { createdAt: first.createdAt, readFlag: flag });
+      // Annotate the recipient count next to "all".
+      meta.insertBefore(
+        el("span", "msg-arrow", `(${group.length} destinatários)`),
+        flag,
+      );
+      row.appendChild(meta);
+      row.appendChild(el("div", "msg-body", first.body));
+      return row;
+    }
+
+    function renderRecipients() {
+      const sel = $("#recipient");
+      const prev = sel.value;
+      sel.textContent = "";
+      const optAll = el("option", null, "all (broadcast)");
+      optAll.value = "all";
+      sel.appendChild(optAll);
+      for (const agent of sortedAgents()) {
+        const label = agent.role ? `${agent.name} — ${agent.role}` : agent.name;
+        const opt = el("option", null, label);
+        opt.value = agent.name;
+        sel.appendChild(opt);
+      }
+      const hasPrev = [...sel.options].some((o) => o.value === prev);
+      sel.value = hasPrev ? prev : "all";
+    }
+
+    function renderFilterBar() {
+      const bar = $("#filter-bar");
+      if (state.filter) {
+        bar.classList.add("active");
+        $("#filter-target").textContent = state.filter;
+      } else {
+        bar.classList.remove("active");
+        $("#filter-target").textContent = "";
+      }
+    }
+
+    function setFilter(name) {
+      state.filter = state.filter === name ? null : name;
+      renderFilterBar();
+      renderFeed();
+      // Re-render cards so the .active highlight follows the filter.
+      for (const card of document.querySelectorAll(".agent-card")) {
+        card.classList.toggle("active", card.dataset.name === state.filter);
+      }
+    }
+
+    // =====================================================================
+    // SSE handling
+    // =====================================================================
+
+    // Long-session hygiene: the server caps GET /api/messages at limit=200, but
+    // the live stream unshifts forever. Bound the in-memory window so a
+    // long-lived tab on a busy hub doesn't grow unbounded and feedRows() (O(n)
+    // per broadcast) doesn't slow down with session length.
+    const MAX_MESSAGES = 1000;
+
+    function onMessageCreated(m) {
+      if (state.msgIds.has(m.id)) return; // dedup vs bootstrap / our own POST
+      state.msgIds.add(m.id);
+      state.messages.unshift(m);
+      if (state.messages.length > MAX_MESSAGES) {
+        const dropped = state.messages.splice(MAX_MESSAGES);
+        for (const d of dropped) state.msgIds.delete(d.id);
+      }
+      const recipient = state.agents.get(m.to);
+      if (recipient) {
+        recipient.unreadCount = (recipient.unreadCount || 0) + 1;
+        renderAgents();
+      }
+      renderFeed();
+    }
+
+    // A read can reference a message outside our loaded window (older than the
+    // bootstrap limit, or created during a disconnect gap): the per-message
+    // delta can't apply, so pull the authoritative unreadCount from /api/agents
+    // instead of letting the recipient's badge drift upward. Guarded so a burst
+    // of such reads can't stampede the endpoint.
+    let agentsRefetchInFlight = false;
+    function refetchAgentsAuthoritative() {
+      if (agentsRefetchInFlight) return;
+      agentsRefetchInFlight = true;
+      loadAgents()
+        .then(() => {
+          renderAgents();
+          renderRecipients();
+        })
+        .catch(() => {
+          /* non-fatal: nudge_sent resync and the next reconnect reconcile too */
+        })
+        .finally(() => {
+          agentsRefetchInFlight = false;
+        });
+    }
+
+    function onMessageRead({ messageId, readAt }) {
+      const m = state.messages.find((x) => x.id === messageId);
+      if (!m) {
+        refetchAgentsAuthoritative();
+        return;
+      }
+      if (!m.readAt) {
+        m.readAt = readAt;
+        const recipient = state.agents.get(m.to);
+        if (recipient) {
+          recipient.unreadCount = Math.max(0, (recipient.unreadCount || 0) - 1);
+          renderAgents();
+        }
+      }
+      renderFeed();
+    }
+
+    function pulseNudge(name) {
+      const btn = document.querySelector(`.nudge-btn[data-nudge-for="${CSS.escape(name)}"]`);
+      if (!btn) return;
+      btn.classList.remove("nudging");
+      void btn.offsetWidth; // reflow to restart the animation
+      btn.classList.add("nudging");
+    }
+
+    function onNudgeSent({ agent, at, unread }) {
+      const a = state.agents.get(agent);
+      if (a) {
+        a.lastNudgeAt = at;
+        // nudge_sent carries the authoritative unread at nudge time — resync.
+        if (typeof unread === "number") a.unreadCount = unread;
+        renderAgents();
+      }
+      pulseNudge(agent);
+    }
+
+    function handleSse(event) {
+      switch (event.type) {
+        case "agent_updated":
+          mergeAgent(event.payload);
+          renderAgents();
+          renderRecipients();
+          break;
+        case "message_created":
+          onMessageCreated(event.payload);
+          break;
+        case "message_read":
+          onMessageRead(event.payload);
+          break;
+        case "nudge_sent":
+          onNudgeSent(event.payload);
+          break;
+      }
+    }
+
+    // The stream carries NO event ids and the hub supports no Last-Event-ID
+    // replay, so every event fired while we were disconnected (message_created,
+    // message_read, agent_updated, nudge_sent) is lost. After ANY reconnect we
+    // therefore reconcile the snapshot before trusting the stream again — this
+    // mirrors the bootstrap ordering: loadMessages rebuilds state.messages +
+    // msgIds and loadAgents refreshes the authoritative unreadCount, so the
+    // stream once more only ever adds to a freshly reconciled view.
+    let sseConnectedOnce = false;
+
+    function connectSse() {
+      const es = new EventSource("/api/events");
+      state.sse = es;
+      es.onopen = () => {
+        if (!sseConnectedOnce) {
+          // First connect: boot() already fetched the snapshot, so just go live
+          // (re-fetching here would be a harmless duplicate, but we skip it).
+          sseConnectedOnce = true;
+          setConnState("live", "ao vivo");
+          return;
+        }
+        // Reconnect after a gap (hub restart, laptop sleep/wake, socket drop):
+        // resync before flipping the pill back to "ao vivo", so the header never
+        // claims freshness over a view that silently missed events.
+        Promise.all([loadAgents(), loadMessages()])
+          .then(() => {
+            renderAgents();
+            renderRecipients();
+            renderFeed();
+          })
+          .catch(() => {
+            toast("Falha ao ressincronizar após reconexão.", "warn");
+          })
+          .finally(() => setConnState("live", "ao vivo"));
+      };
+      es.onmessage = (ev) => {
+        let parsed;
+        try {
+          parsed = JSON.parse(ev.data);
+        } catch {
+          return; // ignore heartbeat comments / malformed frames
+        }
+        handleSse(parsed);
+      };
+      // EventSource reconnects on its own; we only surface the state so the
+      // operator knows the feed is stale until it recovers.
+      es.onerror = () => setConnState("reconnecting", "reconectando");
+    }
+
+    // =====================================================================
+    // Actions (REST)
+    // =====================================================================
+
+    async function toggleMute(name, muted) {
+      try {
+        const res = await fetch(`/api/agents/${encodeURIComponent(name)}/mute`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ muted }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.ok) {
+          toast(data.error || `Falha ao alterar mute (HTTP ${res.status}).`, "error");
+          return;
+        }
+        mergeAgent(data.agent); // agent_updated will also arrive via SSE
+        renderAgents();
+        renderRecipients();
+        toast(`${name} ${muted ? "silenciado" : "reativado"}.`, "ok");
+      } catch {
+        toast("Falha de rede ao alterar mute.", "error");
+      }
+    }
+
+    async function forceNudge(name) {
+      try {
+        const res = await fetch(`/api/agents/${encodeURIComponent(name)}/nudge`, {
+          method: "POST",
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && data.ok) {
+          pulseNudge(name);
+          toast(`Nudge enviado para ${name}.`, "ok");
+          return;
+        }
+        // 409 (pane insegura / sessão morta), 404 (desconhecido), 501 (sem
+        // dispatcher). A mensagem do hub já é amigável — mostrar sem quebrar.
+        toast(data.error || `Nudge não entregue para ${name} (HTTP ${res.status}).`, "warn");
+      } catch {
+        toast("Falha de rede ao cutucar.", "error");
+      }
+    }
+
+    async function sendMessage(ev) {
+      ev.preventDefault();
+      const to = $("#recipient").value;
+      const bodyEl = $("#composer-body");
+      const body = bodyEl.value;
+      if (body.trim().length === 0) {
+        toast("Mensagem vazia: escreva algo factual e acionável.", "warn");
+        return;
+      }
+      const btn = $("#send-btn");
+      btn.disabled = true;
+      try {
+        const res = await fetch("/api/messages", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ to, body }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.ok) {
+          toast(data.error || `Falha ao enviar (HTTP ${res.status}).`, "error");
+          return;
+        }
+        bodyEl.value = "";
+        toast(`Enviado para ${to} (${data.delivery}).`, "ok");
+      } catch {
+        toast("Falha de rede ao enviar.", "error");
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    // =====================================================================
+    // Bootstrap
+    // =====================================================================
+
+    async function loadHealth() {
+      try {
+        const res = await fetch("/api/health");
+        if (!res.ok) return;
+        const data = await res.json();
+        const serverSeconds = data.uptime || 0;
+        // The server floors uptime while the local ticker carries the sub-second
+        // fraction, so re-anchoring on every poll makes the counter visibly tick
+        // backward ~1s. Only re-anchor when the drift is meaningful (clock skew,
+        // or a hub restart that legitimately resets uptime downward); otherwise
+        // let the smooth 1s ticker keep running monotonically.
+        const local = state.uptimeBase
+          ? state.uptimeBase.seconds + (Date.now() - state.uptimeBase.at) / 1000
+          : null;
+        if (local == null || Math.abs(local - serverSeconds) > 2) {
+          state.uptimeBase = { seconds: serverSeconds, at: Date.now() };
+        }
+        $("#version").textContent = data.version || "—";
+        renderUptime();
+      } catch {
+        // health poll failure is non-fatal; SSE state already reflects trouble.
+      }
+    }
+
+    async function loadAgents() {
+      const res = await fetch("/api/agents");
+      const list = await res.json();
+      for (const agent of list) mergeAgent(agent);
+    }
+
+    async function loadMessages() {
+      const res = await fetch("/api/messages?limit=200");
+      const list = await res.json(); // newest-first
+      state.messages = Array.isArray(list) ? list : [];
+      state.msgIds = new Set(state.messages.map((m) => m.id));
+    }
+
+    function setupMcpCommand() {
+      const cmd = `claude mcp add --transport http --scope user switchboard ${location.origin}/mcp`;
+      const code = $("#mcp-cmd");
+      code.textContent = cmd;
+      code.title = cmd;
+      $("#copy-mcp").addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(cmd);
+          toast("Comando copiado.", "ok", 2000);
+        } catch {
+          // Fallback for contexts where the async clipboard API is blocked.
+          const ta = document.createElement("textarea");
+          ta.value = cmd;
+          ta.style.position = "fixed";
+          ta.style.opacity = "0";
+          document.body.appendChild(ta);
+          ta.select();
+          try {
+            document.execCommand("copy");
+            toast("Comando copiado.", "ok", 2000);
+          } catch {
+            toast("Não foi possível copiar automaticamente — selecione e copie.", "warn");
+          }
+          ta.remove();
+        }
+      });
+    }
+
+    async function boot() {
+      setupMcpCommand();
+
+      // Composer wiring.
+      $("#composer").addEventListener("submit", sendMessage);
+      $("#composer-body").addEventListener("keydown", (ev) => {
+        if ((ev.ctrlKey || ev.metaKey) && ev.key === "Enter") {
+          ev.preventDefault();
+          $("#composer").requestSubmit();
+        }
+      });
+      $("#filter-clear").addEventListener("click", () => setFilter(state.filter));
+
+      // Bootstrap snapshot (agents + messages + health) BEFORE the live stream,
+      // so the SSE only ever adds to a populated view (PRD Phase 6 behavior).
+      try {
+        await Promise.all([loadHealth(), loadAgents(), loadMessages()]);
+      } catch (err) {
+        toast("Falha ao carregar o estado inicial do Hub.", "error");
+      }
+      renderAgents();
+      renderRecipients();
+      renderFilterBar();
+      renderFeed();
+
+      connectSse();
+
+      // Local uptime ticker (1s) resynced by the periodic /api/health poll.
+      setInterval(renderUptime, 1000);
+      setInterval(loadHealth, 15000);
+    }
+
+    boot();
+  </script>
+</body>
+</html>
