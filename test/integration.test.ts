@@ -26,20 +26,36 @@ const RATE_LIMIT = 3; // injected via config.json (default would be 12)
 let dir: string;
 let hub: Hub;
 let clients: Client[];
+// Capability tokens returned by /api/agents/register (v1.1) — joinAs presents
+// them the same way `switchboard start` will via SWITCHBOARD_AGENT_TOKEN.
+let tokens: Map<string, string>;
+
+const TOKEN_RE = /^[0-9a-f]{64}$/; // crypto.randomBytes(32).toString("hex")
 
 function api(pathname: string): string {
   return `http://127.0.0.1:${hub.port}${pathname}`;
 }
 
-async function registerAgent(name: string, role = `role de ${name}`): Promise<void> {
+async function registerAgent(name: string, role = `role de ${name}`): Promise<string> {
   const res = await fetch(api("/api/agents/register"), {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ name, role, cwd: `/tmp/${name}`, tmuxSession: `sb-${name}` }),
   });
   expect(res.status).toBe(201);
-  const body = (await res.json()) as { ok: boolean };
+  const body = (await res.json()) as {
+    ok: boolean;
+    token?: string;
+    agent?: Record<string, unknown>;
+  };
   expect(body.ok).toBe(true);
+  // v1.1: the register response carries the capability token (it is how the
+  // Phase 4 `switchboard start` obtains it)…
+  expect(body.token).toMatch(TOKEN_RE);
+  // …while the embedded agent object stays redacted.
+  expect(body.agent).not.toHaveProperty("token");
+  tokens.set(name, body.token!);
+  return body.token!;
 }
 
 async function mcpClient(): Promise<Client> {
@@ -68,7 +84,12 @@ async function callTool(
 
 async function joinAs(name: string): Promise<Client> {
   const client = await mcpClient();
-  const joined = await callTool(client, "join", { agent_name: name });
+  // v1.1: registered agents are token-protected — join must present the
+  // token from the register response (SWITCHBOARD_AGENT_TOKEN in production).
+  const joined = await callTool(client, "join", {
+    agent_name: name,
+    ...(tokens.has(name) ? { token: tokens.get(name) } : {}),
+  });
   expect(joined.ok).toBe(true);
   return client;
 }
@@ -149,6 +170,7 @@ beforeEach(async () => {
     JSON.stringify({ pairRateLimitPerMinute: RATE_LIMIT }),
   );
   clients = [];
+  tokens = new Map();
   hub = await startHub({
     baseDir: dir,
     port: 0,
@@ -176,7 +198,10 @@ describe("fluxo alpha → beta via MCP", () => {
     const beta = await joinAs("beta");
 
     // join returns the agent list + etiquette paragraph.
-    const joined = await callTool(alpha, "join", { agent_name: "alpha" });
+    const joined = await callTool(alpha, "join", {
+      agent_name: "alpha",
+      token: tokens.get("alpha"),
+    });
     expect(joined.ok).toBe(true);
     expect(joined.agents.map((a: any) => a.name).sort()).toEqual(["alpha", "beta"]);
     expect(joined.agents[0]).toHaveProperty("role");
@@ -610,7 +635,10 @@ describe("sessões MCP (achado P6)", () => {
     expect(agents.find((a) => a.name === "alpha").mcpConnected).toBe(true);
 
     // …percebeu e corrigiu com um segundo join na mesma sessão MCP.
-    const rejoined = await callTool(client, "join", { agent_name: "gamma" });
+    const rejoined = await callTool(client, "join", {
+      agent_name: "gamma",
+      token: tokens.get("gamma"),
+    });
     expect(rejoined.ok).toBe(true);
 
     agents = (await (await fetch(api("/api/agents"))).json()) as any[];
@@ -707,6 +735,214 @@ describe("sessões MCP (achado P6)", () => {
       );
       await client.close().catch(() => {});
     } finally {
+      await hub2.close();
+      fs.rmSync(dir2, { recursive: true, force: true });
+    }
+  }, 15_000);
+});
+
+describe("capability token (adendo v1.1)", () => {
+  it("join sem token ou com token errado falha com erro instrutivo; com o token correto entra", async () => {
+    await registerAgent("alpha");
+    const client = await mcpClient();
+
+    // Sem token: recusado, com instrução de printenv SWITCHBOARD_AGENT_TOKEN.
+    const missing = await callTool(client, "join", { agent_name: "alpha" });
+    expect(missing.ok).toBe(false);
+    expect(missing.error).toContain("printenv SWITCHBOARD_AGENT_TOKEN");
+    expect(missing.error).toContain("token");
+    // O erro instrutivo jamais ecoa o token esperado.
+    expect(missing.error).not.toContain(tokens.get("alpha")!);
+
+    // Token errado (formato válido, valor errado): recusado igualmente.
+    const wrong = await callTool(client, "join", {
+      agent_name: "alpha",
+      token: "deadbeef".repeat(8),
+    });
+    expect(wrong.ok).toBe(false);
+    expect(wrong.error).toContain("printenv SWITCHBOARD_AGENT_TOKEN");
+
+    // Os joins recusados não tocaram estado: o agente segue desconectado.
+    let agents = (await (await fetch(api("/api/agents"))).json()) as any[];
+    expect(agents[0].mcpConnected).toBe(false);
+
+    // Token correto: entra, e o join normal NÃO ecoa o token de volta.
+    const ok = await callTool(client, "join", {
+      agent_name: "alpha",
+      token: tokens.get("alpha"),
+    });
+    expect(ok.ok).toBe(true);
+    expect(ok).not.toHaveProperty("token");
+
+    agents = (await (await fetch(api("/api/agents"))).json()) as any[];
+    expect(agents[0].mcpConnected).toBe(true);
+  }, 15_000);
+
+  it("join on-the-fly retorna o token novo e uma SEGUNDA sessão só entra apresentando-o", async () => {
+    // Primeira sessão a reivindicar o nome vira dona dele (PRD 9.1 v1.1).
+    const first = await mcpClient();
+    const claimed = await callTool(first, "join", { agent_name: "nomad" });
+    expect(claimed.ok).toBe(true);
+    expect(claimed.token).toMatch(TOKEN_RE);
+
+    // Segunda sessão sem o token: recusada com o erro instrutivo.
+    const second = await mcpClient();
+    const denied = await callTool(second, "join", { agent_name: "nomad" });
+    expect(denied.ok).toBe(false);
+    expect(denied.error).toContain("printenv SWITCHBOARD_AGENT_TOKEN");
+
+    // Com o token emitido no claim: aceita (e não reemite o token).
+    const accepted = await callTool(second, "join", {
+      agent_name: "nomad",
+      token: claimed.token,
+    });
+    expect(accepted.ok).toBe(true);
+    expect(accepted).not.toHaveProperty("token");
+  }, 15_000);
+
+  it("re-registro REGENERA o token: o antigo é invalidado, o novo funciona", async () => {
+    const oldToken = await registerAgent("alpha");
+    const newToken = await registerAgent("alpha"); // re-attach (P7)
+    expect(newToken).toMatch(TOKEN_RE);
+    expect(newToken).not.toBe(oldToken);
+
+    const stale = await mcpClient();
+    const denied = await callTool(stale, "join", { agent_name: "alpha", token: oldToken });
+    expect(denied.ok).toBe(false);
+    expect(denied.error).toContain("printenv SWITCHBOARD_AGENT_TOKEN");
+
+    const fresh = await mcpClient();
+    const ok = await callTool(fresh, "join", { agent_name: "alpha", token: newToken });
+    expect(ok.ok).toBe(true);
+  }, 15_000);
+
+  it("GET /api/agents, list_agents, join e eventos SSE NUNCA contêm o campo token", async () => {
+    const alphaToken = await registerAgent("alpha");
+    const betaToken = await registerAgent("beta");
+    const alpha = await joinAs("alpha");
+
+    // REST: nenhum agente listado carrega token.
+    const agents = (await (await fetch(api("/api/agents"))).json()) as any[];
+    expect(agents).toHaveLength(2);
+    for (const agent of agents) {
+      expect(agent, `GET /api/agents (${agent.name})`).not.toHaveProperty("token");
+    }
+
+    // MCP: list_agents e a lista devolvida pelo join também são redigidas.
+    const listed = await callTool(alpha, "list_agents");
+    for (const agent of listed.agents) {
+      expect(agent, `list_agents (${agent.name})`).not.toHaveProperty("token");
+    }
+    const rejoined = await callTool(alpha, "join", {
+      agent_name: "alpha",
+      token: tokens.get("alpha"),
+    });
+    for (const agent of rejoined.agents) {
+      expect(agent, `join.agents (${agent.name})`).not.toHaveProperty("token");
+    }
+
+    // SSE: o mute dispara agent_updated — payload redigido, sem token.
+    const sse = await collectSse(
+      (text) => text.includes("agent_updated") && text.includes('"muted":true'),
+      async () => {
+        const res = await fetch(api("/api/agents/beta/mute"), {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ muted: true }),
+        });
+        expect(res.status).toBe(200);
+        // A resposta do mute também é redigida.
+        expect(((await res.json()) as any).agent).not.toHaveProperty("token");
+      },
+    );
+    expect(sse).toContain("agent_updated");
+    expect(sse).not.toContain('"token"');
+    expect(sse).not.toContain(alphaToken);
+    expect(sse).not.toContain(betaToken);
+  }, 15_000);
+
+  it("nenhuma linha de log do hub contém o token", async () => {
+    const token = await registerAgent("alpha");
+    await joinAs("alpha");
+    // Um join recusado também loga (warn) — e não pode vazar o token esperado.
+    const stranger = await mcpClient();
+    const denied = await callTool(stranger, "join", {
+      agent_name: "alpha",
+      token: "0".repeat(64),
+    });
+    expect(denied.ok).toBe(false);
+
+    // O logger escreve síncrono (appendFileSync); o arquivo já está completo.
+    const logContent = fs.readFileSync(path.join(dir, "logs", "hub.log"), "utf8");
+    expect(logContent.length).toBeGreaterThan(0);
+    expect(logContent).toContain("agente registrado: alpha"); // o fluxo logou…
+    expect(logContent).not.toContain(token); // …mas nunca o token
+  }, 15_000);
+
+  it("snapshot legado sem token: join aceita, gera, retorna e passa a exigir o token", async () => {
+    // agents.json pré-v1.1: registro válido, sem o campo token.
+    const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), "switchboard-int-legacy-"));
+    const now = new Date().toISOString();
+    fs.writeFileSync(
+      path.join(dir2, "agents.json"),
+      JSON.stringify([
+        {
+          name: "alpha",
+          role: "veterano",
+          tmuxSession: "sb-alpha",
+          cwd: "",
+          status: "offline",
+          mcpConnected: false,
+          muted: false,
+          createdAt: now,
+          lastSeenAt: now,
+          lastNudgeAt: null,
+        },
+      ]),
+    );
+
+    const hub2 = await startHub({
+      baseDir: dir2,
+      port: 0,
+      quiet: true,
+      onMessage: () => "queued_offline",
+    });
+    const localClients: Client[] = [];
+    const connect = async () => {
+      const client = new Client({ name: "legacy-test", version: "0.0.0" });
+      await client.connect(
+        new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${hub2.port}/mcp`)),
+      );
+      localClients.push(client);
+      return client;
+    };
+    try {
+      // Primeiro join sem token: aceito (registro legado), token gerado e RETORNADO.
+      const first = await connect();
+      const claimed = await callTool(first, "join", { agent_name: "alpha" });
+      expect(claimed.ok).toBe(true);
+      expect(claimed.token).toMatch(TOKEN_RE);
+
+      // O token gerado foi persistido no snapshot (trust model local).
+      const snapshot = JSON.parse(
+        fs.readFileSync(path.join(dir2, "agents.json"), "utf8"),
+      ) as any[];
+      expect(snapshot[0].token).toBe(claimed.token);
+
+      // A partir daqui o nome está protegido: join sem token é recusado…
+      const second = await connect();
+      const denied = await callTool(second, "join", { agent_name: "alpha" });
+      expect(denied.ok).toBe(false);
+      expect(denied.error).toContain("printenv SWITCHBOARD_AGENT_TOKEN");
+
+      // …e com o token emitido, aceito.
+      const ok = await callTool(second, "join", {
+        agent_name: "alpha",
+        token: claimed.token,
+      });
+      expect(ok.ok).toBe(true);
+    } finally {
+      for (const client of localClients) await client.close().catch(() => {});
       await hub2.close();
       fs.rmSync(dir2, { recursive: true, force: true });
     }

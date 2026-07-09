@@ -203,6 +203,50 @@ describe("agents", () => {
   });
 });
 
+describe("capability token (adendo v1.1)", () => {
+  const TOKEN_RE = /^[0-9a-f]{64}$/; // crypto.randomBytes(32).toString("hex")
+
+  it("registerAgent gera um token hex de 64 chars, único por agente", () => {
+    const store = newStore();
+    const alpha = registerAgent(store, "alpha");
+    const beta = registerAgent(store, "beta");
+    expect(alpha.token).toMatch(TOKEN_RE);
+    expect(beta.token).toMatch(TOKEN_RE);
+    expect(alpha.token).not.toBe(beta.token);
+  });
+
+  it("re-registro (re-attach) REGENERA o token e persiste o novo no snapshot", () => {
+    const store = newStore();
+    const first = registerAgent(store, "alpha").token;
+    const second = registerAgent(store, "alpha").token; // sessão anterior morta (P7)
+    expect(second).toMatch(TOKEN_RE);
+    expect(second).not.toBe(first);
+
+    // O snapshot persiste o token (trust model local) — e é o NOVO.
+    const snapshot = JSON.parse(
+      fs.readFileSync(path.join(dir, "agents.json"), "utf8"),
+    ) as Array<{ token?: string }>;
+    expect(snapshot[0].token).toBe(second);
+
+    const rebooted = newStore();
+    expect(rebooted.getAgent("alpha")?.token).toBe(second);
+  });
+
+  it("carrega snapshot legado sem o campo token (registro pré-v1.1 é válido)", () => {
+    const store = newStore();
+    registerAgent(store, "alpha");
+    const snapshot = JSON.parse(fs.readFileSync(path.join(dir, "agents.json"), "utf8"));
+    delete snapshot[0].token; // como um agents.json escrito antes do adendo
+    fs.writeFileSync(path.join(dir, "agents.json"), JSON.stringify(snapshot));
+
+    warnings = [];
+    const rebooted = newStore();
+    expect(rebooted.listAgents().map((a) => a.name)).toEqual(["alpha"]);
+    expect(rebooted.getAgent("alpha")?.token).toBeUndefined();
+    expect(warnings).toHaveLength(0); // legado NÃO é registro inválido
+  });
+});
+
 describe("messages", () => {
   it("appends a message and reads it back (memory and JSONL)", () => {
     const store = newStore();

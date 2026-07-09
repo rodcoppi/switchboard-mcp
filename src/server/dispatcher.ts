@@ -24,7 +24,15 @@
 // channel (simulated keyboard) carries one short line; the content always
 // travels via MCP.
 
-import type { Agent, AgentStatus, Config, Delivery, Message, OnMessage } from "../shared/types.js";
+import {
+  toPublicAgent,
+  type Agent,
+  type AgentStatus,
+  type Config,
+  type Delivery,
+  type Message,
+  type OnMessage,
+} from "../shared/types.js";
 import type { Logger } from "./log.js";
 import type { Store } from "./store.js";
 import type { EventBus } from "./api.js";
@@ -200,7 +208,7 @@ export class Dispatcher {
         }
 
         const updated = this.store.updateAgent(name, { status: next });
-        this.bus.emit({ type: "agent_updated", payload: updated });
+        this.bus.emit({ type: "agent_updated", payload: toPublicAgent(updated) });
         this.log.info(
           `[dispatcher] polling: ${name} ficou ${next} (tmux ${tmuxSession}).`,
         );
@@ -351,6 +359,6 @@ export class Dispatcher {
     const agent = this.store.getAgent(name);
     if (!agent || agent.status === "offline") return;
     const updated = this.store.updateAgent(name, { status: "offline" });
-    this.bus.emit({ type: "agent_updated", payload: updated });
+    this.bus.emit({ type: "agent_updated", payload: toPublicAgent(updated) });
   }
 }

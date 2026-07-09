@@ -16,13 +16,14 @@
 
 import express from "express";
 import { ulid } from "ulid";
-import type {
-  Agent,
-  Config,
-  Delivery,
-  Message,
-  OnMessage,
-  SseEvent,
+import {
+  toPublicAgent,
+  type Agent,
+  type Config,
+  type Delivery,
+  type Message,
+  type OnMessage,
+  type SseEvent,
 } from "../shared/types.js";
 import type { Logger } from "./log.js";
 import type { Store } from "./store.js";
@@ -43,6 +44,14 @@ export class EventBus {
   }
 
   emit(event: SseEvent): void {
+    // Hard guarantee of the v1.1 addendum: no SSE listener ever sees a
+    // capability token. Emit call sites already pass redacted payloads, but
+    // Agent is structurally assignable to PublicAgent (the token is just an
+    // extra property), so a forgotten toPublicAgent at a future call site
+    // would leak silently — redact here too, the single fan-out chokepoint.
+    if (event.type === "agent_updated") {
+      event = { ...event, payload: toPublicAgent(event.payload as Agent) };
+    }
     for (const listener of this.listeners) {
       try {
         listener(event);
@@ -227,11 +236,15 @@ export function createApiRouter(options: ApiOptions): express.Router {
   const heartbeatMs = options.heartbeatMs ?? 25_000;
   const router = express.Router();
 
-  // GET /api/agents → Agent[] with aggregated unreadCount.
+  // GET /api/agents → PublicAgent[] with aggregated unreadCount. Redacted:
+  // the capability token never appears in listings (v1.1, section 15).
   router.get("/api/agents", (_req, res) => {
     const agents = store
       .listAgents()
-      .map((agent) => ({ ...agent, unreadCount: store.unreadCount(agent.name) }));
+      .map((agent) => ({
+        ...toPublicAgent(agent),
+        unreadCount: store.unreadCount(agent.name),
+      }));
     res.json(agents);
   });
 
@@ -302,6 +315,21 @@ export function createApiRouter(options: ApiOptions): express.Router {
   // POST /api/agents/register — used by `switchboard start` (Phase 4),
   // BEFORE the Claude Code TUI opens (D4). Logical re-attach of an existing
   // name is handled by the store (PRD section 8).
+  //
+  // KNOWN RESIDUAL RISK (accepted by the v1.1 spec — PRD sections 10.1/15):
+  // this endpoint is deliberately unauthenticated (trust boundary = the local
+  // machine; "qualquer processo local pode postar no Hub"). Because
+  // re-registering an existing name regenerates AND returns a fresh token, a
+  // malicious LOCAL process can obtain a valid token for any agent name and
+  // impersonate it via `join` — invalidating the legitimate session's
+  // SWITCHBOARD_AGENT_TOKEN as a side effect (its re-join after a hub restart
+  // then fails). The capability token therefore only blocks impersonation by
+  // processes that know an agent's name but never call this endpoint. Do NOT
+  // "fix" this here without PRD approval: requiring the current token to
+  // rotate would break the sanctioned re-attach flow (`switchboard start`
+  // never holds the old token — it only receives one from this response).
+  // The Phase 5 README security note MUST document this residual risk
+  // alongside the "nunca fazer port-forward do 4577" warning (PRD 15).
   router.post("/api/agents/register", (req, res) => {
     const raw = (req.body ?? {}) as Record<string, unknown>;
     if (typeof raw.name !== "string" || raw.name.length === 0) {
@@ -329,9 +357,14 @@ export function createApiRouter(options: ApiOptions): express.Router {
         tmuxSession:
           (raw.tmuxSession as string | undefined) ?? config.tmuxSessionPrefix + raw.name,
       });
-      bus.emit({ type: "agent_updated", payload: agent });
+      bus.emit({ type: "agent_updated", payload: toPublicAgent(agent) });
+      // The token itself is NEVER logged (v1.1, section 15).
       log.info(`[api] agente registrado: ${agent.name} (tmux: ${agent.tmuxSession}).`);
-      res.status(201).json({ ok: true, agent });
+      // v1.1 (PRD 10.1): the register response is the ONE REST surface that
+      // carries the capability token — `switchboard start` (Phase 4) reads it
+      // here and injects SWITCHBOARD_AGENT_TOKEN into the agent's tmux
+      // session. The embedded agent object stays redacted.
+      res.status(201).json({ ok: true, agent: toPublicAgent(agent), token: agent.token });
     } catch (err) {
       // Invalid name or MAX_AGENTS cap — store errors are already in Portuguese.
       res.status(400).json({ ok: false, error: (err as Error).message });
@@ -354,9 +387,9 @@ export function createApiRouter(options: ApiOptions): express.Router {
       return;
     }
     const agent = store.updateAgent(name, { muted });
-    bus.emit({ type: "agent_updated", payload: agent });
+    bus.emit({ type: "agent_updated", payload: toPublicAgent(agent) });
     log.info(`[api] agente ${name} ${muted ? "silenciado" : "reativado"} (mute=${muted}).`);
-    res.json({ ok: true, agent });
+    res.json({ ok: true, agent: toPublicAgent(agent) });
   });
 
   // POST /api/agents/:name/nudge — manual nudge button (PRD 10.1: "força um

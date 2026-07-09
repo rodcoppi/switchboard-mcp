@@ -23,6 +23,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { randomBytes } from "node:crypto";
 import { ulid } from "ulid";
 import type { Agent, Message } from "../shared/types.js";
 import { defaultBaseDir } from "./config.js";
@@ -43,6 +44,19 @@ export const RESERVED_AGENT_NAMES: ReadonlySet<string> = new Set(["operator", "a
 
 /** Sanity cap on registered agents (PRD section 14). */
 export const MAX_AGENTS = 50;
+
+/**
+ * Capability token (PRD v1.1 addendum): 32 random bytes, hex-encoded (64
+ * chars). Generated on register AND on re-attach — regenerating invalidates
+ * the previous token, which is correct by definition: registration happens
+ * BEFORE the new Claude Code opens (D4), so the previous session holding the
+ * old token is dead (P7). The token is delivered ONLY via the
+ * SWITCHBOARD_AGENT_TOKEN env var of the agent's tmux session and NEVER
+ * logged or listed (section 15).
+ */
+export function generateAgentToken(): string {
+  return randomBytes(32).toString("hex");
+}
 
 /** Read event record appended to messages.jsonl by markRead. */
 interface ReadEvent {
@@ -127,6 +141,10 @@ export class Store {
       existing.status = "offline";
       existing.mcpConnected = false;
       existing.lastSeenAt = now;
+      // Re-attach REGENERATES the capability token (v1.1): the previous
+      // session is dead by definition (D4/P7), so the old token must stop
+      // working — otherwise anyone who ever saw it could join as this agent.
+      existing.token = generateAgentToken();
       this.saveAgentsSnapshot();
       return existing;
     }
@@ -150,6 +168,7 @@ export class Store {
       createdAt: now,
       lastSeenAt: now,
       lastNudgeAt: null,
+      token: generateAgentToken(),
     };
     this.agents.set(agent.name, agent);
     this.saveAgentsSnapshot();
@@ -491,6 +510,9 @@ function isAgent(value: unknown): value is Agent {
     typeof v.muted === "boolean" &&
     typeof v.createdAt === "string" &&
     typeof v.lastSeenAt === "string" &&
-    (v.lastNudgeAt === null || typeof v.lastNudgeAt === "string")
+    (v.lastNudgeAt === null || typeof v.lastNudgeAt === "string") &&
+    // token is optional: pre-v1.1 snapshots have no token field (legacy
+    // record — the first join claims the name and generates one).
+    (v.token === undefined || typeof v.token === "string")
   );
 }

@@ -25,15 +25,15 @@
 // Every tool ALWAYS answers in < 1s (PRD section 4, rule 4): pure in-memory +
 // synchronous appends, no waiting for recipients.
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import express from "express";
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
-import type { Config, OnMessage } from "../shared/types.js";
+import { toPublicAgent, type Config, type OnMessage } from "../shared/types.js";
 import type { Logger } from "./log.js";
-import type { Store } from "./store.js";
+import { generateAgentToken, type Store } from "./store.js";
 import type { PairRateLimiter } from "./ratelimit.js";
 import {
   EventBus,
@@ -49,7 +49,7 @@ import {
 // ---------------------------------------------------------------------------
 
 const JOIN_DESCRIPTION =
-  "Register this Claude Code session as an agent on the local Switchboard network so other agents can message you. Call this once at the start of a session if you were told you are part of an agent network, or when instructed. agent_name must match the name you were given (check the SWITCHBOARD_AGENT_NAME environment variable via `printenv` if unsure).";
+  "Register this Claude Code session as an agent on the local Switchboard network so other agents can message you. Call this once at the start of a session if you were told you are part of an agent network, or when instructed. agent_name must match the name you were given (check the SWITCHBOARD_AGENT_NAME environment variable via `printenv` if unsure). If the SWITCHBOARD_AGENT_TOKEN environment variable is set, pass its value as token — it proves this session was started for this agent.";
 
 const SEND_MESSAGE_DESCRIPTION =
   'Send a message to another agent on the local Switchboard network (or to "all" for broadcast). Use this when: (a) you changed something that affects another agent\'s work, such as an API contract, schema, or shared file; (b) you need information another agent owns; (c) you were asked to coordinate. Keep messages factual and actionable. Do NOT send acknowledgment-only messages like "thanks" or "ok, got it". For large payloads, write a file to disk and send the absolute path instead of the content.';
@@ -70,6 +70,30 @@ const ETIQUETTE =
 // written FOR the model to read and self-correct.
 const NOT_JOINED_ERROR =
   "Você não está registrado nesta sessão MCP (o Hub pode ter sido reiniciado). Chame a tool join novamente com o seu agent_name (confira a variável de ambiente SWITCHBOARD_AGENT_NAME via printenv) e então repita esta operação.";
+
+// v1.1: join on a token-protected agent without the right token. Written FOR
+// the model to self-correct — and it must NEVER echo the expected token.
+function joinTokenError(name: string): string {
+  return (
+    `O agente "${name}" já está registrado e protegido por capability token, e o token informado ` +
+    `está ausente ou incorreto. Rode printenv SWITCHBOARD_AGENT_TOKEN no seu ambiente e chame join ` +
+    `novamente passando esse valor no campo token. Se a variável não existir nesta sessão, você não ` +
+    `foi iniciado como "${name}": confira o seu nome com printenv SWITCHBOARD_AGENT_NAME e use-o no join.`
+  );
+}
+
+/**
+ * Timing-safe token comparison (v1.1). timingSafeEqual demands equal-length
+ * buffers (it THROWS on mismatch, which would both leak the length and crash
+ * the tool) — so both sides are hashed to fixed-size SHA-256 digests first
+ * and the digests are compared in constant time.
+ */
+function tokenMatches(expected: string, provided: string | undefined): boolean {
+  if (typeof provided !== "string" || provided.length === 0) return false;
+  const expectedDigest = createHash("sha256").update(expected, "utf8").digest();
+  const providedDigest = createHash("sha256").update(provided, "utf8").digest();
+  return timingSafeEqual(expectedDigest, providedDigest);
+}
 
 // Session lifecycle defaults (overridable for tests). 30 min without any
 // request on a session ≈ client dead or idle long enough that re-initializing
@@ -141,7 +165,7 @@ export function createMcpEndpoint(options: McpOptions): McpEndpoint {
     const agent = store.getAgent(agentName);
     if (!stillConnected && agent && agent.mcpConnected) {
       const updated = store.updateAgent(agentName, { mcpConnected: false });
-      bus.emit({ type: "agent_updated", payload: updated });
+      bus.emit({ type: "agent_updated", payload: toPublicAgent(updated) });
       log.info(`[mcp] agente ${agentName} desconectado do MCP (${reason}).`);
     }
   }
@@ -168,6 +192,7 @@ export function createMcpEndpoint(options: McpOptions): McpEndpoint {
         inputSchema: {
           agent_name: z.string(),
           role: z.string().optional(),
+          token: z.string().optional(),
         },
       },
       async (args, extra) => {
@@ -177,10 +202,16 @@ export function createMcpEndpoint(options: McpOptions): McpEndpoint {
         }
         const name = args.agent_name;
         let agent = store.getAgent(name);
+        // Set ONLY when this join hands a token out (on-the-fly creation or
+        // legacy-snapshot claim — PRD 9.1 v1.1). The normal path (registered
+        // via `switchboard start`, token proven) returns NO token: the agent
+        // already holds it in SWITCHBOARD_AGENT_TOKEN.
+        let issuedToken: string | undefined;
         if (!agent) {
           // Normal path is registration via `switchboard start` (D4); an
           // unknown name is created on-the-fly with the deduced tmux session
-          // and a warning (PRD 9.1).
+          // and a warning (PRD 9.1). The store generates the capability token
+          // and join RETURNS it: the first session to claim a name owns it.
           try {
             agent = store.registerAgent({
               name,
@@ -191,9 +222,30 @@ export function createMcpEndpoint(options: McpOptions): McpEndpoint {
           } catch (err) {
             return jsonResult({ ok: false, error: (err as Error).message });
           }
+          issuedToken = agent.token;
           log.warn(
             `[mcp] join criou o agente "${name}" on-the-fly (sem registro prévio via switchboard start); ` +
               `tmuxSession deduzida: ${agent.tmuxSession}.`,
+          );
+        } else if (agent.token !== undefined) {
+          // v1.1 (section 15): a token-protected agent can only be claimed
+          // with the matching token — closes local impersonation of
+          // registered agents. Validated BEFORE any state is touched.
+          if (!tokenMatches(agent.token, args.token)) {
+            log.warn(
+              `[mcp] join recusado para "${name}": token ausente ou incorreto (sessão ${sessionId}).`,
+            );
+            return jsonResult({ ok: false, error: joinTokenError(name) });
+          }
+        } else {
+          // Legacy pre-v1.1 snapshot (record without token): the first join
+          // claims the name — accept, generate a token and return it so the
+          // session can present it on future joins.
+          agent = store.updateAgent(name, { token: generateAgentToken() });
+          issuedToken = agent.token;
+          log.warn(
+            `[mcp] agente "${name}" não tinha capability token (snapshot pré-v1.1) — ` +
+              `token gerado neste join.`,
           );
         }
 
@@ -216,7 +268,7 @@ export function createMcpEndpoint(options: McpOptions): McpEndpoint {
         if (previous && previous !== name) {
           releaseAgentIfUnmapped(previous, `sessão ${sessionId} re-associada para ${name}`);
         }
-        bus.emit({ type: "agent_updated", payload: updated });
+        bus.emit({ type: "agent_updated", payload: toPublicAgent(updated) });
         log.info(`[mcp] join: sessão ${sessionId} → agente ${name}.`);
 
         return jsonResult({
@@ -225,6 +277,9 @@ export function createMcpEndpoint(options: McpOptions): McpEndpoint {
             .listAgents()
             .map((a) => ({ name: a.name, role: a.role, status: a.status })),
           etiquette: ETIQUETTE,
+          // Only on on-the-fly creation / legacy claim (PRD 9.1 v1.1); never
+          // echoed back on a normal token-proven join.
+          ...(issuedToken !== undefined ? { token: issuedToken } : {}),
         });
       },
     );

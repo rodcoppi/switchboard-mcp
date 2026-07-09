@@ -1,5 +1,13 @@
 # NOTES — achados dos spikes da Phase 0
 
+> **Nota (adendo v1.1 do PRD):** pesquisa de concorrentes (claude-peers-mcp, Walkie-Talkie)
+> confirmou que a combinação do Switchboard não existe montada. Três ideias avaliadas do
+> claude-peers-mcp: **capability token** → adotado na v1 (ver PRD 9.1/11/15); **urgency
+> tiers** → v2 (PRD seção 20); **bracketed-paste no send-keys** → DESCARTADO POR DESIGN:
+> ele mitiga a digitação de conteúdo arbitrário no pane, coisa que o Switchboard nunca faz
+> (corpo só via MCP; o que entra no pane é um nudge de formato fixo, uma linha, com nomes
+> validados por regex). Não reavaliar sem mudar essa premissa.
+
 Arquivo exigido pelos Done When dos spikes 0.3 e 0.4 do PRD (seção 16). Registra os achados
 que a implementação das Phases 1–7 precisa conhecer. Fonte da verdade continua sendo o PRD;
 isto aqui é evidência de execução + gotchas de API.
