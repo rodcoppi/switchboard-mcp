@@ -4,6 +4,9 @@
   "private": true,
   "description": "Hub local que conecta instâncias independentes de Claude Code em sessões tmux, com troca assíncrona de mensagens via MCP e dashboard web de observação.",
   "type": "module",
+  "bin": {
+    "switchboard": "./bin/switchboard.mjs"
+  },
   "engines": {
     "node": ">=20"
   },

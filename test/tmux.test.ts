@@ -9,13 +9,17 @@
 //   when the pane became unsafe during the delay;
 // - newline sanitization (nudgeSession flattens; sendKeysLiteral throws).
 
+import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import {
   createTmux,
+  defaultExec,
   isSafePaneCommand,
   type ExecFn,
   type ExecResult,
 } from "../src/server/tmux.js";
+
+const hasTmux = spawnSync("tmux", ["-V"]).status === 0;
 
 interface RecordedCall {
   file: string;
@@ -337,5 +341,35 @@ describe("nudgeSession (nudge de alto nível: guarda + texto + Enter separado)",
     await expect(tmux.sendKeysLiteral("sb-alpha", "a\nb")).rejects.toThrow(/uma linha/);
     await expect(tmux.sendKeysLiteral("sb-alpha", "a\rb")).rejects.toThrow(/uma linha/);
     expect(calls).toHaveLength(0); // nada chegou ao tmux
+  });
+});
+
+// ---------------------------------------------------------------------------
+// defaultExec (tmux REAL): a falha NUNCA ecoa o argv na message/stack — o
+// "Command failed: …" cru do execFile promisificado carregaria a linha de
+// comando inteira, e no new-session do start ela contém o
+// SWITCHBOARD_AGENT_TOKEN (invariante v1.1: token jamais impresso/logado).
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!hasTmux)("defaultExec: erro sanitizado (tmux real)", () => {
+  it("erro de comando tmux não contém os argumentos (um token no argv jamais vazaria)", async () => {
+    const secretArg = "SEGREDO_ARGV_deadbeef1234";
+    const err = await defaultExec("tmux", [
+      "send-keys",
+      "-t",
+      "=sessao-inexistente-sanitizacao:",
+      "-l",
+      "--",
+      secretArg,
+    ]).then(
+      () => undefined,
+      (e: Error) => e,
+    );
+
+    expect(err).toBeInstanceOf(Error);
+    expect(err!.message).not.toContain(secretArg);
+    expect(String(err!.stack ?? "")).not.toContain(secretArg);
+    // Continua diagnosticável: subcomando + stderr do próprio tmux.
+    expect(err!.message).toMatch(/^tmux send-keys falhou: /);
   });
 });

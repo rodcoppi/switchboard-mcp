@@ -48,10 +48,34 @@ export type ExecFn = (file: string, args: string[]) => Promise<ExecResult>;
 
 const execFileAsync = promisify(execFile);
 
-/** Default executor: execFile with an args ARRAY (P9), "tmux" from PATH. */
+/**
+ * Default executor: execFile with an args ARRAY (P9), "tmux" from PATH.
+ *
+ * Failures are RE-THROWN SANITIZED: promisified execFile embeds the FULL
+ * command line in err.message ("Command failed: tmux new-session … env
+ * SWITCHBOARD_AGENT_TOKEN=<token> claude"), and the Phase 4 `start` passes
+ * the capability token through new-session — echoing argv in an error that
+ * can reach stderr would violate the v1.1 invariant "token NUNCA
+ * impresso/logado". The sanitized message carries only the tmux subcommand,
+ * the exit/errno code and tmux's own stderr (e.g. "duplicate session:
+ * sb-alpha" — never contains the token); code/stderr also ride as properties
+ * for programmatic callers/debugging.
+ */
 export const defaultExec: ExecFn = async (file, args) => {
-  const { stdout, stderr } = await execFileAsync(file, args, { encoding: "utf8" });
-  return { stdout, stderr };
+  try {
+    const { stdout, stderr } = await execFileAsync(file, args, { encoding: "utf8" });
+    return { stdout, stderr };
+  } catch (err) {
+    const raw = err as NodeJS.ErrnoException & { stderr?: string };
+    const stderr = typeof raw.stderr === "string" ? raw.stderr.trim() : "";
+    const detail = stderr !== "" ? stderr : String(raw.code ?? "erro desconhecido");
+    const sanitized = new Error(
+      `${file} ${args[0] ?? ""} falhou: ${detail}`,
+    ) as Error & { code?: string | number; stderr?: string };
+    sanitized.code = raw.code as string | number | undefined;
+    sanitized.stderr = stderr;
+    throw sanitized;
+  }
 };
 
 /**
@@ -110,6 +134,23 @@ export interface NudgeResult {
   reason?: string;
 }
 
+/**
+ * Quotes ONE argv element for the shell command tmux runs. Context: tmux's
+ * `new-session [shell-command]` joins its trailing arguments with spaces and
+ * executes the result via `sh -c` — it does NOT preserve argv boundaries. So
+ * to give newSession real ARRAY semantics (each element = exactly one argv of
+ * the final process — Phase 4 needs this for
+ * `env SWITCHBOARD_AGENT_TOKEN=<token> claude <args>`), every element is
+ * shell-quoted here before joining. POSIX single-quote strategy: wrap in
+ * '…' and escape embedded single quotes as '\'' — safe for ANY content.
+ * Exported for direct unit testing.
+ */
+export function quoteShellArg(arg: string): string {
+  if (arg.length === 0) return "''";
+  if (/^[A-Za-z0-9_@%+=:,./-]+$/.test(arg)) return arg; // no quoting needed
+  return `'${arg.replaceAll("'", `'\\''`)}'`;
+}
+
 export interface Tmux {
   /** `tmux has-session -t =<s>` — true/false via exit code, never throws. */
   hasSession(session: string): Promise<boolean>;
@@ -123,8 +164,14 @@ export interface Tmux {
   sendKeysLiteral(session: string, text: string): Promise<void>;
   /** `tmux send-keys -t =<s>: Enter` — always a SEPARATE command (P1). */
   sendEnter(session: string): Promise<void>;
-  /** `tmux new-session -d -s <s> -c <cwd> [<cmd>]`. */
-  newSession(session: string, cwd: string, cmd?: string): Promise<void>;
+  /**
+   * `tmux new-session -d -s <s> -c <cwd> [<cmd>]`. `cmd` as a STRING is a raw
+   * sh command (legacy behavior, caller owns the quoting); as an ARRAY it has
+   * argv semantics — each element becomes exactly one argument of the final
+   * process (elements are shell-quoted before tmux's space-join, see
+   * quoteShellArg).
+   */
+  newSession(session: string, cwd: string, cmd?: string | string[]): Promise<void>;
   /** `tmux capture-pane -t =<s>: -p -S -<lines>` (default 200 lines back). */
   capturePane(session: string, lines?: number): Promise<string>;
   /** `tmux kill-session -t =<s>`. */
@@ -217,10 +264,21 @@ export function createTmux(options: TmuxOptions = {}): Tmux {
     await exec("tmux", ["send-keys", "-t", paneTarget(session), "Enter"]);
   }
 
-  async function newSession(session: string, cwd: string, cmd?: string): Promise<void> {
+  async function newSession(
+    session: string,
+    cwd: string,
+    cmd?: string | string[],
+  ): Promise<void> {
     assertValidSession(session);
     const args = ["new-session", "-d", "-s", session, "-c", cwd];
-    if (cmd !== undefined) args.push(cmd);
+    if (Array.isArray(cmd)) {
+      // Argv semantics: tmux would space-join multiple trailing args into one
+      // sh -c string anyway, so we do the join OURSELVES with each element
+      // shell-quoted — array boundaries survive exactly (see quoteShellArg).
+      args.push(cmd.map(quoteShellArg).join(" "));
+    } else if (cmd !== undefined) {
+      args.push(cmd);
+    }
     await exec("tmux", args);
   }
 

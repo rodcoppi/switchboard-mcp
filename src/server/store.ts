@@ -73,7 +73,12 @@ export interface StoreLogger {
 
 export interface RegisterAgentInput {
   name: string;
-  role: string;
+  /**
+   * undefined = "flag/field omitted": a re-register then PRESERVES the role
+   * already stored (PRD 8: re-attach reuses the registration, never zeroes
+   * it). An explicit "" clears it.
+   */
+  role?: string;
   tmuxSession: string;
   cwd: string;
 }
@@ -129,7 +134,7 @@ export class Store {
     const now = new Date().toISOString();
 
     if (existing) {
-      existing.role = input.role;
+      existing.role = input.role ?? existing.role; // omitted → preserve (PRD 8)
       existing.tmuxSession = input.tmuxSession;
       existing.cwd = input.cwd;
       // Registration happens BEFORE the new Claude Code opens (D4), so at
@@ -157,7 +162,7 @@ export class Store {
 
     const agent: Agent = {
       name: input.name,
-      role: input.role,
+      role: input.role ?? "",
       tmuxSession: input.tmuxSession,
       cwd: input.cwd,
       // Status is derived from tmux has-session polling (Phase 3); a fresh

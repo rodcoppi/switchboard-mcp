@@ -351,8 +351,11 @@ export function createApiRouter(options: ApiOptions): express.Router {
 
     try {
       const agent = store.registerAgent({
+        // role stays undefined when the field is absent: the store then
+        // PRESERVES the registered role on re-attach (PRD 8) instead of
+        // silently erasing it with "".
         name: raw.name,
-        role: (raw.role as string | undefined) ?? "",
+        role: raw.role as string | undefined,
         cwd: (raw.cwd as string | undefined) ?? "",
         tmuxSession:
           (raw.tmuxSession as string | undefined) ?? config.tmuxSessionPrefix + raw.name,
