@@ -12,6 +12,25 @@ Arquivo exigido pelos Done When dos spikes 0.3 e 0.4 do PRD (seção 16). Regist
 que a implementação das Phases 1–7 precisa conhecer. Fonte da verdade continua sendo o PRD;
 isto aqui é evidência de execução + gotchas de API.
 
+## Achado da Phase 5 (kickoff autônomo, 2026-07-09)
+
+Done When da Phase 5 verificado ao vivo com Claude Code 2.1.205 real: `start alpha` sem
+prompt humano → kickoff detecta readiness → injeta o texto → alpha chama `join` sozinho →
+`status` mostra `MCP: sim` (join em ~12s). Dois achados no caminho:
+
+1. **Readiness x permission-mode:** o marcador `"? for shortcuts"` é SUBSTITUÍDO no rodapé
+   quando o agente roda em `--permission-mode bypassPermissions` (vira `"⏵⏵ bypass
+   permissions on (shift+tab to cycle)"`). O `isTuiReady` foi endurecido para aceitar
+   também `"shift+tab to cycle"` / `"bypass permissions on"` / `"accept edits on"` /
+   `"plan mode on"` — senão o kickoff de um agente em bypass (que a seção 9.5 diz estar
+   "coberto") dava timeout e nunca disparava.
+
+2. **Token v1.1 x permissão de Bash:** o snippet manda o agente ler `SWITCHBOARD_AGENT_TOKEN`
+   via `printenv` antes do `join`. Isso é um comando de shell — a allow rule
+   `mcp__switchboard__*` (que cobre as tools) NÃO cobre o `printenv`, então o agente para
+   uma vez no prompt de aprovação. Fluxo 100% autônomo exige `bypassPermissions` OU
+   `Bash(printenv:*)` na allow rule. Documentado no README (passo 3).
+
 ## Status dos spikes
 
 | Spike | Status | Evidência |

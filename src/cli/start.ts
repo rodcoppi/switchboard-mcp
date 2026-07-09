@@ -140,11 +140,26 @@ export function kickoffText(name: string): string {
  * TUI readiness detection (spikes/NOTES.md, spike 0.3): a ready Claude Code
  * pane shows "? for shortcuts" under the input box, whose left border renders
  * as "│ >". While the trust dialog is up ("Quick safety check: Is this a
- * project you created or one you trust?") NEITHER marker is present — and a
- * blind kickoff there would type into a MENU where digits select options.
+ * project you created or one you trust?") NONE of these markers are present —
+ * and a blind kickoff there would type into a MENU where digits select options.
+ *
+ * IMPORTANT (observed with claude 2.1.205): a non-default permission mode
+ * REPLACES "? for shortcuts" in the footer. Under `--permission-mode
+ * bypassPermissions` the footer reads "⏵⏵ bypass permissions on (shift+tab to
+ * cycle)" and "? for shortcuts" never appears — so we ALSO accept the
+ * permission-mode footer markers, otherwise the kickoff of a bypass-mode agent
+ * (the setup section 9.5 explicitly says is "already covered") would time out
+ * and never fire. None of these strings appear in the trust dialog.
  */
 export function isTuiReady(pane: string): boolean {
-  return pane.includes("? for shortcuts") || pane.includes("│ >");
+  return (
+    pane.includes("? for shortcuts") || // default footer
+    pane.includes("│ >") || // legacy input-box left border
+    pane.includes("shift+tab to cycle") || // any non-default permission mode
+    pane.includes("bypass permissions on") ||
+    pane.includes("accept edits on") ||
+    pane.includes("plan mode on")
+  );
 }
 
 // ---------------------------------------------------------------------------

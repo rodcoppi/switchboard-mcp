@@ -157,6 +157,23 @@ describe("isTuiReady", () => {
     expect(isTuiReady("╭──╮\n│ > \n╰──╯")).toBe(true);
   });
 
+  it("reconhece o rodapé do bypass permissions mode (substitui '? for shortcuts')", () => {
+    // Observado com claude 2.1.205 + --permission-mode bypassPermissions: o
+    // rodapé perde "? for shortcuts". Sem este marcador o kickoff de um agente
+    // em bypass (que a seção 9.5 diz estar "coberto") daria timeout.
+    const bypassFooter = [
+      "❯ ",
+      "────────",
+      "  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents",
+    ].join("\n");
+    expect(isTuiReady(bypassFooter)).toBe(true);
+  });
+
+  it("reconhece outros permission-mode footers (accept edits / plan mode)", () => {
+    expect(isTuiReady("❯ \n  accept edits on (shift+tab to cycle)")).toBe(true);
+    expect(isTuiReady("❯ \n  plan mode on (shift+tab to cycle)")).toBe(true);
+  });
+
   it("diálogo de confiança (claude 2.1.205) NÃO é ready — dígitos selecionam opções", () => {
     expect(isTuiReady(TRUST_DIALOG_PANE)).toBe(false);
   });
