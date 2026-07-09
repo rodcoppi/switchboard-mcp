@@ -31,6 +31,24 @@ export interface Message {
 }
 
 // ---------------------------------------------------------------------------
+// Delivery outcome of a stored message (PRD section 9.2 — output of the
+// send_message tool). In Phase 2 there is no dispatcher yet, so only the
+// queued_* values occur; Phase 3 plugs the nudge dispatcher into the hub's
+// onMessage extension point and starts producing "nudged"/"coalesced".
+// ---------------------------------------------------------------------------
+
+export type Delivery = "nudged" | "coalesced" | "queued_offline" | "queued_muted";
+
+/**
+ * Extension point wired in hub.ts: called once per stored message (AFTER the
+ * JSONL append — storage is the source of truth, delivery is best-effort)
+ * with the recipient's live Agent record. Returns the delivery outcome.
+ * Phase 3 implements this with the tmux nudge dispatcher; it must NEVER
+ * block (every MCP tool answers in < 1s — PRD section 4, rule 4).
+ */
+export type OnMessage = (message: Message, recipient: Agent) => Delivery;
+
+// ---------------------------------------------------------------------------
 // Configuration (PRD section 7). Every key has a default; the config file
 // (~/.switchboard/config.json) may not exist at all.
 // ---------------------------------------------------------------------------

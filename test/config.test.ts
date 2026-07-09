@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
-import { BIND_HOST, DEFAULTS, loadConfig } from "../src/server/config.js";
+import { BIND_HOST, DEFAULTS, ensureConfigFile, loadConfig } from "../src/server/config.js";
 
 let dir: string;
 let warnSpy: MockInstance;
@@ -127,5 +127,28 @@ describe("loadConfig", () => {
     expect(config.pairRateLimitPerMinute).toBe(1);
     expect(config.maxMessageBytes).toBe(1024);
     expect(warnSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("ensureConfigFile", () => {
+  it("creates config.json with every default on the first serve (PRD section 7)", () => {
+    const file = path.join(dir, "config.json");
+    expect(fs.existsSync(file)).toBe(false);
+    ensureConfigFile(dir);
+    expect(fs.existsSync(file)).toBe(true);
+    expect(JSON.parse(fs.readFileSync(file, "utf8"))).toEqual(DEFAULTS);
+    // the freshly written file loads back as pure defaults, no warns
+    expect(loadConfig(dir)).toEqual(DEFAULTS);
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it("never overwrites nor normalizes an existing config.json", () => {
+    // even an INVALID existing file is preserved verbatim (the read-side
+    // merge already tolerates it); ensureConfigFile must not touch it
+    writeConfig('{"port": 4999, "chaveDesconhecida": true}');
+    const before = fs.readFileSync(path.join(dir, "config.json"), "utf8");
+    ensureConfigFile(dir);
+    expect(fs.readFileSync(path.join(dir, "config.json"), "utf8")).toBe(before);
+    expect(loadConfig(dir).port).toBe(4999);
   });
 });

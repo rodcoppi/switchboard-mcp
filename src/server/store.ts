@@ -30,6 +30,17 @@ import { defaultBaseDir } from "./config.js";
 /** Agent name rule (PRD section 8): lowercase alphanumeric + hyphens, 2..31 chars. */
 export const AGENT_NAME_RE = /^[a-z0-9][a-z0-9-]{1,30}$/;
 
+/**
+ * Names with system-level meaning, never registrable as agents. PRD section 8
+ * defines the namespaces as disjoint: `from` is "agent name | operator" (the
+ * human) and `to` is "agent name | all" (broadcast pseudo-recipient).
+ * Allowing them as agent names would let any agent impersonate the human's
+ * authority (from:"operator" is the protocol's only trust signal) or collide
+ * with broadcast expansion. Enforced here — the single chokepoint through
+ * which both REST register and MCP join pass.
+ */
+export const RESERVED_AGENT_NAMES: ReadonlySet<string> = new Set(["operator", "all"]);
+
 /** Sanity cap on registered agents (PRD section 14). */
 export const MAX_AGENTS = 50;
 
@@ -87,6 +98,12 @@ export class Store {
    * tmux session may be reused is decided by the caller, not here.
    */
   registerAgent(input: RegisterAgentInput): Agent {
+    if (RESERVED_AGENT_NAMES.has(input.name)) {
+      throw new Error(
+        `Nome reservado: "${input.name}". "operator" (o humano dono do sistema) e "all" ` +
+          `(pseudo-destinatário de broadcast) são identidades do sistema — escolha outro nome de agente.`,
+      );
+    }
     if (!AGENT_NAME_RE.test(input.name)) {
       throw new Error(
         `Nome de agente inválido: "${input.name}". Use minúsculas, dígitos e hífens ` +
@@ -186,6 +203,26 @@ export class Store {
     Object.assign(agent, cleaned);
     this.saveAgentsSnapshot();
     return agent;
+  }
+
+  /**
+   * Boot reconciliation (called once by startHub): MCP sessions live only in
+   * the hub's in-memory Map, so by construction NONE survives a hub restart —
+   * any mcpConnected=true / status="online" loaded from agents.json is ghost
+   * state left by a non-graceful shutdown (kill -9, power loss; only a clean
+   * close() resets it via dropSession). Without this, /api/agents and
+   * list_agents would report dead agents as connected/online forever.
+   */
+  resetConnectionState(): void {
+    let changed = false;
+    for (const agent of this.agents.values()) {
+      if (agent.mcpConnected || agent.status === "online") {
+        agent.mcpConnected = false;
+        agent.status = "offline";
+        changed = true;
+      }
+    }
+    if (changed) this.saveAgentsSnapshot();
   }
 
   // ---------------------------------------------------------------- messages
@@ -327,10 +364,16 @@ export class Store {
       return;
     }
     for (const entry of parsed) {
-      if (isAgent(entry)) {
-        this.agents.set(entry.name, entry);
-      } else {
+      if (!isAgent(entry)) {
         this.log.warn(`[store] registro de agente inválido no snapshot — pulando.`);
+      } else if (RESERVED_AGENT_NAMES.has(entry.name)) {
+        // Legacy data written before the reserved-name guard: loading it would
+        // reopen the operator-impersonation / broadcast-collision hole via join.
+        this.log.warn(
+          `[store] agente com nome reservado "${entry.name}" no snapshot — pulando.`,
+        );
+      } else {
+        this.agents.set(entry.name, entry);
       }
     }
   }

@@ -66,6 +66,54 @@ describe("agents", () => {
     expect(() => registerAgent(store, "a".repeat(31))).not.toThrow();
   });
 
+  it('rejects the reserved names "operator" and "all" (system identities)', () => {
+    const store = newStore();
+    for (const reserved of ["operator", "all"]) {
+      expect(() => registerAgent(store, reserved), `name: "${reserved}"`).toThrow(
+        /reservado/,
+      );
+    }
+    expect(store.listAgents()).toHaveLength(0);
+  });
+
+  it("skips reserved-name agents when loading the snapshot (legacy data)", () => {
+    const store = newStore();
+    registerAgent(store, "alpha");
+    // simulate a snapshot written before the reserved-name guard existed
+    const snapshot = JSON.parse(fs.readFileSync(path.join(dir, "agents.json"), "utf8"));
+    fs.writeFileSync(
+      path.join(dir, "agents.json"),
+      JSON.stringify([snapshot[0], { ...snapshot[0], name: "operator" }]),
+    );
+
+    warnings = [];
+    const rebooted = newStore();
+    expect(rebooted.listAgents().map((a) => a.name)).toEqual(["alpha"]);
+    expect(warnings.some((w) => w.includes("reservado"))).toBe(true);
+  });
+
+  it("resetConnectionState clears ghost mcpConnected/online state and persists it", () => {
+    const store = newStore();
+    registerAgent(store, "alpha");
+    registerAgent(store, "beta");
+    store.updateAgent("alpha", { status: "online", mcpConnected: true });
+
+    // reboot WITHOUT a graceful shutdown: the snapshot still says connected
+    const rebooted = newStore();
+    expect(rebooted.getAgent("alpha")?.mcpConnected).toBe(true);
+    expect(rebooted.getAgent("alpha")?.status).toBe("online");
+
+    rebooted.resetConnectionState();
+    expect(rebooted.getAgent("alpha")?.mcpConnected).toBe(false);
+    expect(rebooted.getAgent("alpha")?.status).toBe("offline");
+    expect(rebooted.getAgent("beta")?.status).toBe("offline"); // untouched
+
+    // and the reset reached the snapshot, not just memory
+    const boot3 = newStore();
+    expect(boot3.getAgent("alpha")?.mcpConnected).toBe(false);
+    expect(boot3.getAgent("alpha")?.status).toBe("offline");
+  });
+
   it("reuses the record when the same name registers again (logical re-attach)", () => {
     const store = newStore();
     const first = registerAgent(store, "alpha");

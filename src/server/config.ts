@@ -35,6 +35,20 @@ export function defaultBaseDir(): string {
 }
 
 /**
+ * Creates `<baseDir>/config.json` with the defaults when it does not exist
+ * (PRD section 7: the file is "criado com defaults no primeiro serve"), so
+ * the user has a discoverable, editable file listing every key. An existing
+ * file is NEVER overwritten or normalized — loadConfig already tolerates
+ * partial/invalid values on read. Called by startHub (the serve path) only.
+ */
+export function ensureConfigFile(baseDir: string = defaultBaseDir()): void {
+  const file = path.join(baseDir, "config.json");
+  if (fs.existsSync(file)) return;
+  fs.mkdirSync(baseDir, { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(DEFAULTS, null, 2) + "\n");
+}
+
+/**
  * Loads config from `<baseDir>/config.json`, merging partial user values over
  * DEFAULTS. Rules (PRD section 7):
  * - file may not exist → pure defaults;
