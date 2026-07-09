@@ -424,7 +424,7 @@
     <div class="brand"><span class="logo"></span> Switchboard</div>
     <div class="hub-status">
       <span class="conn-state" id="conn-state" data-state="connecting">
-        <span class="dot"></span><span id="conn-label">conectando</span>
+        <span class="dot"></span><span id="conn-label">connecting</span>
       </span>
       <span class="metric">online <b id="online-count">0</b>/<span id="agent-count">0</span></span>
       <span class="metric">uptime <b id="uptime">—</b></span>
@@ -433,14 +433,14 @@
     <div class="header-spacer"></div>
     <div class="mcp-add">
       <code id="mcp-cmd" title=""></code>
-      <button class="btn btn-copy" id="copy-mcp" type="button">copiar</button>
+      <button class="btn btn-copy" id="copy-mcp" type="button">copy</button>
     </div>
   </header>
 
   <div class="layout">
     <aside class="sidebar">
       <div class="sidebar-head">
-        <span>Agentes</span>
+        <span>Agents</span>
         <span id="sidebar-count">0</span>
       </div>
       <div class="agents" id="agents"></div>
@@ -448,9 +448,9 @@
 
     <main class="main">
       <div class="filter-bar" id="filter-bar">
-        <span class="label">filtrando por</span>
+        <span class="label">filtering by</span>
         <span class="target" id="filter-target"></span>
-        <button class="filter-clear" id="filter-clear" type="button">limpar filtro ✕</button>
+        <button class="filter-clear" id="filter-clear" type="button">clear filter ✕</button>
       </div>
 
       <div class="feed" id="feed"></div>
@@ -459,19 +459,19 @@
         <div class="composer-row">
           <div class="composer-side">
             <div>
-              <label for="recipient">destinatário</label>
+              <label for="recipient">recipient</label>
               <select id="recipient" name="recipient"></select>
             </div>
-            <button class="send-btn" id="send-btn" type="submit">enviar</button>
+            <button class="send-btn" id="send-btn" type="submit">send</button>
           </div>
           <div class="field">
-            <label for="composer-body">mensagem (como <span class="composer-as">operator</span>)</label>
+            <label for="composer-body">message (as <span class="composer-as">operator</span>)</label>
             <textarea id="composer-body" name="body"
-              placeholder="Mensagem factual e acionável para o agente…&#10;Ctrl/⌘+Enter envia."></textarea>
+              placeholder="Factual, actionable message for the agent…&#10;Ctrl/⌘+Enter sends."></textarea>
           </div>
         </div>
         <div class="composer-hint">
-          Envia como <span class="composer-as">operator</span> (o humano). Broadcast = destinatário “all”.
+          Sends as <span class="composer-as">operator</span> (the human). Broadcast = recipient “all”.
         </div>
       </form>
     </main>
@@ -598,7 +598,7 @@
           el(
             "div",
             "empty-hint",
-            "Nenhum agente registrado. Rode `switchboard start <nome>`.",
+            "No registered agents. Run `switchboard start <name>`.",
           ),
         );
         renderHeader();
@@ -628,12 +628,12 @@
       const badges = el("div", "agent-badges");
       const mcp = el("span", `mcp-icon${agent.mcpConnected ? " connected" : ""}`, "MCP");
       mcp.title = agent.mcpConnected
-        ? "MCP conectado (join confirmado)"
-        : "MCP não conectado ainda";
+        ? "MCP connected (join confirmed)"
+        : "MCP not connected yet";
       badges.appendChild(mcp);
       if (agent.unreadCount > 0) {
         const badge = el("span", "unread-badge", String(agent.unreadCount));
-        badge.title = `${agent.unreadCount} não lida(s)`;
+        badge.title = `${agent.unreadCount} unread`;
         badges.appendChild(badge);
       }
 
@@ -646,7 +646,7 @@
         agent.muted ? "unmute" : "mute",
       );
       mute.type = "button";
-      mute.title = agent.muted ? "Reativar nudges" : "Silenciar nudges (mensagens ainda são gravadas)";
+      mute.title = agent.muted ? "Unmute nudges" : "Mute nudges (messages are still recorded)";
       mute.addEventListener("click", (ev) => {
         ev.stopPropagation();
         toggleMute(agent.name, !agent.muted);
@@ -655,7 +655,7 @@
       const nudge = el("button", "nudge-btn", "nudge");
       nudge.type = "button";
       nudge.dataset.nudgeFor = agent.name;
-      nudge.title = "Forçar um nudge manual (respeita a guarda de pane)";
+      nudge.title = "Force a manual nudge (respects the pane guard)";
       nudge.addEventListener("click", (ev) => {
         ev.stopPropagation();
         forceNudge(agent.name);
@@ -699,8 +699,8 @@
             "div",
             "empty-hint",
             state.filter
-              ? `Nenhuma mensagem envolvendo "${state.filter}".`
-              : "Nenhuma mensagem ainda. As trocas entre agentes aparecem aqui em tempo real.",
+              ? `No messages involving "${state.filter}".`
+              : "No messages yet. Agent exchanges appear here in real time.",
           ),
         );
         return;
@@ -725,8 +725,8 @@
       const row = el("div", "msg-row");
       row.classList.add(m.readAt ? "read" : "unread");
       const flag = m.readAt
-        ? Object.assign(el("span", "msg-read-flag read", "✓ lida"), { title: fmtTime(m.readAt) })
-        : el("span", "msg-read-flag pending", "• não lida");
+        ? Object.assign(el("span", "msg-read-flag read", "✓ read"), { title: fmtTime(m.readAt) })
+        : el("span", "msg-read-flag pending", "• unread");
       row.appendChild(buildMetaLine(m.from, m.to, { createdAt: m.createdAt, readFlag: flag }));
       row.appendChild(el("div", "msg-body", m.body));
       return row;
@@ -740,13 +740,13 @@
       const flag = el(
         "span",
         `msg-read-flag ${readCount === group.length ? "read" : "pending"}`,
-        `${readCount}/${group.length} lidas`,
+        `${readCount}/${group.length} read`,
       );
-      flag.title = group.map((x) => `${x.to}: ${x.readAt ? "lida" : "não lida"}`).join(" · ");
+      flag.title = group.map((x) => `${x.to}: ${x.readAt ? "read" : "unread"}`).join(" · ");
       const meta = buildMetaLine(first.from, "all", { createdAt: first.createdAt, readFlag: flag });
       // Annotate the recipient count next to "all".
       meta.insertBefore(
-        el("span", "msg-arrow", `(${group.length} destinatários)`),
+        el("span", "msg-arrow", `(${group.length} recipients)`),
         flag,
       );
       row.appendChild(meta);
@@ -912,11 +912,11 @@
           // First connect: boot() already fetched the snapshot, so just go live
           // (re-fetching here would be a harmless duplicate, but we skip it).
           sseConnectedOnce = true;
-          setConnState("live", "ao vivo");
+          setConnState("live", "live");
           return;
         }
         // Reconnect after a gap (hub restart, laptop sleep/wake, socket drop):
-        // resync before flipping the pill back to "ao vivo", so the header never
+        // resync before flipping the pill back to "live", so the header never
         // claims freshness over a view that silently missed events.
         Promise.all([loadAgents(), loadMessages()])
           .then(() => {
@@ -925,9 +925,9 @@
             renderFeed();
           })
           .catch(() => {
-            toast("Falha ao ressincronizar após reconexão.", "warn");
+            toast("Failed to resync after reconnection.", "warn");
           })
-          .finally(() => setConnState("live", "ao vivo"));
+          .finally(() => setConnState("live", "live"));
       };
       es.onmessage = (ev) => {
         let parsed;
@@ -940,7 +940,7 @@
       };
       // EventSource reconnects on its own; we only surface the state so the
       // operator knows the feed is stale until it recovers.
-      es.onerror = () => setConnState("reconnecting", "reconectando");
+      es.onerror = () => setConnState("reconnecting", "reconnecting");
     }
 
     // =====================================================================
@@ -956,15 +956,15 @@
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok || !data.ok) {
-          toast(data.error || `Falha ao alterar mute (HTTP ${res.status}).`, "error");
+          toast(data.error || `Failed to change mute (HTTP ${res.status}).`, "error");
           return;
         }
         mergeAgent(data.agent); // agent_updated will also arrive via SSE
         renderAgents();
         renderRecipients();
-        toast(`${name} ${muted ? "silenciado" : "reativado"}.`, "ok");
+        toast(`${name} ${muted ? "muted" : "unmuted"}.`, "ok");
       } catch {
-        toast("Falha de rede ao alterar mute.", "error");
+        toast("Network failure while changing mute.", "error");
       }
     }
 
@@ -976,14 +976,14 @@
         const data = await res.json().catch(() => ({}));
         if (res.ok && data.ok) {
           pulseNudge(name);
-          toast(`Nudge enviado para ${name}.`, "ok");
+          toast(`Nudge sent to ${name}.`, "ok");
           return;
         }
-        // 409 (pane insegura / sessão morta), 404 (desconhecido), 501 (sem
-        // dispatcher). A mensagem do hub já é amigável — mostrar sem quebrar.
-        toast(data.error || `Nudge não entregue para ${name} (HTTP ${res.status}).`, "warn");
+        // 409 (unsafe pane / dead session), 404 (unknown), 501 (no
+        // dispatcher). The hub message is already friendly — show it without breaking.
+        toast(data.error || `Nudge not delivered to ${name} (HTTP ${res.status}).`, "warn");
       } catch {
-        toast("Falha de rede ao cutucar.", "error");
+        toast("Network failure while nudging.", "error");
       }
     }
 
@@ -993,7 +993,7 @@
       const bodyEl = $("#composer-body");
       const body = bodyEl.value;
       if (body.trim().length === 0) {
-        toast("Mensagem vazia: escreva algo factual e acionável.", "warn");
+        toast("Empty message: write something factual and actionable.", "warn");
         return;
       }
       const btn = $("#send-btn");
@@ -1006,13 +1006,13 @@
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok || !data.ok) {
-          toast(data.error || `Falha ao enviar (HTTP ${res.status}).`, "error");
+          toast(data.error || `Failed to send (HTTP ${res.status}).`, "error");
           return;
         }
         bodyEl.value = "";
-        toast(`Enviado para ${to} (${data.delivery}).`, "ok");
+        toast(`Sent to ${to} (${data.delivery}).`, "ok");
       } catch {
-        toast("Falha de rede ao enviar.", "error");
+        toast("Network failure while sending.", "error");
       } finally {
         btn.disabled = false;
       }
@@ -1067,7 +1067,7 @@
       $("#copy-mcp").addEventListener("click", async () => {
         try {
           await navigator.clipboard.writeText(cmd);
-          toast("Comando copiado.", "ok", 2000);
+          toast("Command copied.", "ok", 2000);
         } catch {
           // Fallback for contexts where the async clipboard API is blocked.
           const ta = document.createElement("textarea");
@@ -1078,9 +1078,9 @@
           ta.select();
           try {
             document.execCommand("copy");
-            toast("Comando copiado.", "ok", 2000);
+            toast("Command copied.", "ok", 2000);
           } catch {
-            toast("Não foi possível copiar automaticamente — selecione e copie.", "warn");
+            toast("Could not copy automatically — select and copy.", "warn");
           }
           ta.remove();
         }
@@ -1105,7 +1105,7 @@
       try {
         await Promise.all([loadHealth(), loadAgents(), loadMessages()]);
       } catch (err) {
-        toast("Falha ao carregar o estado inicial do Hub.", "error");
+        toast("Failed to load the Hub's initial state.", "error");
       }
       renderAgents();
       renderRecipients();

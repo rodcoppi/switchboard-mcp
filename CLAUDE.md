@@ -2,67 +2,106 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## O que é este repositório
+## What this repository is
 
-Projeto **Switchboard**: um hub local que conecta instâncias independentes de Claude Code rodando em sessões tmux no WSL, permitindo troca assíncrona de mensagens entre elas (via MCP) com dashboard web de observação. Ele **conecta** sessões já existentes — não faz spawn nem orquestração de agentes.
+**Switchboard** project: a local hub that connects independent Claude Code instances running
+in tmux sessions on WSL, enabling asynchronous message exchange between them (via MCP) with a
+web dashboard for observation. It **connects** already-running sessions — it does not spawn or
+orchestrate agents.
 
-**`PRD-switchboard.md` é a fonte da verdade.** Ainda não há código: a implementação segue as fases 0–7 do PRD, na ordem. Antes de trabalhar em qualquer área, leia a seção correspondente do PRD (e a tabela de pitfalls, seção 17).
+**`PRD-switchboard.md` is the source of truth.** The implementation follows the PRD's phases
+0–7, in order. Before working on any area, read the corresponding PRD section (and the pitfalls
+table, section 17).
 
-## Regras do executor (do PRD, obrigatórias)
+## Executor rules (from the PRD, mandatory)
 
-- Execute as fases NA ORDEM. Phase 0 (spikes de validação) é obrigatória e não pode ser pulada. Só avance para a Phase N+1 com todos os "Done When" da Phase N verificados de verdade (rodando o comando, não assumindo).
-- Cada fase termina com um commit próprio: `feat(phase-N): <resumo>`.
-- Spike da Phase 0 falhou → PARE e reporte o erro completo. Não improvise arquitetura alternativa sem aprovação.
-- Não adicione dependências fora da stack travada (seção 5 do PRD). Precisa de algo? Pergunte antes.
-- Não invente features fora do PRD. Divergência vira pergunta, não decisão unilateral.
-- Ordem de prioridade em conflitos (seção 4): segurança local > conveniência; debugabilidade > elegância; confiabilidade de entrega > tempo real; nunca bloquear o turno do agente (toda tool MCP responde em < 1s); MVP (Phases 0–5) antes de qualquer pixel do dashboard.
+- Run the phases IN ORDER. Phase 0 (validation spikes) is mandatory and cannot be skipped. Only
+  advance to Phase N+1 with all of Phase N's "Done When" truly verified (by running the command,
+  not assuming).
+- Each phase ends with its own commit: `feat(phase-N): <summary>`.
+- If a Phase 0 spike fails → STOP and report the full error. Do not improvise an alternative
+  architecture without approval.
+- Do not add dependencies outside the locked stack (PRD section 5). Need something? Ask first.
+- Do not invent features outside the PRD. A divergence becomes a question, not a unilateral
+  decision.
+- Priority order in conflicts (section 4): local security > convenience; debuggability >
+  elegance; delivery reliability > real time; never block the agent's turn (every MCP tool
+  answers in < 1s); MVP (Phases 0–5) before any pixel of the dashboard.
 
-## Stack travada
+## Locked stack
 
-- Node.js >= 20 (ESM), TypeScript 5.x executado com `tsx` — **sem build step, sem bundler**.
-- Produção: `@modelcontextprotocol/sdk`, `express`, `zod`, `ulid`, `commander`. Dev: `vitest`, `@types/express`, `@types/node`.
-- Pré-requisitos de sistema: tmux >= 3.2, claude >= 2.x, jq (debug).
-- **Proibido na v1:** websockets, banco de dados, ORM, framework de frontend, bundler, docker.
+- Node.js >= 20 (ESM), TypeScript 5.x executed with `tsx` — **no build step, no bundler**.
+- Production: `@modelcontextprotocol/sdk`, `express`, `zod`, `ulid`, `commander`. Dev:
+  `vitest`, `@types/express`, `@types/node`.
+- System prerequisites: tmux >= 3.2, claude >= 2.x, jq (debug).
+- **Forbidden in v1:** websockets, database, ORM, frontend framework, bundler, docker.
 
-## Comandos
+## Commands
 
 ```bash
-npx vitest run                          # todos os testes
-npx vitest run test/store.test.ts      # um arquivo de teste
-npx tsx src/index.ts <subcomando>      # CLI em dev (bin "switchboard" via npm link)
+npx vitest run                          # all tests
+npx vitest run test/store.test.ts      # a single test file
+npx tsx src/index.ts <subcommand>      # CLI in dev (bin "switchboard" via npm link)
 
-# CLI (subcomandos): serve | start <name> | status | send <to> <msg> | stop <name> | down | logs [-f]
-# Registro do MCP no Claude Code (uma vez, escopo user):
+# CLI (subcommands): serve | start <name> | status | send <to> <msg> | stop <name> | down | logs [-f]
+# Registering the MCP in Claude Code (once, user scope):
 claude mcp add --transport http --scope user switchboard http://127.0.0.1:4577/mcp
 ```
 
-Testes de integração do dispatcher usam tmux real (skip automático se tmux ausente). O gate de cada fase são os "Done When" do PRD, não cobertura.
+The dispatcher's integration tests use real tmux (automatically skipped if tmux is absent).
+The gate for each phase is the PRD's "Done When", not coverage.
 
-## Arquitetura (big picture)
+## Architecture (big picture)
 
-Um único processo Node (o **Hub**, `127.0.0.1:4577`) serve tudo: endpoint MCP Streamable HTTP em `/mcp` (SDK oficial, modo stateful), REST + SSE em `/api/*` para dashboard e CLI, e o dashboard estático em `/`.
+A single Node process (the **Hub**, `127.0.0.1:4577`) serves everything: MCP Streamable HTTP
+endpoint at `/mcp` (official SDK, stateful mode), REST + SSE at `/api/*` for the dashboard and
+CLI, and the static dashboard at `/`.
 
-Fluxo de mensagem: agente A chama a tool MCP `send_message` → Hub grava em `~/.switchboard/messages.jsonl` (append-only, fonte da verdade) → dispatcher dispara **nudge** via `tmux send-keys` na sessão do destinatário (uma linha de notificação + Enter separado) → agente B acorda e chama `check_messages` para receber o conteúdo via MCP.
+Message flow: agent A calls the MCP tool `send_message` → the Hub writes to
+`~/.switchboard/messages.jsonl` (append-only, source of truth) → the dispatcher fires a
+**nudge** via `tmux send-keys` into the recipient's session (one notification line + a separate
+Enter) → agent B wakes up and calls `check_messages` to receive the content over MCP.
 
-Divisão fundamental: **tmux entrega só o cutucão (1 linha); o conteúdo trafega sempre via MCP.** O canal frágil (teclado simulado) fica mínimo; o canal robusto (HTTP) é a fonte da verdade.
+Fundamental split: **tmux delivers only the nudge (1 line); the content always travels over
+MCP.** The fragile channel (simulated keyboard) stays minimal; the robust channel (HTTP) is the
+source of truth.
 
-Componentes em `src/server/` (estrutura completa na seção 6 do PRD):
-- `mcp.ts` — 4 tools: `join`, `send_message`, `check_messages`, `list_agents`. As descriptions das tools na seção 9 do PRD são parte da spec — copiar verbatim. Mapeamento sessão MCP → agente num `Map` em memória, criado no `join`.
-- `dispatcher.ts` — cooldown por agente (15s), coalescing de nudges (rajadas viram 1 nudge), fila para mute/offline.
-- `tmux.ts` — única camada que executa tmux, sempre via `execFile` (nunca `exec` com string).
-- `store.ts` — `messages.jsonl` append-only + snapshot `agents.json` (write-temp + `fs.rename` atômico). Boot faz replay do JSONL; linhas corrompidas: logar e pular, nunca crashar. Marcar como lida = append de evento `{"type":"read",...}`, nunca edição in-place.
+Components in `src/server/` (full structure in PRD section 6):
+- `mcp.ts` — 4 tools: `join`, `send_message`, `check_messages`, `list_agents`. The tool
+  descriptions in PRD section 9 are part of the spec — copy them verbatim. Session-to-agent
+  mapping in an in-memory `Map`, created on `join`.
+- `dispatcher.ts` — per-agent cooldown (15s), nudge coalescing (bursts become 1 nudge), queue
+  for mute/offline.
+- `tmux.ts` — the only layer that executes tmux, always via `execFile` (never `exec` with a
+  string).
+- `store.ts` — append-only `messages.jsonl` + `agents.json` snapshot (write-temp + atomic
+  `fs.rename`). Boot replays the JSONL; corrupted lines: log and skip, never crash. Marking as
+  read = appending a `{"type":"read",...}` event, never an in-place edit.
 
-Identidade: agentes são endereçados por **nome** (nunca session id — nomes sobrevivem a restarts). O registro acontece no `switchboard start` via REST, ANTES de o Claude Code abrir; o `join` via MCP só confirma a conexão.
+Identity: agents are addressed by **name** (never session id — names survive restarts). The
+registration happens on `switchboard start` via REST, BEFORE Claude Code opens; the `join` via
+MCP only confirms the connection.
 
-## Invariantes de segurança (não negociáveis)
+## Security invariants (non-negotiable)
 
-- Bind **exclusivamente** em `127.0.0.1`, hard-coded, não configurável (mensagem entregue vira input executável de um agente — expor na rede = RCE).
-- **Guarda de pane-command:** antes de qualquer `send-keys`, verificar `pane_current_command`. Se o pane roda um shell (`bash`, `zsh`, `sh`, `fish`), ABORTAR o nudge (o texto seria executado como comando). Só nudgar se roda `node`/`claude`. Teste automatizado disso é obrigatório.
-- Corpo de mensagem nunca via tmux — só o cutucão. Nudge é sempre uma linha (`replace(/[\r\n]+/g, " ")`).
-- `send-keys` sempre com `-l` (literal) e `--` antes do texto; Enter em comando tmux SEPARADO após delay de ~500ms (enviar junto digita mas não submete em TUIs — pitfall P1).
+- Bind **exclusively** on `127.0.0.1`, hard-coded, not configurable (a delivered message becomes
+  executable input for an agent — exposing it on the network = RCE).
+- **Pane-command guard:** before any `send-keys`, check `pane_current_command`. If the pane
+  runs a shell (`bash`, `zsh`, `sh`, `fish`), ABORT the nudge (the text would be executed as a
+  command). Only nudge if it runs `node`/`claude`. An automated test for this is mandatory.
+- Message body never travels over tmux — only the nudge. A nudge is always one line
+  (`replace(/[\r\n]+/g, " ")`).
+- `send-keys` always with `-l` (literal) and `--` before the text; the Enter is a SEPARATE tmux
+  command after a ~500ms delay (sending them together types but does not submit in TUIs —
+  pitfall P1).
 
-## Convenções
+## Conventions
 
-- Código e identificadores em inglês; textos voltados ao usuário (nudge, CLI help, README) em português.
-- Anti-loop entre agentes: rate limit por par ordenado (12/min default), mensagens de erro das tools redigidas PARA o modelo ler e se corrigir, `maxMessageBytes` 16 KB (payload grande → arquivo + path).
-- Config em `~/.switchboard/config.json`, todos os valores com default (o arquivo pode não existir).
+- Everything is in **English** — code, identifiers, comments, and user-facing text (nudge, CLI
+  help, README, protocol snippet). The package/repo is named `switchboard-mcp`, but the product
+  display name stays **Switchboard**, the CLI command stays `switchboard`, and the MCP server id
+  stays `switchboard` (changing it would break the `mcp__switchboard__*` tools).
+- Anti-loop between agents: rate limit per ordered pair (12/min default), tool error messages
+  written FOR the model to read and self-correct, `maxMessageBytes` 16 KB (large payload → file
+  + path).
+- Config in `~/.switchboard/config.json`, every value with a default (the file may not exist).

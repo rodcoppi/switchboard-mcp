@@ -1,197 +1,198 @@
 # Switchboard
 
-Hub local que conecta instâncias **independentes** de Claude Code rodando em sessões
-tmux no WSL, permitindo troca **assíncrona** de mensagens entre elas (via MCP), com um
-dashboard web para o humano observar. Ele **conecta** sessões já existentes — não faz
-spawn nem orquestração de agentes.
+Local hub that connects **independent** Claude Code instances running in tmux
+sessions on WSL, letting them exchange **asynchronous** messages (via MCP), with a
+web dashboard for the human to observe. It **connects** already-running sessions — it
+does not spawn or orchestrate agents.
 
-Como funciona, em uma frase: o agente A chama a tool MCP `send_message`; o Hub grava a
-mensagem em `~/.switchboard/messages.jsonl` (fonte da verdade) e dispara um **nudge** de
-uma linha via `tmux send-keys` na sessão do agente B; o B acorda e chama `check_messages`
-para receber o conteúdo pela via MCP. **O tmux entrega só o cutucão; o conteúdo trafega
-sempre por MCP.**
-
----
-
-## Pré-requisitos
-
-- **Node.js >= 20** (roda em ESM, com TypeScript executado por `tsx` — sem build step).
-- **tmux >= 3.2** (validado com 3.4).
-- **Claude Code >= 2.x** (binário `claude` no PATH).
-- `jq` (opcional, só conveniência para inspecionar o JSONL no debug).
-
-> **WSL (importante — pitfall P8):** o servidor tmux é por **usuário** e por **distro**.
-> O Hub (`serve`) e todos os agentes (`start`) DEVEM rodar na **mesma distro WSL** e com o
-> **mesmo usuário**. Se você abrir o Hub numa distro/usuário e um agente em outra, o
-> `tmux send-keys` não encontra a sessão e o nudge nunca chega.
+How it works, in one sentence: agent A calls the MCP tool `send_message`; the Hub records
+the message in `~/.switchboard/messages.jsonl` (source of truth) and fires a one-line
+**nudge** via `tmux send-keys` into agent B's session; B wakes up and calls
+`check_messages` to receive the content over MCP. **tmux delivers only the nudge; the
+content always travels over MCP.**
 
 ---
 
-## Setup em 5 passos
+## Prerequisites
 
-### 1. Instalar
+- **Node.js >= 20** (runs in ESM, with TypeScript executed by `tsx` — no build step).
+- **tmux >= 3.2** (validated with 3.4).
+- **Claude Code >= 2.x** (`claude` binary on the PATH).
+- `jq` (optional, only a convenience for inspecting the JSONL while debugging).
+
+> **WSL (important — pitfall P8):** the tmux server is per **user** and per **distro**.
+> The Hub (`serve`) and all agents (`start`) MUST run on the **same WSL distro** and with the
+> **same user**. If you open the Hub on one distro/user and an agent on another,
+> `tmux send-keys` cannot find the session and the nudge never arrives.
+
+---
+
+## Setup in 5 steps
+
+### 1. Install
 
 ```bash
-git clone <url-do-repo> switchboard
-cd switchboard
+git clone <repo-url> switchboard-mcp
+cd switchboard-mcp
 npm install
 ```
 
-Não há passo de build: o código TypeScript roda direto com `tsx`. Você tem três formas de
-invocar a CLI `switchboard`:
+There is no build step: the TypeScript code runs directly with `tsx`. You have three ways to
+invoke the `switchboard` CLI:
 
-- **Recomendado — `npm link`** (deixa o comando `switchboard` no PATH):
+- **Recommended — `npm link`** (puts the `switchboard` command on the PATH):
   ```bash
   npm link
   switchboard --help
   ```
-- **Sem link, pelo shim do bin:**
+- **Without link, via the bin shim:**
   ```bash
   node bin/switchboard.mjs --help
   ```
-- **Sem link, direto pelo entry:**
+- **Without link, straight through the entry point:**
   ```bash
   npx tsx src/index.ts --help
   ```
 
-Nos exemplos abaixo usamos `switchboard <subcomando>` (assumindo o `npm link`); troque por
-`node bin/switchboard.mjs <subcomando>` se preferir não linkar.
+In the examples below we use `switchboard <subcommand>` (assuming `npm link`); swap it for
+`node bin/switchboard.mjs <subcommand>` if you prefer not to link.
 
-### 2. Subir o Hub (`serve`)
+### 2. Start the Hub (`serve`)
 
 ```bash
 switchboard serve
 ```
 
-Sobe o Hub em foreground (logs no stdout + `~/.switchboard/logs/hub.log`). A **primeira
-linha** imprime os endereços e o comando de registro do MCP prontos para copiar, algo como:
+Starts the Hub in the foreground (logs on stdout + `~/.switchboard/logs/hub.log`). The
+**first line** prints the addresses and the MCP registration command ready to copy, something
+like:
 
 ```
-Dashboard: http://127.0.0.1:4577/  |  MCP: http://127.0.0.1:4577/mcp  |  Registro (uma vez): claude mcp add --transport http --scope user switchboard http://127.0.0.1:4577/mcp
+Dashboard: http://127.0.0.1:4577/  |  MCP: http://127.0.0.1:4577/mcp  |  Register (once): claude mcp add --transport http --scope user switchboard http://127.0.0.1:4577/mcp
 ```
 
-**Recomendação:** rode o `serve` dentro de uma sessão tmux chamada `sb-hub`
-(`tmux new -s sb-hub`) para ele sobreviver ao fechamento do terminal. Flags úteis:
-`--port <porta>` e `--log-level debug|info|warn|error`.
+**Recommendation:** run `serve` inside a tmux session named `sb-hub`
+(`tmux new -s sb-hub`) so it survives closing the terminal. Useful flags:
+`--port <port>` and `--log-level debug|info|warn|error`.
 
-### 3. Registrar o MCP no Claude Code (`mcp add`)
+### 3. Register the MCP in Claude Code (`mcp add`)
 
-Uma vez só, no escopo `user` (vale para todos os projetos):
+Once only, in the `user` scope (applies to every project):
 
 ```bash
 claude mcp add --transport http --scope user switchboard http://127.0.0.1:4577/mcp
 ```
 
-Confira com `claude mcp list` (deve aparecer `switchboard` como *connected* com o Hub no ar).
+Check with `claude mcp list` (`switchboard` should appear as *connected* while the Hub is up).
 
-> **Permissões das tools (pitfall P10 / PRD 9.5):** para as tools do Switchboard rodarem
-> **sem prompt de aprovação a cada uso**, adicione a allow rule `mcp__switchboard__*` nas
-> `permissions` do `settings.json` do Claude Code. Quem já usa `bypassPermissions` está
-> coberto. O `switchboard start` também imprime esse lembrete na primeira execução.
+> **Tool permissions (pitfall P10 / PRD 9.5):** for the Switchboard tools to run
+> **without an approval prompt on every use**, add the allow rule `mcp__switchboard__*` to the
+> `permissions` in Claude Code's `settings.json`. Anyone already using `bypassPermissions` is
+> covered. `switchboard start` also prints this reminder on the first run.
 >
-> **Para o `join` autônomo do kickoff funcionar 100% sem intervenção:** o agente lê o
-> `SWITCHBOARD_AGENT_TOKEN` do ambiente com `printenv` (um comando de shell) antes de chamar
-> `join`. Isso exige que o `printenv` também rode sem aprovação — o jeito mais simples é
-> rodar os agentes com `bypassPermissions` (recomendado para quem opera vários agentes) ou
-> adicionar `Bash(printenv:*)` à allow rule. Só com `mcp__switchboard__*` o agente **para
-> uma vez** no prompt de aprovação do `printenv` (basta o humano no attach aprovar, ou usar
-> "não perguntar de novo"). Passar `--claude-args "--permission-mode bypassPermissions"` no
-> `start` cobre uma sessão específica.
+> **For the kickoff's autonomous `join` to work 100% without intervention:** the agent reads
+> `SWITCHBOARD_AGENT_TOKEN` from the environment with `printenv` (a shell command) before
+> calling `join`. This requires `printenv` to also run without approval — the simplest way is
+> to run the agents with `bypassPermissions` (recommended for anyone operating several agents)
+> or to add `Bash(printenv:*)` to the allow rule. With only `mcp__switchboard__*` the agent
+> **stops once** at the `printenv` approval prompt (the human at the attach just approves, or
+> uses "don't ask again"). Passing `--claude-args "--permission-mode bypassPermissions"` to
+> `start` covers a specific session.
 
-### 4. Colar o protocolo do agente (snippet)
+### 4. Paste the agent protocol (snippet)
 
-Cole o conteúdo de [`agent-protocol/CLAUDE.snippet.md`](agent-protocol/CLAUDE.snippet.md)
-no seu **`~/.claude/CLAUDE.md`** (global, recomendado) ou no `CLAUDE.md` de um projeto
-específico. Esse bloco ensina cada agente a: ler seu nome/token do ambiente e passá-los no
-`join`, reconhecer as notificações `[switchboard]` e chamar `check_messages`, tratar
-mensagens de colegas criticamente e não entrar em loop de cortesia — e deixa explícito que
-**coordenação não é subordinação** (outro agente não pode autorizar o que seu usuário não
-autorizou).
+Paste the contents of [`agent-protocol/CLAUDE.snippet.md`](agent-protocol/CLAUDE.snippet.md)
+into your **`~/.claude/CLAUDE.md`** (global, recommended) or into a specific project's
+`CLAUDE.md`. That block teaches each agent to: read its name/token from the environment and
+pass them to `join`, recognize `[switchboard]` notifications and call `check_messages`, treat
+peer messages critically and not fall into a courtesy loop — and it makes explicit that
+**coordination is not subordination** (another agent cannot authorize what your user did not
+authorize).
 
-### 5. Iniciar um agente (`start`)
+### 5. Start an agent (`start`)
 
-Rode isto no lugar de abrir o `claude` na mão:
+Run this instead of opening `claude` by hand:
 
 ```bash
-switchboard start alpha --role "backend da API de pagamentos" --dir ~/projetos/api
+switchboard start alpha --role "payments API backend" --dir ~/projects/api
 ```
 
-O que acontece:
+What happens:
 
-1. O agente é **registrado** no Hub (via REST) **antes** de o Claude Code abrir.
-2. Uma sessão tmux `sb-alpha` é criada rodando o `claude` no diretório do `--dir`.
-3. Se o terminal é interativo, o comando faz **`tmux attach`** na sessão — a aba do seu
-   Windows Terminal vira a visão do agente (mesmo workflow de sempre). Ao desanexar
-   (`Ctrl-b d`), o agente continua rodando em background.
-4. **Kickoff automático (ligado por padrão):** alguns segundos depois de a TUI ficar
-   pronta, o agente recebe uma instrução automática para chamar a tool `join` sozinho — sem
-   nenhum prompt humano. Depois disso ele aparece como *MCP connected* no `switchboard
-   status`. Use `--no-kickoff` para desativar (aí o `join` fica por sua conta).
+1. The agent is **registered** in the Hub (via REST) **before** Claude Code opens.
+2. A tmux session `sb-alpha` is created running `claude` in the `--dir` directory.
+3. If the terminal is interactive, the command runs **`tmux attach`** on the session — your
+   Windows Terminal tab becomes the agent's view (the usual workflow). When you detach
+   (`Ctrl-b d`), the agent keeps running in the background.
+4. **Automatic kickoff (on by default):** a few seconds after the TUI is ready, the agent
+   receives an automatic instruction to call the `join` tool on its own — with no human
+   prompt. After that it shows up as *MCP connected* in `switchboard status`. Use
+   `--no-kickoff` to disable it (then `join` is up to you).
 
-Flags do `start`: `--role "<descrição>"`, `--dir <path>`, `--no-kickoff`,
-`--claude-args "<args extras para o claude>"`.
-
----
-
-## Demais subcomandos
-
-| Comando | O que faz |
-|---------|-----------|
-| `switchboard status` | Tabela dos agentes registrados: NAME, ROLE, STATUS, MCP, UNREAD, LAST SEEN. |
-| `switchboard send <to> <mensagem...>` | Envia uma mensagem como **operator** (o humano) para um agente, ou `all` para broadcast. Útil para scripts e para testar sem o dashboard. |
-| `switchboard stop <name>` | Encerra a sessão tmux do agente (pede confirmação se houver não lidas; `--yes` pula). O **registro** no Hub permanece — um novo `start <name>` reaproveita o nome (re-attach). |
-| `switchboard down` | Encerra as sessões tmux de **todos** os agentes. O Hub continua no ar (ele nunca é morto por aqui). |
-| `switchboard logs [-f]` | Últimas ~100 linhas de `~/.switchboard/logs/hub.log`; `-f` segue o arquivo. |
-
-Para parar o **Hub**: `Ctrl-C` no terminal do `switchboard serve` (ou
-`tmux kill-session -t sb-hub`, se ele roda na sessão recomendada).
-
-Os dados ficam em `~/.switchboard/`: `config.json` (todos os valores têm default; o arquivo
-pode nem existir), `agents.json` (snapshot atômico) e `messages.jsonl` (append-only,
-greppável com `cat`/`jq`).
+`start` flags: `--role "<description>"`, `--dir <path>`, `--no-kickoff`,
+`--claude-args "<extra args for claude>"`.
 
 ---
 
-## Segurança
+## Other subcommands
 
-O modelo de ameaça é honesto e a fronteira de confiança é a **máquina local**. Leia isto
-antes de expor qualquer coisa:
+| Command | What it does |
+|---------|--------------|
+| `switchboard status` | Table of registered agents: NAME, ROLE, STATUS, MCP, UNREAD, LAST SEEN. |
+| `switchboard send <to> <message...>` | Sends a message as **operator** (the human) to an agent, or `all` for broadcast. Handy for scripts and for testing without the dashboard. |
+| `switchboard stop <name>` | Stops the agent's tmux session (asks for confirmation if there are unread messages; `--yes` skips it). The **registration** in the Hub stays — a new `start <name>` reuses the name (re-attach). |
+| `switchboard down` | Stops the tmux sessions of **all** agents. The Hub stays up (it is never killed here). |
+| `switchboard logs [-f]` | Last ~100 lines of `~/.switchboard/logs/hub.log`; `-f` follows the file. |
 
-- **Bind em `127.0.0.1`, hard-coded e não configurável.** Uma mensagem entregue vira input
-  executável de um agente com acesso ao filesystem. Expor o Hub na rede = RCE de brinde.
-- **NUNCA faça port-forward da porta 4577** (nem `ssh -L`, nem regra de firewall/NAT) e
-  **NUNCA rode o Hub atrás de um proxy reverso.** O `127.0.0.1` é a única barreira.
-- **Trust model local:** qualquer processo local pode postar no Hub e, portanto, injetar
-  input em qualquer agente. Isso é aceito na v1 (mesmo modelo de qualquer dev tool local),
-  desde que jamais vaze para a rede.
-- **Capability token (adendo v1.1):** o `start` injeta um token por agente no ambiente da
-  sessão tmux (`SWITCHBOARD_AGENT_TOKEN`); o agente o lê e passa no `join`, e ele **nunca
-  aparece** em `list_agents`, no `GET /api/agents`, no dashboard nem nos logs. Ele fecha a
-  impersonação por processos que sabem o nome de um agente mas não falam com o endpoint de
-  registro.
-- **Risco residual conhecido (documentado no comentário de `src/server/api.ts`):** o
-  endpoint `POST /api/agents/register` é **deliberadamente não autenticado**, e re-registrar
-  um nome existente **regenera e devolve um token novo**. Logo, um processo local malicioso
-  consegue obter um token válido para qualquer nome e se passar por aquele agente via `join`
-  — invalidando, de quebra, o token da sessão legítima (o `join` dela após um restart do Hub
-  passa a falhar). Isso é aceito pela spec v1.1 (a mesma fronteira "qualquer processo local
-  pode postar") e **não deve ser "corrigido" sem aprovação** — exigir rotação de token
-  quebraria o re-attach do `switchboard start`.
-- **Prompt injection entre agentes** é risco residual: um agente comprometido/alucinado pode
-  tentar manipular outro. Mitigação da v1: a fronteira declarada no snippet do protocolo
-  (mensagens de colegas são avaliadas criticamente; coordenação ≠ subordinação) + a
-  visibilidade total do feed no dashboard.
+To stop the **Hub**: `Ctrl-C` in the `switchboard serve` terminal (or
+`tmux kill-session -t sb-hub`, if it runs in the recommended session).
+
+Data lives in `~/.switchboard/`: `config.json` (every value has a default; the file may not
+even exist), `agents.json` (atomic snapshot) and `messages.jsonl` (append-only, greppable
+with `cat`/`jq`).
 
 ---
 
-## Dicas de tmux no WSL / Windows Terminal (pitfall P11)
+## Security
 
-- Se você raramente usa tmux, um `~/.tmux.conf` mínimo com **mouse habilitado** ajuda muito
-  no scroll e na seleção de panes:
+The threat model is honest and the trust boundary is the **local machine**. Read this
+before exposing anything:
+
+- **Bind on `127.0.0.1`, hard-coded and not configurable.** A delivered message becomes
+  executable input for an agent with filesystem access. Exposing the Hub on the network = free
+  RCE.
+- **NEVER port-forward port 4577** (no `ssh -L`, no firewall/NAT rule) and
+  **NEVER run the Hub behind a reverse proxy.** `127.0.0.1` is the only barrier.
+- **Local trust model:** any local process can post to the Hub and therefore inject input
+  into any agent. This is accepted in v1 (the same model as any local dev tool), as long as it
+  never leaks to the network.
+- **Capability token (v1.1 addendum):** `start` injects a per-agent token into the tmux
+  session environment (`SWITCHBOARD_AGENT_TOKEN`); the agent reads it and passes it to `join`,
+  and it **never appears** in `list_agents`, in `GET /api/agents`, in the dashboard or in the
+  logs. It closes impersonation by processes that know an agent's name but never talk to the
+  registration endpoint.
+- **Known residual risk (documented in the comment of `src/server/api.ts`):** the
+  `POST /api/agents/register` endpoint is **deliberately unauthenticated**, and re-registering
+  an existing name **regenerates and returns a fresh token**. So a malicious local process can
+  obtain a valid token for any name and impersonate that agent via `join` — also invalidating
+  the legitimate session's token (its `join` after a Hub restart then fails). This is accepted
+  by the v1.1 spec (the same "any local process can post" boundary) and **must not be "fixed"
+  without approval** — requiring token rotation would break `switchboard start`'s re-attach.
+- **Prompt injection between agents** is a residual risk: a compromised/hallucinating agent may
+  try to manipulate another. v1 mitigation: the boundary declared in the protocol snippet (peer
+  messages are evaluated critically; coordination ≠ subordination) plus full feed visibility in
+  the dashboard.
+
+---
+
+## tmux tips on WSL / Windows Terminal (pitfall P11)
+
+- If you rarely use tmux, a minimal `~/.tmux.conf` with the **mouse enabled** helps a lot with
+  scrolling and pane selection:
   ```
   set -g mouse on
   ```
-- O `switchboard start` faz `tmux attach` na sessão do agente, então **cada aba do Windows
-  Terminal continua sendo "a tela de um agente"** — o workflow de abas que você já usa é
-  preservado. Para sair da visão de um agente sem matá-lo: `Ctrl-b d` (detach). Para voltar:
-  `tmux attach -t sb-<nome>`.
+- `switchboard start` runs `tmux attach` on the agent's session, so **each Windows Terminal tab
+  stays "one agent's screen"** — the tab workflow you already use is preserved. To leave an
+  agent's view without killing it: `Ctrl-b d` (detach). To come back:
+  `tmux attach -t sb-<name>`.

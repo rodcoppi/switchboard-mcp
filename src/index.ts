@@ -22,8 +22,8 @@ const program = new Command();
 program
   .name("switchboard")
   .description(
-    "Hub local que conecta instâncias independentes de Claude Code em sessões tmux, " +
-      "com troca assíncrona de mensagens via MCP e dashboard web de observação.",
+    "Local hub that connects independent Claude Code instances in tmux sessions, " +
+      "with asynchronous message exchange via MCP and a web dashboard for observation.",
   )
   .showSuggestionAfterError();
 

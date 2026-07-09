@@ -37,13 +37,13 @@ function truncate(text: string, max: number): string {
 /**
  * Clean fixed-width table (two-space gutters, headers per PRD 11), rows
  * sorted by name for stable output. lastSeen rendered relative ("2min
- * atrás"). Pure — unit-tested with fake data and an injected clock. Extra
+ * ago"). Pure — unit-tested with fake data and an injected clock. Extra
  * fields on the input objects are ignored by construction (only the six
  * columns are ever read), so nothing beyond the PublicAgent view can leak.
  */
 export function formatStatusTable(rows: StatusRow[], nowMs: number = Date.now()): string {
   if (rows.length === 0) {
-    return `Nenhum agente registrado. Use "switchboard start <nome>" para criar o primeiro.`;
+    return `No registered agents. Use "switchboard start <name>" to create the first one.`;
   }
   const cells = [...rows]
     .sort((a, b) => a.name.localeCompare(b.name))
@@ -51,7 +51,7 @@ export function formatStatusTable(rows: StatusRow[], nowMs: number = Date.now())
       row.name,
       truncate(row.role === "" ? "—" : row.role, MAX_ROLE_WIDTH),
       row.status,
-      row.mcpConnected ? "sim" : "não",
+      row.mcpConnected ? "yes" : "no",
       String(row.unreadCount),
       formatRelative(row.lastSeenAt, nowMs),
     ]);
@@ -73,7 +73,7 @@ export interface StatusOptions {
 export async function runStatus(options: StatusOptions = {}): Promise<void> {
   const out = options.out ?? console.log;
   const hubUrl = options.hubUrl ?? defaultHubUrl(options.baseDir);
-  await checkHubHealth(hubUrl); // hub down → clear "serve primeiro" error
+  await checkHubHealth(hubUrl); // hub down → clear "serve first" error
   const agents = await hubGet<StatusRow[]>(hubUrl, "/api/agents");
   out(formatStatusTable(agents, (options.now ?? Date.now)()));
 }
@@ -81,7 +81,7 @@ export async function runStatus(options: StatusOptions = {}): Promise<void> {
 export function registerStatusCommand(program: Command): void {
   program
     .command("status")
-    .description("Mostra os agentes registrados no Hub (status, MCP, não lidas, último visto).")
+    .description("Shows the agents registered in the Hub (status, MCP, unread, last seen).")
     .action(async () => {
       await runCliAction(() => runStatus());
     });

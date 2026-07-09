@@ -41,13 +41,13 @@ async function pollUntil<T>(
     const value = await fn();
     if (value) return value as NonNullable<T>;
     if (Date.now() > deadline) {
-      throw new Error(`Timeout (${timeoutMs}ms) esperando: ${what}`);
+      throw new Error(`Timeout (${timeoutMs}ms) waiting for: ${what}`);
     }
     await new Promise((r) => setTimeout(r, 100));
   }
 }
 
-describe.skipIf(!hasTmux)("CLI Phase 4 + hub real + tmux real", () => {
+describe.skipIf(!hasTmux)("CLI Phase 4 + real hub + real tmux", () => {
   let dir: string;
   let hub: Hub;
   let tmux: Tmux;
@@ -63,7 +63,7 @@ describe.skipIf(!hasTmux)("CLI Phase 4 + hub real + tmux real", () => {
 
   function storedToken(name: string): string {
     const agent = storedAgents().find((a) => a.name === name);
-    if (!agent?.token) throw new Error(`token ausente para ${name} em agents.json`);
+    if (!agent?.token) throw new Error(`token missing for ${name} in agents.json`);
     return agent.token;
   }
 
@@ -129,11 +129,11 @@ describe.skipIf(!hasTmux)("CLI Phase 4 + hub real + tmux real", () => {
     }
   });
 
-  it("start: registra no hub, injeta as env vars NAME/TOKEN na sessão e NUNCA imprime o token", async () => {
+  it("start: registers in the hub, injects the NAME/TOKEN env vars into the session and NEVER prints the token", async () => {
     const name = NAME_PREFIX + "a";
     const result = await runStart({
       ...startArgs(name),
-      role: "backend de teste",
+      role: "test backend",
       dir,
       // Fake claude: prints the SWITCHBOARD env vars then holds the pane open
       // (validates PRD 11 step 4 end to end without a real claude).
@@ -152,7 +152,7 @@ describe.skipIf(!hasTmux)("CLI Phase 4 + hub real + tmux real", () => {
     const registered = agents.find((a) => a.name === name);
     expect(registered).toMatchObject({
       name,
-      role: "backend de teste",
+      role: "test backend",
       cwd: dir,
       tmuxSession: `sb-${name}`,
     });
@@ -163,7 +163,7 @@ describe.skipIf(!hasTmux)("CLI Phase 4 + hub real + tmux real", () => {
     expect(token).toMatch(TOKEN_RE);
     await pollUntil(
       async () => (await flatPane(`sb-${name}`)).includes(`SWITCHBOARD_AGENT_TOKEN=${token}`),
-      "env vars visíveis no pane (printenv)",
+      "env vars visible in the pane (printenv)",
     );
     expect(await flatPane(`sb-${name}`)).toContain(`SWITCHBOARD_AGENT_NAME=${name}`);
 
@@ -172,7 +172,7 @@ describe.skipIf(!hasTmux)("CLI Phase 4 + hub real + tmux real", () => {
     const printed = out.join("\n");
     expect(printed).not.toContain(token);
     expect(printed).toContain(`tmux attach -t sb-${name}`);
-    expect(printed).toContain("Kickoff agendado");
+    expect(printed).toContain("Kickoff scheduled");
     expect(printed).toContain("mcp__switchboard__*");
     expect(kickoffSpawns).toEqual([name]);
 
@@ -186,11 +186,11 @@ describe.skipIf(!hasTmux)("CLI Phase 4 + hub real + tmux real", () => {
     }
   }, 20_000);
 
-  it("token NUNCA vaza quando o new-session falha depois do register (regressão v1.1)", async () => {
+  it("token NEVER leaks when new-session fails after register (v1.1 regression)", async () => {
     const name = NAME_PREFIX + "leak";
-    // StartTmux que simula o erro CRU do execFile promisificado (o cenário da
-    // corrida de dois starts): message com a linha de comando completa,
-    // incluindo o token ATUALMENTE VÁLIDO no store.
+    // StartTmux that simulates the RAW error from promisified execFile (the
+    // two-starts race scenario): message with the full command line,
+    // including the token CURRENTLY VALID in the store.
     const failingTmux: StartTmux = {
       async hasSession() {
         return false;
@@ -215,31 +215,31 @@ describe.skipIf(!hasTmux)("CLI Phase 4 + hub real + tmux real", () => {
     );
 
     expect(err).toBeInstanceOf(CliError);
-    const token = storedToken(name); // registro aconteceu; token regenerado ficou no store
+    const token = storedToken(name); // registration happened; the regenerated token stayed in the store
     expect(err!.message).not.toContain(token);
     expect(String(err!.stack ?? "")).not.toContain(token);
     expect(out.join("\n")).not.toContain(token);
-    // Continua diagnosticável e orienta a corrida de starts simultâneos.
-    expect(err!.message).toContain("<token-redigido>");
+    // Still diagnosable and guides the concurrent-start race.
+    expect(err!.message).toContain("<token-redacted>");
     expect(err!.message).toMatch(/switchboard stop .*switchboard start/s);
   }, 20_000);
 
-  it("start detecta o comando do agente morrendo no nascimento (ex.: claude fora do PATH)", async () => {
-    const name = NAME_PREFIX + "natimorto";
+  it("start detects the agent command dying at birth (e.g. claude not on PATH)", async () => {
+    const name = NAME_PREFIX + "stillborn";
     await expect(
       runStart({
         ...startArgs(name),
         dir,
         kickoff: false,
-        claudeBin: "/nao/existe/claude-xyz",
+        claudeBin: "/does/not/exist/claude-xyz",
       }),
-    ).rejects.toThrow(/morreu logo após abrir/);
-    // Nada de mensagens falsas de sucesso.
-    expect(out.join("\n")).not.toContain("Kickoff agendado");
+    ).rejects.toThrow(/died right after opening/);
+    // No false success messages.
+    expect(out.join("\n")).not.toContain("Kickoff scheduled");
     expect(await tmux.hasSession(`sb-${name}`)).toBe(false);
   }, 20_000);
 
-  it("attach com exit != 0 não finge 'Desanexado' — orienta o attach manual; exit 0 mantém a mensagem", async () => {
+  it("attach with exit != 0 does not fake 'Detached' — guides the manual attach; exit 0 keeps the message", async () => {
     const name = NAME_PREFIX + "at";
     await runStart({
       ...startArgs(name),
@@ -248,17 +248,17 @@ describe.skipIf(!hasTmux)("CLI Phase 4 + hub real + tmux real", () => {
       claudeBin: "cat",
       isTTY: true,
       insideTmux: false,
-      attach: async () => 1, // ex.: "open terminal failed: not a terminal" (stdin pipe)
+      attach: async () => 1, // e.g. "open terminal failed: not a terminal" (stdin pipe)
     });
     let printed = out.join("\n");
-    expect(printed).not.toContain("Desanexado");
-    expect(printed).toContain("attach falhou");
+    expect(printed).not.toContain("Detached");
+    expect(printed).toContain("attach failed");
     expect(printed).toContain(`tmux attach -t sb-${name}`);
 
-    // Caminho feliz do attach (exit 0) preserva a mensagem de detach.
+    // The attach happy path (exit 0) preserves the detach message.
     out = [];
     await runStop({ name, yes: true, hubUrl: hub.url, baseDir: dir, tmux, out: outFn, isTTY: false });
-    await pollUntil(async () => !(await tmux.hasSession(`sb-${name}`)), "sessão morta");
+    await pollUntil(async () => !(await tmux.hasSession(`sb-${name}`)), "session dead");
     out = [];
     await runStart({
       ...startArgs(name),
@@ -270,39 +270,39 @@ describe.skipIf(!hasTmux)("CLI Phase 4 + hub real + tmux real", () => {
       attach: async () => 0,
     });
     printed = out.join("\n");
-    expect(printed).toContain("Desanexado");
+    expect(printed).toContain("Detached");
   }, 20_000);
 
-  it("start: recusa nome com sessão tmux já existente (P7) e não repete o lembrete de permissões", async () => {
+  it("start: refuses a name with an already-existing tmux session (P7) and does not repeat the permissions reminder", async () => {
     const name = NAME_PREFIX + "b";
     await runStart({ ...startArgs(name), dir, kickoff: false, claudeBin: "cat" });
-    expect(out.join("\n")).toContain("mcp__switchboard__*"); // primeira execução
+    expect(out.join("\n")).toContain("mcp__switchboard__*"); // first execution
 
     // Duplicate: refused with guidance (stop/attach), session left untouched.
     await expect(
       runStart({ ...startArgs(name), dir, kickoff: false, claudeBin: "cat" }),
-    ).rejects.toThrow(new RegExp(`sb-${name}" já existe[\\s\\S]*switchboard stop ${name}`));
+    ).rejects.toThrow(new RegExp(`sb-${name}" already exists[\\s\\S]*switchboard stop ${name}`));
 
     // Second run (another name): reminder marker suppresses the repeat.
     out = [];
     const name2 = NAME_PREFIX + "b2";
     await runStart({ ...startArgs(name2), dir, kickoff: false, claudeBin: "cat" });
     expect(out.join("\n")).not.toContain("mcp__switchboard__*");
-    expect(kickoffSpawns).toEqual([]); // kickoff:false nunca agendou
+    expect(kickoffSpawns).toEqual([]); // kickoff:false never scheduled
   }, 20_000);
 
-  it("send: entrega como operator e imprime o delivery; stop confirma com unread e --yes mata a sessão", async () => {
+  it("send: delivers as operator and prints the delivery; stop confirms with unread and --yes kills the session", async () => {
     const name = NAME_PREFIX + "c";
     await runStart({ ...startArgs(name), dir, kickoff: false, claudeBin: "cat" });
 
     const sent = await runSend({
       to: name,
-      message: "contrato pronto em /tmp/x.md",
+      message: "contract ready at /tmp/x.md",
       hubUrl: hub.url,
       out: outFn,
     });
     expect(sent.ok).toBe(true);
-    expect(out.join("\n")).toContain(`Mensagem enviada como operator para "${name}"`);
+    expect(out.join("\n")).toContain(`Message sent as operator to "${name}"`);
     expect(out.join("\n")).toContain(`Delivery: ${sent.delivery}`);
     expect(hub.store.unreadCount(name)).toBe(1);
 
@@ -322,8 +322,8 @@ describe.skipIf(!hasTmux)("CLI Phase 4 + hub real + tmux real", () => {
     });
     expect(denied.killed).toBe(false);
     expect(questions).toHaveLength(1);
-    expect(questions[0]).toContain("1 mensagem(ns) não lida(s)");
-    expect(out.join("\n")).toContain("Cancelado");
+    expect(questions[0]).toContain("1 unread message(s)");
+    expect(out.join("\n")).toContain("Canceled");
     expect(await tmux.hasSession(`sb-${name}`)).toBe(true);
 
     // --yes skips the confirmation and kills; the registration remains.
@@ -339,27 +339,27 @@ describe.skipIf(!hasTmux)("CLI Phase 4 + hub real + tmux real", () => {
     expect(confirmed.killed).toBe(true);
     await pollUntil(
       async () => !(await tmux.hasSession(`sb-${name}`)),
-      "sessão morta após stop --yes",
+      "session dead after stop --yes",
     );
-    expect(out.join("\n")).toContain("permanece no Hub");
+    expect(out.join("\n")).toContain("stays in the Hub");
     expect(hub.store.getAgent(name)).toBeDefined();
   }, 20_000);
 
-  it("send para destinatário inexistente → erro claro do hub; stop de agente não registrado → erro claro", async () => {
+  it("send to a nonexistent recipient → clear hub error; stop of an unregistered agent → clear error", async () => {
     await expect(
-      runSend({ to: "fantasma-inexistente", message: "oi", hubUrl: hub.url, out: outFn }),
-    ).rejects.toThrow(/Destinatário desconhecido/);
+      runSend({ to: "nonexistent-ghost", message: "hi", hubUrl: hub.url, out: outFn }),
+    ).rejects.toThrow(/Unknown recipient/);
 
     await expect(
-      runStop({ name: "fantasma-inexistente", hubUrl: hub.url, baseDir: dir, tmux, out: outFn }),
-    ).rejects.toThrow(/não está registrado no Hub/);
+      runStop({ name: "nonexistent-ghost", hubUrl: hub.url, baseDir: dir, tmux, out: outFn }),
+    ).rejects.toThrow(/is not registered in the Hub/);
   }, 20_000);
 
-  it("status: tabela com NAME/ROLE/STATUS/MCP/UNREAD/LAST SEEN a partir do GET /api/agents", async () => {
+  it("status: table with NAME/ROLE/STATUS/MCP/UNREAD/LAST SEEN from GET /api/agents", async () => {
     const name = NAME_PREFIX + "d";
     await runStart({
       ...startArgs(name),
-      role: "papel de teste",
+      role: "test role",
       dir,
       kickoff: false,
       claudeBin: "cat",
@@ -370,15 +370,15 @@ describe.skipIf(!hasTmux)("CLI Phase 4 + hub real + tmux real", () => {
     await runStatus({ hubUrl: hub.url, out: outFn });
     const table = out.join("\n");
     expect(table).toMatch(/NAME\s+ROLE\s+STATUS\s+MCP\s+UNREAD\s+LAST SEEN/);
-    expect(table).toMatch(new RegExp(`${name}\\s+papel de teste\\s+\\w+\\s+não\\s+1\\s+`));
+    expect(table).toMatch(new RegExp(`${name}\\s+test role\\s+\\w+\\s+no\\s+1\\s+`));
   }, 20_000);
 
-  it("down: mata TODAS as sessões vivas (confirmação agregada com --yes) e NÃO mata o hub", async () => {
+  it("down: kills ALL live sessions (aggregated confirmation with --yes) and does NOT kill the hub", async () => {
     const nameA = NAME_PREFIX + "e1";
     const nameB = NAME_PREFIX + "e2";
     await runStart({ ...startArgs(nameA), dir, kickoff: false, claudeBin: "cat" });
     await runStart({ ...startArgs(nameB), dir, kickoff: false, claudeBin: "cat" });
-    await runSend({ to: nameA, message: "pendente", hubUrl: hub.url, out: () => {} });
+    await runSend({ to: nameA, message: "pending", hubUrl: hub.url, out: () => {} });
 
     out = [];
     const result = await runDown({
@@ -394,16 +394,16 @@ describe.skipIf(!hasTmux)("CLI Phase 4 + hub real + tmux real", () => {
     expect(await tmux.hasSession(`sb-${nameB}`)).toBe(false);
 
     // The hub survives — down only instructs how to stop it.
-    expect(out.join("\n")).toContain("O Hub continua rodando");
+    expect(out.join("\n")).toContain("The Hub keeps running");
     const health = (await (await fetch(`${hub.url}/api/health`)).json()) as { ok: boolean };
     expect(health.ok).toBe(true);
   }, 20_000);
 
-  it("stop/down usam o tmuxSession REGISTRADO, não prefix+name recomputado", async () => {
-    // Registro via REST com tmuxSession custom (≠ sb-<name>) e sessão real
-    // viva nesse nome: o stop tem que matar A SESSÃO REGISTRADA.
+  it("stop/down use the REGISTERED tmuxSession, not a recomputed prefix+name", async () => {
+    // Registration via REST with a custom tmuxSession (≠ sb-<name>) and a real
+    // live session on that name: the stop must kill THE REGISTERED SESSION.
     const name = NAME_PREFIX + "custom";
-    const customSession = `${SESSION_PREFIX}sessao-custom`;
+    const customSession = `${SESSION_PREFIX}custom-session`;
     await tmux.newSession(customSession, dir, "cat");
     const res = await fetch(`${hub.url}/api/agents/register`, {
       method: "POST",
@@ -422,17 +422,17 @@ describe.skipIf(!hasTmux)("CLI Phase 4 + hub real + tmux real", () => {
       isTTY: false,
     });
     expect(result.killed).toBe(true);
-    expect(out.join("\n")).toContain(`"${customSession}" encerrada`);
+    expect(out.join("\n")).toContain(`"${customSession}" stopped`);
     await pollUntil(
       async () => !(await tmux.hasSession(customSession)),
-      "sessão custom registrada morta após stop",
+      "registered custom session dead after stop",
     );
   }, 20_000);
 
-  it("stop com não lidas, sem TTY e sem --yes → CliError instrutiva (--yes) e sessão intacta", async () => {
+  it("stop with unreads, no TTY and no --yes → instructive CliError (--yes) and untouched session", async () => {
     const name = NAME_PREFIX + "g1";
     await runStart({ ...startArgs(name), dir, kickoff: false, claudeBin: "cat" });
-    await runSend({ to: name, message: "pendente", hubUrl: hub.url, out: () => {} });
+    await runSend({ to: name, message: "pending", hubUrl: hub.url, out: () => {} });
 
     await expect(
       runStop({ name, hubUrl: hub.url, baseDir: dir, tmux, out: outFn, isTTY: false }),
@@ -440,12 +440,12 @@ describe.skipIf(!hasTmux)("CLI Phase 4 + hub real + tmux real", () => {
     expect(await tmux.hasSession(`sb-${name}`)).toBe(true);
   }, 20_000);
 
-  it("down com confirmação negada → killed:[] e nenhuma sessão morta", async () => {
+  it("down with a denied confirmation → killed:[] and no session killed", async () => {
     const nameA = NAME_PREFIX + "g2";
     const nameB = NAME_PREFIX + "g3";
     await runStart({ ...startArgs(nameA), dir, kickoff: false, claudeBin: "cat" });
     await runStart({ ...startArgs(nameB), dir, kickoff: false, claudeBin: "cat" });
-    await runSend({ to: nameA, message: "pendente", hubUrl: hub.url, out: () => {} });
+    await runSend({ to: nameA, message: "pending", hubUrl: hub.url, out: () => {} });
 
     const result = await runDown({
       hubUrl: hub.url,
@@ -456,14 +456,14 @@ describe.skipIf(!hasTmux)("CLI Phase 4 + hub real + tmux real", () => {
       confirm: async () => false,
     });
     expect(result.killed).toEqual([]);
-    expect(out.join("\n")).toContain("Cancelado");
+    expect(out.join("\n")).toContain("Canceled");
     expect(await tmux.hasSession(`sb-${nameA}`)).toBe(true);
     expect(await tmux.hasSession(`sb-${nameB}`)).toBe(true);
   }, 20_000);
 
-  it("stop de agente registrado com sessão já morta → 'já estava parado' + lembrete do registro", async () => {
+  it("stop of a registered agent with an already-dead session → 'already stopped' + registration reminder", async () => {
     const name = NAME_PREFIX + "g4";
-    // Registro sem sessão tmux nenhuma (só REST).
+    // Registration without any tmux session (REST only).
     const res = await fetch(`${hub.url}/api/agents/register`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -482,14 +482,14 @@ describe.skipIf(!hasTmux)("CLI Phase 4 + hub real + tmux real", () => {
     });
     expect(result.killed).toBe(true);
     const printed = out.join("\n");
-    expect(printed).toContain("já estava parado");
-    expect(printed).toContain("permanece no Hub");
+    expect(printed).toContain("already stopped");
+    expect(printed).toContain("stays in the Hub");
   }, 20_000);
 
-  it("Ctrl-C na confirmação (AbortError do readline) → cancelamento limpo, sem stack", async () => {
+  it("Ctrl-C at the confirmation (readline AbortError) → clean cancellation, no stack", async () => {
     const name = NAME_PREFIX + "g5";
     await runStart({ ...startArgs(name), dir, kickoff: false, claudeBin: "cat" });
-    await runSend({ to: name, message: "pendente", hubUrl: hub.url, out: () => {} });
+    await runSend({ to: name, message: "pending", hubUrl: hub.url, out: () => {} });
 
     const result = await runStop({
       name,
@@ -499,39 +499,39 @@ describe.skipIf(!hasTmux)("CLI Phase 4 + hub real + tmux real", () => {
       out: outFn,
       isTTY: true,
       confirm: async () => {
-        // Exatamente o que readline/promises rejeita num Ctrl-C real.
+        // Exactly what readline/promises rejects with on a real Ctrl-C.
         const err = new Error("Aborted with Ctrl+C");
         err.name = "AbortError";
         throw err;
       },
     });
     expect(result.killed).toBe(false);
-    expect(out.join("\n")).toContain("Cancelado");
+    expect(out.join("\n")).toContain("Canceled");
     expect(await tmux.hasSession(`sb-${name}`)).toBe(true);
   }, 20_000);
 
-  it("re-attach sem --role preserva o role registrado (PRD 8: registro reaproveitado, não zerado)", async () => {
+  it("re-attach without --role preserves the registered role (PRD 8: registration reused, not reset)", async () => {
     const name = NAME_PREFIX + "role";
     await runStart({
       ...startArgs(name),
-      role: "backend da API",
+      role: "API backend",
       dir,
       kickoff: false,
       claudeBin: "cat",
     });
     await runStop({ name, yes: true, hubUrl: hub.url, baseDir: dir, tmux, out: outFn, isTTY: false });
-    await pollUntil(async () => !(await tmux.hasSession(`sb-${name}`)), "sessão morta pós-stop");
+    await pollUntil(async () => !(await tmux.hasSession(`sb-${name}`)), "session dead post-stop");
 
-    // start SEM --role (o caso normal de re-attach).
+    // start WITHOUT --role (the normal re-attach case).
     await runStart({ ...startArgs(name), dir, kickoff: false, claudeBin: "cat" });
     const agents = (await (await fetch(`${hub.url}/api/agents`)).json()) as Array<{
       name: string;
       role: string;
     }>;
-    expect(agents.find((a) => a.name === name)?.role).toBe("backend da API");
+    expect(agents.find((a) => a.name === name)?.role).toBe("API backend");
   }, 20_000);
 
-  it("kickoff real: espera a readiness da TUI e injeta o texto EXATO via caminho com guarda", async () => {
+  it("real kickoff: waits for TUI readiness and injects the EXACT text via the guarded path", async () => {
     // Un-registered session running cat (kickoff talks only to tmux): the
     // pane starts WITHOUT readiness markers, so the kickoff must WAIT.
     const name = NAME_PREFIX + "k";
@@ -570,7 +570,7 @@ describe.skipIf(!hasTmux)("CLI Phase 4 + hub real + tmux real", () => {
     await pollUntil(async () => {
       const flat = (await flatPane(session)).replaceAll(" ", "");
       return flat.split(expected).length - 1 >= 2;
-    }, "texto do kickoff visível 2x no pane (eco + saída do cat pós-Enter)");
+    }, "kickoff text visible 2x in the pane (echo + cat output post-Enter)");
     expect(await flatPane(session)).not.toMatch(/TOKEN/);
   }, 20_000);
 });

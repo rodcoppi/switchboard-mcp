@@ -119,14 +119,14 @@ export class Store {
   registerAgent(input: RegisterAgentInput): Agent {
     if (RESERVED_AGENT_NAMES.has(input.name)) {
       throw new Error(
-        `Nome reservado: "${input.name}". "operator" (o humano dono do sistema) e "all" ` +
-          `(pseudo-destinatário de broadcast) são identidades do sistema — escolha outro nome de agente.`,
+        `Reserved name: "${input.name}". "operator" (the human who owns the system) and "all" ` +
+          `(broadcast pseudo-recipient) are system identities — choose another agent name.`,
       );
     }
     if (!AGENT_NAME_RE.test(input.name)) {
       throw new Error(
-        `Nome de agente inválido: "${input.name}". Use minúsculas, dígitos e hífens ` +
-          `(2 a 31 caracteres, começando com letra ou dígito): ^[a-z0-9][a-z0-9-]{1,30}$`,
+        `Invalid agent name: "${input.name}". Use lowercase letters, digits and hyphens ` +
+          `(2 to 31 characters, starting with a letter or digit): ^[a-z0-9][a-z0-9-]{1,30}$`,
       );
     }
 
@@ -156,7 +156,7 @@ export class Store {
 
     if (this.agents.size >= MAX_AGENTS) {
       throw new Error(
-        `Limite de ${MAX_AGENTS} agentes registrados atingido. Remova agentes antigos antes de registrar novos.`,
+        `Limit of ${MAX_AGENTS} registered agents reached. Remove old agents before registering new ones.`,
       );
     }
 
@@ -207,7 +207,7 @@ export class Store {
   updateAgent(name: string, patch: Partial<Omit<Agent, "name">>): Agent {
     const agent = this.agents.get(name);
     if (!agent) {
-      throw new Error(`Agente desconhecido: "${name}".`);
+      throw new Error(`Unknown agent: "${name}".`);
     }
 
     const cleaned: Record<string, unknown> = {};
@@ -219,7 +219,7 @@ export class Store {
     const merged = { ...agent, ...cleaned };
     if (!isAgent(merged)) {
       throw new Error(
-        `updateAgent("${name}"): patch produziria um registro inválido — nada foi alterado. ` +
+        `updateAgent("${name}"): patch would produce an invalid record — nothing was changed. ` +
           `Patch: ${JSON.stringify(patch)}`,
       );
     }
@@ -263,7 +263,7 @@ export class Store {
   }): Message {
     for (const field of ["from", "to", "body"] as const) {
       if (typeof input[field] !== "string" || input[field].length === 0) {
-        throw new Error(`Mensagem inválida: campo obrigatório "${field}" ausente ou vazio.`);
+        throw new Error(`Invalid message: required field "${field}" missing or empty.`);
       }
     }
 
@@ -305,7 +305,7 @@ export class Store {
   markRead(messageId: string, readAt: string = new Date().toISOString()): boolean {
     const message = this.messagesById.get(messageId);
     if (!message) {
-      this.log.warn(`[store] markRead: mensagem desconhecida "${messageId}" — ignorando.`);
+      this.log.warn(`[store] markRead: unknown message "${messageId}" — ignoring.`);
       return false;
     }
     if (message.readAt !== null) {
@@ -379,22 +379,22 @@ export class Store {
       parsed = JSON.parse(fs.readFileSync(this.agentsPath, "utf8"));
     } catch (err) {
       this.log.warn(
-        `[store] agents.json corrompido (${String(err)}) — começando com zero agentes.`,
+        `[store] agents.json corrupted (${String(err)}) — starting with zero agents.`,
       );
       return;
     }
     if (!Array.isArray(parsed)) {
-      this.log.warn(`[store] agents.json não é um array — começando com zero agentes.`);
+      this.log.warn(`[store] agents.json is not an array — starting with zero agents.`);
       return;
     }
     for (const entry of parsed) {
       if (!isAgent(entry)) {
-        this.log.warn(`[store] registro de agente inválido no snapshot — pulando.`);
+        this.log.warn(`[store] invalid agent record in snapshot — skipping.`);
       } else if (RESERVED_AGENT_NAMES.has(entry.name)) {
         // Legacy data written before the reserved-name guard: loading it would
         // reopen the operator-impersonation / broadcast-collision hole via join.
         this.log.warn(
-          `[store] agente com nome reservado "${entry.name}" no snapshot — pulando.`,
+          `[store] agent with reserved name "${entry.name}" in snapshot — skipping.`,
         );
       } else {
         this.agents.set(entry.name, entry);
@@ -418,14 +418,14 @@ export class Store {
     // line, skipped below as usual (PRD 10.4).
     if (content.length > 0 && !content.endsWith("\n")) {
       this.log.warn(
-        `[store] messages.jsonl não terminava em newline (última linha truncada por crash?) — selando o arquivo.`,
+        `[store] messages.jsonl did not end in a newline (last line truncated by a crash?) — sealing the file.`,
       );
       try {
         fs.appendFileSync(this.messagesPath, "\n");
       } catch (err) {
         this.needsLeadingNewline = true;
         this.log.warn(
-          `[store] não foi possível selar messages.jsonl (${String(err)}) — o próximo append começará em linha nova.`,
+          `[store] could not seal messages.jsonl (${String(err)}) — the next append will start on a new line.`,
         );
       }
     }
@@ -441,7 +441,7 @@ export class Store {
         record = JSON.parse(line);
       } catch {
         this.log.warn(
-          `[store] messages.jsonl linha ${lineNo}: JSON corrompido — pulando.`,
+          `[store] messages.jsonl line ${lineNo}: corrupted JSON — skipping.`,
         );
         continue;
       }
@@ -452,7 +452,7 @@ export class Store {
           message.readAt = record.readAt;
         } else {
           this.log.warn(
-            `[store] messages.jsonl linha ${lineNo}: evento read para mensagem desconhecida "${record.messageId}" — pulando.`,
+            `[store] messages.jsonl line ${lineNo}: read event for unknown message "${record.messageId}" — skipping.`,
           );
         }
       } else if (isMessage(record)) {
@@ -462,14 +462,14 @@ export class Store {
           // readAt null forever (markRead only reaches the Map's object),
           // jamming the unread count permanently.
           this.log.warn(
-            `[store] messages.jsonl linha ${lineNo}: linha duplicada para o id "${record.id}" — pulando.`,
+            `[store] messages.jsonl line ${lineNo}: duplicated line for id "${record.id}" — skipping.`,
           );
         } else {
           this.indexMessage(record);
         }
       } else {
         this.log.warn(
-          `[store] messages.jsonl linha ${lineNo}: registro não reconhecido — pulando.`,
+          `[store] messages.jsonl line ${lineNo}: unrecognized record — skipping.`,
         );
       }
     }

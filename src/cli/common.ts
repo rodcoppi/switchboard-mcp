@@ -1,6 +1,6 @@
 // Shared helpers of the Phase 4 CLI (PRD section 11): hub address resolution,
 // HTTP client with self-explaining errors, and the "hub down" check every
-// hub-talking subcommand runs first. User-facing texts in Portuguese (D8).
+// hub-talking subcommand runs first. User-facing texts in English (D8).
 //
 // The CLI talks to the hub EXCLUSIVELY over REST (/api/*) — never by touching
 // the store files directly (single-writer stays true) — and touches tmux only
@@ -50,15 +50,15 @@ export async function checkHubHealth(hubUrl: string): Promise<void> {
       failure = `HTTP ${res.status}`;
     } else {
       const body = (await res.json()) as { ok?: boolean };
-      if (body.ok !== true) failure = "health check retornou ok=false";
+      if (body.ok !== true) failure = "health check returned ok=false";
     }
   } catch (err) {
     failure = describeFetchError(err);
   }
   if (failure !== undefined) {
     throw new CliError(
-      `O Hub não respondeu em ${hubUrl}/api/health (${failure}). ` +
-        `Rode "switchboard serve" primeiro (recomendado: dentro de uma sessão tmux "sb-hub").`,
+      `The Hub did not respond at ${hubUrl}/api/health (${failure}). ` +
+        `Run "switchboard serve" first (recommended: inside a tmux session "sb-hub").`,
     );
   }
 }
@@ -76,8 +76,8 @@ async function hubFetch<T>(
     });
   } catch (err) {
     throw new CliError(
-      `Falha ao falar com o Hub em ${hubUrl}${pathname} (${describeFetchError(err)}). ` +
-        `O Hub caiu? Rode "switchboard serve" primeiro.`,
+      `Failed to talk to the Hub at ${hubUrl}${pathname} (${describeFetchError(err)}). ` +
+        `Did the Hub go down? Run "switchboard serve" first.`,
     );
   }
   let body: unknown;
@@ -87,12 +87,12 @@ async function hubFetch<T>(
     body = undefined;
   }
   if (!res.ok) {
-    // Hub errors are already {ok:false, error} in Portuguese, written for the
+    // Hub errors are already {ok:false, error} in English, written for the
     // reader to self-correct — surface them verbatim.
     const error =
       typeof body === "object" && body !== null && "error" in body
         ? String((body as { error: unknown }).error)
-        : `Hub respondeu HTTP ${res.status} em ${pathname}.`;
+        : `Hub responded HTTP ${res.status} at ${pathname}.`;
     throw new CliError(error);
   }
   return body as T;
@@ -115,20 +115,20 @@ export function hubPost<T>(
 }
 
 /**
- * Relative "time ago" in Portuguese for the status table (PRD 11:
- * LAST SEEN like "2min atrás"). Invalid/absent timestamps render as "—".
+ * Relative "time ago" in English for the status table (PRD 11:
+ * LAST SEEN like "2min ago"). Invalid/absent timestamps render as "—".
  */
 export function formatRelative(iso: string, nowMs: number = Date.now()): string {
   const t = Date.parse(iso);
   if (Number.isNaN(t)) return "—";
   const seconds = Math.floor(Math.max(0, nowMs - t) / 1000);
-  if (seconds < 10) return "agora";
-  if (seconds < 60) return `${seconds}s atrás`;
+  if (seconds < 10) return "now";
+  if (seconds < 60) return `${seconds}s ago`;
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}min atrás`;
+  if (minutes < 60) return `${minutes}min ago`;
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h atrás`;
-  return `${Math.floor(hours / 24)}d atrás`;
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
 }
 
 /** Sink for user-facing output — injectable in tests (default console.log). */
@@ -145,7 +145,7 @@ export async function runCliAction(fn: () => Promise<void>): Promise<void> {
     if (err instanceof CliError) {
       console.error(err.message);
     } else {
-      console.error(`switchboard: erro inesperado: ${String(err instanceof Error ? (err.stack ?? err.message) : err)}`);
+      console.error(`switchboard: unexpected error: ${String(err instanceof Error ? (err.stack ?? err.message) : err)}`);
     }
     process.exit(1);
   }

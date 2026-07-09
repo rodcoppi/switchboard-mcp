@@ -53,7 +53,7 @@ export async function runLogs(options: LogsOptions = {}): Promise<void> {
   const file = path.join(baseDir, "logs", "hub.log");
   if (!fs.existsSync(file)) {
     throw new CliError(
-      `Arquivo de log não existe: ${file}. O Hub já rodou nesta máquina? Rode "switchboard serve".`,
+      `Log file does not exist: ${file}. Has the Hub run on this machine yet? Run "switchboard serve".`,
     );
   }
 
@@ -110,8 +110,8 @@ export async function runLogs(options: LogsOptions = {}): Promise<void> {
 export function registerLogsCommand(program: Command): void {
   program
     .command("logs")
-    .description(`Mostra as últimas ${DEFAULT_TAIL_LINES} linhas do log do Hub (~/.switchboard/logs/hub.log).`)
-    .option("-f, --follow", "segue o arquivo de log (Ctrl-C para sair)")
+    .description(`Shows the last ${DEFAULT_TAIL_LINES} lines of the Hub log (~/.switchboard/logs/hub.log).`)
+    .option("-f, --follow", "follows the log file (Ctrl-C to exit)")
     .action(async (opts: { follow?: boolean }) => {
       await runCliAction(() => runLogs({ follow: opts.follow }));
     });

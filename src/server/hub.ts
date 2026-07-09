@@ -177,11 +177,11 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
     ) => {
       if (isPayloadTooLarge(err) && !res.headersSent) {
         const hint =
-          `Payload grande demais para o Hub (limite do parser: ${jsonBodyLimitBytes} bytes; ` +
-          `mensagens são limitadas a ${config.maxMessageBytes} bytes). ` +
-          `Escreva o conteúdo num arquivo no disco e envie o path absoluto no lugar do conteúdo.`;
+          `Payload too large for the Hub (parser limit: ${jsonBodyLimitBytes} bytes; ` +
+          `messages are limited to ${config.maxMessageBytes} bytes). ` +
+          `Write the content to a file on disk and send the absolute path instead of the content.`;
         log.warn(
-          `[hub] body acima do limite do parser rejeitado em ${req.method} ${req.path}.`,
+          `[hub] body over the parser limit rejected on ${req.method} ${req.path}.`,
         );
         if (req.path.startsWith("/mcp")) {
           res.status(413).json({
@@ -195,7 +195,7 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
         return;
       }
       if (err instanceof SyntaxError && !res.headersSent) {
-        log.warn(`[hub] body JSON malformado rejeitado em ${req.method} ${req.path}.`);
+        log.warn(`[hub] malformed JSON body rejected on ${req.method} ${req.path}.`);
         if (req.path.startsWith("/mcp")) {
           res.status(400).json({
             jsonrpc: "2.0",
@@ -205,7 +205,7 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
         } else {
           res
             .status(400)
-            .json({ ok: false, error: "Body JSON malformado (parse error)." });
+            .json({ ok: false, error: "Malformed JSON body (parse error)." });
         }
         return;
       }
@@ -213,8 +213,8 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
         next(err);
         return;
       }
-      log.error(`[hub] erro não tratado em ${req.method} ${req.path}:`, err);
-      res.status(500).json({ ok: false, error: "Erro interno do Hub." });
+      log.error(`[hub] unhandled error on ${req.method} ${req.path}:`, err);
+      res.status(500).json({ ok: false, error: "Internal Hub error." });
     },
   );
 
@@ -232,13 +232,13 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
   // Phase 3: flush (5s) + status polling timers live and die with the hub.
   dispatcher?.start();
 
-  log.info(`Switchboard Hub no ar em ${url} (versão ${version}).`);
+  log.info(`Switchboard Hub up at ${url} (version ${version}).`);
   log.info(`Dashboard:    ${url}/`);
-  log.info(`Endpoint MCP: ${url}/mcp`);
+  log.info(`MCP endpoint: ${url}/mcp`);
   log.info(`REST + SSE:   ${url}/api`);
-  log.info(`Dados em:     ${baseDir}`);
+  log.info(`Data at:      ${baseDir}`);
   log.info(
-    `Registre no Claude Code (uma vez, escopo user): ` +
+    `Register in Claude Code (once, user scope): ` +
       `claude mcp add --transport http --scope user switchboard ${url}/mcp`,
   );
 
@@ -246,7 +246,7 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
   async function close(): Promise<void> {
     if (closed) return;
     closed = true;
-    log.info(`[hub] encerrando…`);
+    log.info(`[hub] shutting down…`);
     dispatcher?.stop();
     await mcp.close();
     const serverClosed = new Promise<void>((resolve) => {
@@ -256,7 +256,7 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
     // would otherwise keep server.close() pending forever.
     server.closeAllConnections();
     await serverClosed;
-    log.info(`[hub] encerrado.`);
+    log.info(`[hub] shut down.`);
   }
 
   return {

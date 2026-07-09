@@ -1,10 +1,10 @@
-// E2E leve da camada commander (src/index.ts + register*Command) através do
-// bin real (bin/switchboard.mjs → tsx do repo → src/index.ts): cobre o
-// mapeamento de flags, o comando oculto, os exit codes (CliError → 1) e a
-// validação do serve — regressões que os testes de run*/format* (que pulam o
-// commander) nunca veriam. Nenhum hub, nenhum tmux, nenhum claude: só os
-// caminhos de erro fail-fast (validações locais ANTES de qualquer HTTP) e o
-// --help. Barato (~1-2s por spawn), determinístico, nenhuma porta.
+// Lightweight E2E of the commander layer (src/index.ts + register*Command)
+// through the real bin (bin/switchboard.mjs → repo tsx → src/index.ts): covers
+// the flag mapping, the hidden command, the exit codes (CliError → 1) and the
+// serve validation — regressions the run*/format* tests (which skip commander)
+// would never catch. No hub, no tmux, no claude: only the fail-fast error paths
+// (local validations BEFORE any HTTP) and --help. Cheap (~1-2s per spawn),
+// deterministic, no ports.
 
 import { spawnSync } from "node:child_process";
 import path from "node:path";
@@ -23,8 +23,8 @@ function cli(...args: string[]): { status: number | null; stdout: string; stderr
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
 }
 
-describe("CLI E2E (bin real → commander)", () => {
-  it("--help lista os 7 subcomandos públicos e ESCONDE o kickoff-agent", () => {
+describe("CLI E2E (real bin → commander)", () => {
+  it("--help lists the 7 public subcommands and HIDES the kickoff-agent", () => {
     const { status, stdout } = cli("--help");
     expect(status).toBe(0);
     for (const cmd of ["serve", "start", "status", "send", "stop", "down", "logs"]) {
@@ -33,31 +33,31 @@ describe("CLI E2E (bin real → commander)", () => {
     expect(stdout).not.toContain("kickoff-agent");
   }, 40_000);
 
-  it("start com nome inválido → exit 1 + mensagem da CliError (sem stack)", () => {
+  it("start with an invalid name → exit 1 + CliError message (no stack)", () => {
     const { status, stderr } = cli("start", "Bad_Name");
     expect(status).toBe(1);
-    expect(stderr).toMatch(/Nome de agente inválido/);
-    expect(stderr).not.toMatch(/erro inesperado/);
+    expect(stderr).toMatch(/Invalid agent name/);
+    expect(stderr).not.toMatch(/unexpected error/);
   }, 40_000);
 
-  it("start com --dir inexistente → exit 1 + mensagem clara", () => {
-    const { status, stderr } = cli("start", "okname", "--dir", "/nao/existe/mesmo");
+  it("start with a non-existent --dir → exit 1 + clear message", () => {
+    const { status, stderr } = cli("start", "okname", "--dir", "/does/not/exist");
     expect(status).toBe(1);
-    expect(stderr).toMatch(/Diretório não existe/);
+    expect(stderr).toMatch(/Directory does not exist/);
   }, 40_000);
 
-  it("start com --claude-args de aspas abertas → exit 1 ANTES de qualquer HTTP (flag mapeada)", () => {
-    // Prova que o commander entrega --claude-args → opts.claudeArgs: se o
-    // mapeamento quebrasse (undefined), o parse passaria e o erro seria outro
-    // (hub morto / diretório), não o das aspas.
-    const { status, stderr } = cli("start", "okname", "--claude-args", "--model 'aberto");
+  it("start with an unterminated quote in --claude-args → exit 1 BEFORE any HTTP (flag mapped)", () => {
+    // Proves that commander delivers --claude-args → opts.claudeArgs: if the
+    // mapping broke (undefined), the parse would pass and the error would be a
+    // different one (dead hub / directory), not the quote one.
+    const { status, stderr } = cli("start", "okname", "--claude-args", "--model 'open");
     expect(status).toBe(1);
-    expect(stderr).toMatch(/não fechadas/);
+    expect(stderr).toMatch(/unterminated/);
   }, 40_000);
 
-  it("serve com --port inválida → exit 1 + mensagem dirigida", () => {
+  it("serve with an invalid --port → exit 1 + directed message", () => {
     const { status, stderr } = cli("serve", "--port", "abc");
     expect(status).toBe(1);
-    expect(stderr).toMatch(/porta inválida/);
+    expect(stderr).toMatch(/invalid port/);
   }, 40_000);
 });

@@ -1,4 +1,4 @@
-// Simple leveled logger (PRD section 6: "logger simples com níveis, arquivo + stdout").
+// Simple leveled logger (PRD section 6: "simple leveled logger, file + stdout").
 // No external dependencies. Writes every record to stdout AND appends it to a
 // log file (default ~/.switchboard/logs/hub.log, directory created on demand).
 // Debuggability > elegance (PRD override rule 2): plain text, greppable.
@@ -46,8 +46,8 @@ export class Logger {
     } catch (err) {
       this.fileDisabled = true;
       process.stderr.write(
-        `[switchboard] não foi possível criar o diretório de logs ${path.dirname(this.filePath)} ` +
-          `(${String(err)}) — logando apenas em stdout.\n`,
+        `[switchboard] could not create the log directory ${path.dirname(this.filePath)} ` +
+          `(${String(err)}) — logging to stdout only.\n`,
       );
     }
   }

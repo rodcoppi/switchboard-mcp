@@ -21,35 +21,35 @@ describe("Logger", () => {
   it("filters records below the minimum level and appends the rest to the file", () => {
     const filePath = path.join(dir, "logs", "hub.log");
     const logger = createLogger({ level: "warn", filePath, stdout: false });
-    logger.debug("mensagem debug");
-    logger.info("mensagem info");
-    logger.warn("mensagem warn");
-    logger.error("mensagem error", new Error("detalhe"));
+    logger.debug("debug message");
+    logger.info("info message");
+    logger.warn("warn message");
+    logger.error("error message", new Error("detail"));
 
     const content = fs.readFileSync(filePath, "utf8");
     expect(content).not.toContain("[DEBUG]");
     expect(content).not.toContain("[INFO]");
-    expect(content).toContain("[WARN] mensagem warn");
-    expect(content).toContain("[ERROR] mensagem error");
-    expect(content).toContain("detalhe"); // extra args are formatted in
+    expect(content).toContain("[WARN] warn message");
+    expect(content).toContain("[ERROR] error message");
+    expect(content).toContain("detail"); // extra args are formatted in
   });
 
   it("setLevel changes the filter at runtime", () => {
     const filePath = path.join(dir, "hub.log");
     const logger = new Logger({ level: "error", filePath, stdout: false });
-    logger.info("antes");
+    logger.info("before");
     logger.setLevel("debug");
-    logger.debug("depois");
+    logger.debug("after");
 
     const content = fs.readFileSync(filePath, "utf8");
-    expect(content).not.toContain("antes");
-    expect(content).toContain("depois");
+    expect(content).not.toContain("before");
+    expect(content).toContain("after");
   });
 
   it("never crashes the hub when the log directory cannot be created (stdout-only fallback)", () => {
     // logs path blocked by a FILE where a directory is needed
     const blocker = path.join(dir, "blocker");
-    fs.writeFileSync(blocker, "sou um arquivo, não um diretório");
+    fs.writeFileSync(blocker, "I am a file, not a directory");
     const filePath = path.join(blocker, "sub", "hub.log");
 
     const stderrSpy = vi
@@ -65,7 +65,7 @@ describe("Logger", () => {
         stderrSpy.mock.calls.some((call) => String(call[0]).includes("stdout")),
       ).toBe(true);
       // writing still works (no throw), just without the file copy
-      expect(() => logger.error("ainda funciona")).not.toThrow();
+      expect(() => logger.error("still works")).not.toThrow();
       expect(fs.existsSync(filePath)).toBe(false);
     } finally {
       stderrSpy.mockRestore();

@@ -22,7 +22,7 @@ function newStore(): Store {
 function registerAgent(store: Store, name: string) {
   return store.registerAgent({
     name,
-    role: `role de ${name}`,
+    role: `role of ${name}`,
     tmuxSession: `sb-${name}`,
     cwd: `/tmp/${name}`,
   });
@@ -52,14 +52,14 @@ describe("agents", () => {
     expect(agent.status).toBe("offline");
     expect(agent.mcpConnected).toBe(false);
     expect(agent.lastNudgeAt).toBeNull();
-    expect(store.getAgent("alpha")?.role).toBe("role de alpha");
+    expect(store.getAgent("alpha")?.role).toBe("role of alpha");
     expect(store.listAgents()).toHaveLength(1);
   });
 
   it("rejects invalid agent names", () => {
     const store = newStore();
     for (const bad of ["A", "a", "-alpha", "alpha_beta", "Alpha", "a".repeat(32), ""]) {
-      expect(() => registerAgent(store, bad), `name: "${bad}"`).toThrow(/inválido/);
+      expect(() => registerAgent(store, bad), `name: "${bad}"`).toThrow(/Invalid agent name/);
     }
     // boundary cases that must pass
     expect(() => registerAgent(store, "ab")).not.toThrow();
@@ -70,7 +70,7 @@ describe("agents", () => {
     const store = newStore();
     for (const reserved of ["operator", "all"]) {
       expect(() => registerAgent(store, reserved), `name: "${reserved}"`).toThrow(
-        /reservado/,
+        /Reserved name/,
       );
     }
     expect(store.listAgents()).toHaveLength(0);
@@ -89,7 +89,7 @@ describe("agents", () => {
     warnings = [];
     const rebooted = newStore();
     expect(rebooted.listAgents().map((a) => a.name)).toEqual(["alpha"]);
-    expect(warnings.some((w) => w.includes("reservado"))).toBe(true);
+    expect(warnings.some((w) => w.includes("reserved"))).toBe(true);
   });
 
   it("resetConnectionState clears ghost mcpConnected/online state and persists it", () => {
@@ -121,12 +121,12 @@ describe("agents", () => {
     store.updateAgent("alpha", { status: "online", mcpConnected: true });
     const again = store.registerAgent({
       name: "alpha",
-      role: "novo role",
+      role: "new role",
       tmuxSession: "sb-alpha",
       cwd: "/tmp/other",
     });
     expect(again.createdAt).toBe(first.createdAt);
-    expect(again.role).toBe("novo role");
+    expect(again.role).toBe("new role");
     // re-register happens BEFORE the new Claude Code opens: stale status /
     // mcpConnected from the dead incarnation must be reset, never preserved
     expect(again.status).toBe("offline");
@@ -153,7 +153,7 @@ describe("agents", () => {
     const store = newStore();
     registerAgent(store, "alpha");
     store.updateAgent("alpha", { status: "online", mcpConnected: true, muted: true });
-    expect(() => store.updateAgent("ghost", { muted: true })).toThrow(/desconhecido/);
+    expect(() => store.updateAgent("ghost", { muted: true })).toThrow(/Unknown agent/);
 
     const rebooted = newStore();
     const agent = rebooted.getAgent("alpha");
@@ -183,7 +183,7 @@ describe("agents", () => {
     registerAgent(store, "alpha");
     expect(() =>
       store.updateAgent("alpha", { status: "weird" } as never),
-    ).toThrow(/inválido/);
+    ).toThrow(/invalid record/);
     // nothing was mutated or persisted
     expect(store.getAgent("alpha")?.status).toBe("offline");
     const rebooted = newStore();
@@ -203,10 +203,10 @@ describe("agents", () => {
   });
 });
 
-describe("capability token (adendo v1.1)", () => {
+describe("capability token (addendum v1.1)", () => {
   const TOKEN_RE = /^[0-9a-f]{64}$/; // crypto.randomBytes(32).toString("hex")
 
-  it("registerAgent gera um token hex de 64 chars, único por agente", () => {
+  it("registerAgent generates a 64-char hex token, unique per agent", () => {
     const store = newStore();
     const alpha = registerAgent(store, "alpha");
     const beta = registerAgent(store, "beta");
@@ -215,14 +215,14 @@ describe("capability token (adendo v1.1)", () => {
     expect(alpha.token).not.toBe(beta.token);
   });
 
-  it("re-registro (re-attach) REGENERA o token e persiste o novo no snapshot", () => {
+  it("re-registration (re-attach) REGENERATES the token and persists the new one in the snapshot", () => {
     const store = newStore();
     const first = registerAgent(store, "alpha").token;
-    const second = registerAgent(store, "alpha").token; // sessão anterior morta (P7)
+    const second = registerAgent(store, "alpha").token; // previous session dead (P7)
     expect(second).toMatch(TOKEN_RE);
     expect(second).not.toBe(first);
 
-    // O snapshot persiste o token (trust model local) — e é o NOVO.
+    // The snapshot persists the token (local trust model) — and it is the NEW one.
     const snapshot = JSON.parse(
       fs.readFileSync(path.join(dir, "agents.json"), "utf8"),
     ) as Array<{ token?: string }>;
@@ -232,25 +232,25 @@ describe("capability token (adendo v1.1)", () => {
     expect(rebooted.getAgent("alpha")?.token).toBe(second);
   });
 
-  it("carrega snapshot legado sem o campo token (registro pré-v1.1 é válido)", () => {
+  it("loads a legacy snapshot without the token field (a pre-v1.1 record is valid)", () => {
     const store = newStore();
     registerAgent(store, "alpha");
     const snapshot = JSON.parse(fs.readFileSync(path.join(dir, "agents.json"), "utf8"));
-    delete snapshot[0].token; // como um agents.json escrito antes do adendo
+    delete snapshot[0].token; // like an agents.json written before the addendum
     fs.writeFileSync(path.join(dir, "agents.json"), JSON.stringify(snapshot));
 
     warnings = [];
     const rebooted = newStore();
     expect(rebooted.listAgents().map((a) => a.name)).toEqual(["alpha"]);
     expect(rebooted.getAgent("alpha")?.token).toBeUndefined();
-    expect(warnings).toHaveLength(0); // legado NÃO é registro inválido
+    expect(warnings).toHaveLength(0); // legacy is NOT an invalid record
   });
 });
 
 describe("messages", () => {
   it("appends a message and reads it back (memory and JSONL)", () => {
     const store = newStore();
-    const msg = store.appendMessage({ from: "alpha", to: "beta", body: "olá beta" });
+    const msg = store.appendMessage({ from: "alpha", to: "beta", body: "hello beta" });
     expect(msg.id).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/); // ULID
     expect(msg.readAt).toBeNull();
     expect(msg.broadcastId).toBeNull();
@@ -274,7 +274,7 @@ describe("messages", () => {
     const m1 = store.appendMessage({ from: "alpha", to: "beta", body: "1" });
     const m2 = store.appendMessage({ from: "gamma", to: "beta", body: "2" });
     const m3 = store.appendMessage({ from: "alpha", to: "beta", body: "3" });
-    store.appendMessage({ from: "beta", to: "alpha", body: "para outro destinatário" });
+    store.appendMessage({ from: "beta", to: "alpha", body: "to another recipient" });
 
     expect(store.unreadFor("beta").map((m) => m.id)).toEqual([m1.id, m2.id, m3.id]);
     expect(store.unreadCount("beta")).toBe(3);
@@ -289,7 +289,7 @@ describe("messages", () => {
 
   it("markRead appends a read event instead of editing the message line", () => {
     const store = newStore();
-    const msg = store.appendMessage({ from: "alpha", to: "beta", body: "leia-me" });
+    const msg = store.appendMessage({ from: "alpha", to: "beta", body: "read me" });
     expect(store.markRead(msg.id)).toBe(true);
     expect(store.getMessage(msg.id)?.readAt).not.toBeNull();
 
@@ -304,12 +304,12 @@ describe("messages", () => {
     expect(store.markRead(msg.id)).toBe(false);
     expect(store.markRead("00000000000000000000000000")).toBe(false);
     expect(rawLines()).toHaveLength(2);
-    expect(warnings.some((w) => w.includes("desconhecida"))).toBe(true);
+    expect(warnings.some((w) => w.includes("unknown"))).toBe(true);
   });
 
   it("message getters return copies — mutating them never bypasses markRead", () => {
     const store = newStore();
-    const msg = store.appendMessage({ from: "alpha", to: "beta", body: "não me mute" });
+    const msg = store.appendMessage({ from: "alpha", to: "beta", body: "do not mute me" });
 
     // a Phase 2 slip like `getMessage(id)!.readAt = ...` (instead of markRead)
     // must NOT drain the unread state without appending the read event
@@ -343,8 +343,8 @@ describe("replay (reboot)", () => {
     const store = newStore();
     registerAgent(store, "alpha");
     registerAgent(store, "beta");
-    const m1 = store.appendMessage({ from: "alpha", to: "beta", body: "primeira" });
-    const m2 = store.appendMessage({ from: "alpha", to: "beta", body: "segunda" });
+    const m1 = store.appendMessage({ from: "alpha", to: "beta", body: "first" });
+    const m2 = store.appendMessage({ from: "alpha", to: "beta", body: "second" });
     store.markRead(m1.id);
 
     const rebooted = newStore(); // same dir, fresh instance
@@ -359,8 +359,8 @@ describe("replay (reboot)", () => {
 
   it("skips corrupted lines in the middle of the file without crashing", () => {
     const store = newStore();
-    const m1 = store.appendMessage({ from: "alpha", to: "beta", body: "antes" });
-    const m2 = store.appendMessage({ from: "alpha", to: "beta", body: "depois" });
+    const m1 = store.appendMessage({ from: "alpha", to: "beta", body: "before" });
+    const m2 = store.appendMessage({ from: "alpha", to: "beta", body: "after" });
     store.markRead(m1.id);
 
     // corrupt the file: garbage between valid records + unrecognized JSON record
@@ -370,9 +370,9 @@ describe("replay (reboot)", () => {
       file,
       [
         lines[0],
-        "{esta linha não é JSON válido",
-        '{"type":"read","messageId":"01INEXISTENTE0000000000000","readAt":"2026-07-08T00:00:00.000Z"}',
-        '{"algo":"que não é mensagem nem evento"}',
+        "{this line is not valid JSON",
+        '{"type":"read","messageId":"01MISSINGMESSAGE0000000000","readAt":"2026-07-08T00:00:00.000Z"}',
+        '{"thing":"that is neither a message nor an event"}',
         lines[1],
         lines[2],
       ].join("\n") + "\n",
@@ -388,7 +388,7 @@ describe("replay (reboot)", () => {
 
   it("seals a truncated final line (crash mid-append) so the next message survives", () => {
     const store = newStore();
-    const m1 = store.appendMessage({ from: "alpha", to: "beta", body: "íntegra" });
+    const m1 = store.appendMessage({ from: "alpha", to: "beta", body: "intact" });
     // simulate a crash mid-write: torn last line WITHOUT trailing newline
     fs.appendFileSync(path.join(dir, "messages.jsonl"), '{"id":"01TRUNCAD');
 
@@ -400,7 +400,7 @@ describe("replay (reboot)", () => {
     expect(fs.readFileSync(path.join(dir, "messages.jsonl"), "utf8").endsWith("\n")).toBe(true);
 
     // the next append must start on a fresh line, not glue onto the torn one
-    const m2 = boot2.appendMessage({ from: "alpha", to: "beta", body: "nova" });
+    const m2 = boot2.appendMessage({ from: "alpha", to: "beta", body: "new" });
 
     const boot3 = newStore();
     expect(boot3.getMessage(m2.id)).toBeDefined();
@@ -418,7 +418,7 @@ describe("replay (reboot)", () => {
     const rebooted = newStore();
     expect(rebooted.listMessages()).toHaveLength(1);
     expect(rebooted.unreadCount("beta")).toBe(1);
-    expect(warnings.some((w) => w.includes("duplicada"))).toBe(true);
+    expect(warnings.some((w) => w.includes("duplicated"))).toBe(true);
 
     // without the guard, the array copy would keep readAt null forever
     expect(rebooted.markRead(m1.id)).toBe(true);
@@ -431,7 +431,7 @@ describe("replay (reboot)", () => {
   it("survives a corrupted agents.json snapshot (warn + empty)", () => {
     const store = newStore();
     registerAgent(store, "alpha");
-    fs.writeFileSync(path.join(dir, "agents.json"), "{corrompido");
+    fs.writeFileSync(path.join(dir, "agents.json"), "{corrupted");
 
     warnings = [];
     const rebooted = newStore();
@@ -442,12 +442,12 @@ describe("replay (reboot)", () => {
   it("survives agents.json that is valid JSON but not an array (warn + empty)", () => {
     const store = newStore();
     registerAgent(store, "alpha");
-    fs.writeFileSync(path.join(dir, "agents.json"), '{"nao":"array"}');
+    fs.writeFileSync(path.join(dir, "agents.json"), '{"not":"array"}');
 
     warnings = [];
     const rebooted = newStore();
     expect(rebooted.listAgents()).toEqual([]);
-    expect(warnings.some((w) => w.includes("não é um array"))).toBe(true);
+    expect(warnings.some((w) => w.includes("is not an array"))).toBe(true);
   });
 
   it("skips an invalid record inside agents.json but loads the valid ones", () => {
@@ -463,6 +463,6 @@ describe("replay (reboot)", () => {
     warnings = [];
     const rebooted = newStore();
     expect(rebooted.listAgents().map((a) => a.name)).toEqual(["alpha"]);
-    expect(warnings.some((w) => w.includes("inválido"))).toBe(true);
+    expect(warnings.some((w) => w.includes("invalid"))).toBe(true);
   });
 });

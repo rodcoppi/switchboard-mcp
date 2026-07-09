@@ -2,7 +2,7 @@
 // via POST /api/messages — the REST layer fixes from="operator"; the CLI
 // never claims an agent identity. Prints the delivery outcome; hub errors
 // (unknown recipient, oversized body) surface verbatim — they are already
-// written in Portuguese for the reader to self-correct.
+// written in English for the reader to self-correct.
 
 import type { Command } from "commander";
 import type { Delivery, Message } from "../shared/types.js";
@@ -18,13 +18,13 @@ import {
 export function describeDelivery(delivery: Delivery): string {
   switch (delivery) {
     case "nudged":
-      return "nudge disparado no terminal do agente";
+      return "nudge fired in the agent's terminal";
     case "coalesced":
-      return "nudge coalescido (cooldown ativo) — o agente será cutucado em breve";
+      return "nudge coalesced (cooldown active) — the agent will be nudged soon";
     case "queued_offline":
-      return "gravada na fila — agente offline, lerá via check_messages ao voltar";
+      return "queued — agent offline, will read via check_messages when it returns";
     case "queued_muted":
-      return "gravada na fila — agente silenciado (mute), nudge suprimido";
+      return "queued — agent muted, nudge suppressed";
   }
 }
 
@@ -46,14 +46,14 @@ export interface SendOptions {
 export async function runSend(options: SendOptions): Promise<SendResponse> {
   const out = options.out ?? console.log;
   const hubUrl = options.hubUrl ?? defaultHubUrl(options.baseDir);
-  await checkHubHealth(hubUrl); // hub down → clear "serve primeiro" error
+  await checkHubHealth(hubUrl); // hub down → clear "serve first" error
   const result = await hubPost<SendResponse>(hubUrl, "/api/messages", {
     to: options.to,
     body: options.message,
   });
   const recipients =
-    options.to === "all" ? ` (broadcast para ${result.messages.length} agente(s))` : "";
-  out(`Mensagem enviada como operator para "${options.to}"${recipients}.`);
+    options.to === "all" ? ` (broadcast to ${result.messages.length} agent(s))` : "";
+  out(`Message sent as operator to "${options.to}"${recipients}.`);
   out(`Delivery: ${result.delivery} — ${describeDelivery(result.delivery)}.`);
   return result;
 }
@@ -61,9 +61,9 @@ export async function runSend(options: SendOptions): Promise<SendResponse> {
 export function registerSendCommand(program: Command): void {
   program
     .command("send")
-    .description(`Envia uma mensagem como "operator" para um agente (ou "all" para broadcast).`)
-    .argument("<to>", `nome do agente destinatário, ou "all"`)
-    .argument("<message...>", "texto da mensagem")
+    .description(`Sends a message as "operator" to an agent (or "all" for broadcast).`)
+    .argument("<to>", `recipient agent name, or "all"`)
+    .argument("<message...>", "message text")
     .action(async (to: string, messageParts: string[]) => {
       await runCliAction(() =>
         runSend({ to, message: messageParts.join(" ") }).then(() => undefined),

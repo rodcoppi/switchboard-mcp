@@ -65,7 +65,7 @@ export class EventBus {
 
 // ---------------------------------------------------------------------------
 // Shared message semantics (used by POST /api/messages AND the send_message
-// MCP tool). All error strings are in Portuguese, written FOR the reader to
+// MCP tool). All error strings are in English, written FOR the reader to
 // self-correct (a model on the MCP side, a human on the REST side).
 // ---------------------------------------------------------------------------
 
@@ -92,13 +92,13 @@ export function validateRecipient(
   if (typeof to !== "string" || to.length === 0) {
     return {
       code: "invalid",
-      error: `Destinatário obrigatório: informe o nome de um agente registrado ou "all" para broadcast.`,
+      error: `Recipient required: provide the name of a registered agent or "all" for broadcast.`,
     };
   }
   if (to === from) {
     return {
       code: "invalid",
-      error: `Você não pode enviar mensagem para si mesmo ("${to}" é o seu próprio nome).`,
+      error: `You cannot send a message to yourself ("${to}" is your own name).`,
     };
   }
   if (to === "all") {
@@ -107,8 +107,8 @@ export function validateRecipient(
       return {
         code: "invalid",
         error:
-          `Broadcast sem destinatários: nenhum outro agente registrado na rede. ` +
-          `Use a tool list_agents para ver quem está disponível antes de enviar.`,
+          `Broadcast has no recipients: no other agent is registered on the network. ` +
+          `Use the list_agents tool to see who is available before sending.`,
       };
     }
     return null;
@@ -118,9 +118,9 @@ export function validateRecipient(
     return {
       code: "unknown_recipient",
       error:
-        `Destinatário desconhecido: "${to}". Agentes registrados: ` +
-        `${names.length > 0 ? names.join(", ") : "(nenhum)"}. ` +
-        `Use a tool list_agents para descobrir quem está na rede, ou "all" para broadcast.`,
+        `Unknown recipient: "${to}". Registered agents: ` +
+        `${names.length > 0 ? names.join(", ") : "(none)"}. ` +
+        `Use the list_agents tool to find who is on the network, or "all" for broadcast.`,
     };
   }
   return null;
@@ -135,13 +135,13 @@ export function validateRecipient(
  */
 export function validateBodySize(config: Config, body: string): string | null {
   if (body.length === 0) {
-    return `Mensagem vazia: envie conteúdo factual e acionável, ou não envie nada.`;
+    return `Empty message: send factual and actionable content, or send nothing.`;
   }
   const bytes = Buffer.byteLength(body, "utf8");
   if (bytes > config.maxMessageBytes) {
     return (
-      `Mensagem grande demais (${bytes} bytes; máximo ${config.maxMessageBytes}). ` +
-      `Escreva o conteúdo num arquivo no disco e envie o path absoluto no lugar do conteúdo.`
+      `Message too large (${bytes} bytes; maximum ${config.maxMessageBytes}). ` +
+      `Write the content to a file on disk and send the absolute path instead of the content.`
     );
   }
   return null;
@@ -259,7 +259,7 @@ export function createApiRouter(options: ApiOptions): express.Router {
       if (!Number.isInteger(limit) || limit <= 0) {
         res.status(400).json({
           ok: false,
-          error: `Parâmetro "limit" inválido: ${String(req.query.limit)} (esperado inteiro positivo).`,
+          error: `Invalid "limit" parameter: ${String(req.query.limit)} (expected a positive integer).`,
         });
         return;
       }
@@ -280,7 +280,7 @@ export function createApiRouter(options: ApiOptions): express.Router {
     if (typeof to !== "string" || typeof body !== "string" || body.length === 0) {
       res.status(400).json({
         ok: false,
-        error: `Body inválido: esperado {"to": "<agente|all>", "body": "<texto>"} com ambos não vazios.`,
+        error: `Invalid body: expected {"to": "<agent|all>", "body": "<text>"} with both non-empty.`,
       });
       return;
     }
@@ -303,7 +303,7 @@ export function createApiRouter(options: ApiOptions): express.Router {
     // AGENTS; "operator" is the human, who has the dashboard mute/visibility
     // as their own control plane.
     const result = deliverMessage(store, bus, onMessage, { from: "operator", to, body });
-    log.info(`[api] operator → ${to}: mensagem gravada (delivery=${result.delivery}).`);
+    log.info(`[api] operator → ${to}: message recorded (delivery=${result.delivery}).`);
     res.status(201).json({
       ok: true,
       delivery: result.delivery,
@@ -318,7 +318,7 @@ export function createApiRouter(options: ApiOptions): express.Router {
   //
   // KNOWN RESIDUAL RISK (accepted by the v1.1 spec — PRD sections 10.1/15):
   // this endpoint is deliberately unauthenticated (trust boundary = the local
-  // machine; "qualquer processo local pode postar no Hub"). Because
+  // machine; "any local process can post to the Hub"). Because
   // re-registering an existing name regenerates AND returns a fresh token, a
   // malicious LOCAL process can obtain a valid token for any agent name and
   // impersonate it via `join` — invalidating the legitimate session's
@@ -329,13 +329,13 @@ export function createApiRouter(options: ApiOptions): express.Router {
   // rotate would break the sanctioned re-attach flow (`switchboard start`
   // never holds the old token — it only receives one from this response).
   // The Phase 5 README security note MUST document this residual risk
-  // alongside the "nunca fazer port-forward do 4577" warning (PRD 15).
+  // alongside the "never port-forward 4577" warning (PRD 15).
   router.post("/api/agents/register", (req, res) => {
     const raw = (req.body ?? {}) as Record<string, unknown>;
     if (typeof raw.name !== "string" || raw.name.length === 0) {
       res.status(400).json({
         ok: false,
-        error: `Body inválido: esperado {"name", "role"?, "cwd"?, "tmuxSession"?} com "name" obrigatório.`,
+        error: `Invalid body: expected {"name", "role"?, "cwd"?, "tmuxSession"?} with "name" required.`,
       });
       return;
     }
@@ -343,7 +343,7 @@ export function createApiRouter(options: ApiOptions): express.Router {
       if (raw[key] !== undefined && typeof raw[key] !== "string") {
         res.status(400).json({
           ok: false,
-          error: `Body inválido: campo "${key}" deve ser string quando presente.`,
+          error: `Invalid body: field "${key}" must be a string when present.`,
         });
         return;
       }
@@ -362,14 +362,14 @@ export function createApiRouter(options: ApiOptions): express.Router {
       });
       bus.emit({ type: "agent_updated", payload: toPublicAgent(agent) });
       // The token itself is NEVER logged (v1.1, section 15).
-      log.info(`[api] agente registrado: ${agent.name} (tmux: ${agent.tmuxSession}).`);
+      log.info(`[api] agent registered: ${agent.name} (tmux: ${agent.tmuxSession}).`);
       // v1.1 (PRD 10.1): the register response is the ONE REST surface that
       // carries the capability token — `switchboard start` (Phase 4) reads it
       // here and injects SWITCHBOARD_AGENT_TOKEN into the agent's tmux
       // session. The embedded agent object stays redacted.
       res.status(201).json({ ok: true, agent: toPublicAgent(agent), token: agent.token });
     } catch (err) {
-      // Invalid name or MAX_AGENTS cap — store errors are already in Portuguese.
+      // Invalid name or MAX_AGENTS cap — store errors are already in English.
       res.status(400).json({ ok: false, error: (err as Error).message });
     }
   });
@@ -379,30 +379,30 @@ export function createApiRouter(options: ApiOptions): express.Router {
   router.post("/api/agents/:name/mute", (req, res) => {
     const name = req.params.name;
     if (!store.getAgent(name)) {
-      res.status(404).json({ ok: false, error: `Agente desconhecido: "${name}".` });
+      res.status(404).json({ ok: false, error: `Unknown agent: "${name}".` });
       return;
     }
     const muted = ((req.body ?? {}) as Record<string, unknown>).muted;
     if (typeof muted !== "boolean") {
       res
         .status(400)
-        .json({ ok: false, error: `Body inválido: esperado {"muted": true|false}.` });
+        .json({ ok: false, error: `Invalid body: expected {"muted": true|false}.` });
       return;
     }
     const agent = store.updateAgent(name, { muted });
     bus.emit({ type: "agent_updated", payload: toPublicAgent(agent) });
-    log.info(`[api] agente ${name} ${muted ? "silenciado" : "reativado"} (mute=${muted}).`);
+    log.info(`[api] agent ${name} ${muted ? "muted" : "unmuted"} (mute=${muted}).`);
     res.json({ ok: true, agent: toPublicAgent(agent) });
   });
 
-  // POST /api/agents/:name/nudge — manual nudge button (PRD 10.1: "força um
-  // nudge manual"). "Força" = bypasses cooldown AND mute (politeness controls
+  // POST /api/agents/:name/nudge — manual nudge button (PRD 10.1: "force a
+  // manual nudge"). "Force" = bypasses cooldown AND mute (politeness controls
   // the human operator may override), but NEVER the pane-command guard —
   // security invariant (PRD 10.3 / 15 / P2), enforced inside the dispatcher.
   router.post("/api/agents/:name/nudge", async (req, res) => {
     const name = req.params.name;
     if (!store.getAgent(name)) {
-      res.status(404).json({ ok: false, error: `Agente desconhecido: "${name}".` });
+      res.status(404).json({ ok: false, error: `Unknown agent: "${name}".` });
       return;
     }
     if (!nudger) {
@@ -410,14 +410,14 @@ export function createApiRouter(options: ApiOptions): express.Router {
       res.status(501).json({
         ok: false,
         error:
-          "Nudge manual indisponível: este hub foi iniciado sem o dispatcher de nudge " +
-          "(onMessage customizado).",
+          "Manual nudge unavailable: this hub was started without the nudge dispatcher " +
+          "(custom onMessage).",
       });
       return;
     }
     const result = await nudger.forceNudge(name);
     if (result.sent) {
-      log.info(`[api] nudge manual entregue para ${name}.`);
+      log.info(`[api] manual nudge delivered to ${name}.`);
       res.json({ ok: true, nudged: true });
       return;
     }
@@ -425,8 +425,8 @@ export function createApiRouter(options: ApiOptions): express.Router {
     // (pane guard / dead session) → 409 with the reason.
     res.status(409).json({
       ok: false,
-      error: `Nudge manual não entregue: ${result.reason ?? "falha desconhecida"}. ` +
-        `A mensagem continua gravada e será entregue via check_messages.`,
+      error: `Manual nudge not delivered: ${result.reason ?? "unknown failure"}. ` +
+        `The message stays recorded and will be delivered via check_messages.`,
     });
   });
 
@@ -467,7 +467,7 @@ export function createApiRouter(options: ApiOptions): express.Router {
   router.use("/api", (req, res) => {
     res.status(404).json({
       ok: false,
-      error: `Rota desconhecida: ${req.method} ${req.originalUrl}.`,
+      error: `Unknown route: ${req.method} ${req.originalUrl}.`,
     });
   });
 

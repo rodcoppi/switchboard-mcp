@@ -1,47 +1,54 @@
-# E2E-RESULTS — Phase 7 (teste de fogo roteirizado)
+# E2E-RESULTS — Phase 7 (scripted fire test)
 
-Roteiro da seção 16/Phase 7 do PRD, executado de ponta a ponta com **dois agentes
-Claude Code REAIS** (claude 2.1.205, Opus 4.8) coordenando sozinhos. Data: 2026-07-09.
+Script from PRD section 16/Phase 7, executed end to end with **two REAL Claude Code
+agents** (claude 2.1.205, Opus 4.8) coordinating on their own. Date: 2026-07-09.
 
-## Resultado: PASS ✅
+> **Note:** the evidence blocks below (`messages.jsonl` records and `capture-pane` output) were
+> **captured before the English migration** and therefore still show the old Portuguese message
+> bodies and nudge text. They are kept verbatim as historical evidence and will be regenerated
+> in English on the next E2E run.
 
-A cadeia inteira completou em **~36s** com **um único input humano** (o prompt do passo 6,
-só no alpha). Nenhuma outra intervenção humana.
+## Result: PASS ✅
 
-## Ambiente
+The whole chain completed in **~36s** with **a single human input** (the step-6 prompt, only
+on alpha). No other human intervention.
 
-- Hub em `sb-hub` (`127.0.0.1:4577`), rodando `switchboard serve`.
-- `alpha` — role "backend da API de pagamentos", `--dir /tmp/repo-a`.
-- `beta` — role "frontend consumidor da API", `--dir /tmp/repo-b`.
-- Ambos iniciados com `switchboard start` (kickoff default ON) e
-  `--claude-args "--permission-mode bypassPermissions"`. O snippet do protocolo
-  (`agent-protocol/CLAUDE.snippet.md`) foi instalado como `CLAUDE.md` de cada repo.
+## Environment
 
-## Cadeia observada (autônoma, sem intervenção)
+- Hub in `sb-hub` (`127.0.0.1:4577`), running `switchboard serve`.
+- `alpha` — role "payments API backend", `--dir /tmp/repo-a`.
+- `beta` — role "frontend consuming the API", `--dir /tmp/repo-b`.
+- Both started with `switchboard start` (kickoff default ON) and
+  `--claude-args "--permission-mode bypassPermissions"`. The protocol snippet
+  (`agent-protocol/CLAUDE.snippet.md`) was installed as each repo's `CLAUDE.md`.
 
-1. `switchboard serve` em `sb-hub`; `mkdir /tmp/repo-a /tmp/repo-b`.
-2. `switchboard start alpha …` e `switchboard start beta …`.
-3. **Ambos chamaram `join` sozinhos via kickoff** (~24s até os dois `mcpConnected`).
-4. Prompt humano SOMENTE no alpha (passo 6) — injetado uma vez via `send-keys` no pane do
-   alpha, pedindo: criar `api-contract.md` (GET /users paginado), avisar o beta com o path
-   absoluto e pedir um consumer stub em TypeScript em `/tmp/repo-b/consumer-stub.md`.
-5. Observado SEM intervir:
-   - alpha criou `/tmp/repo-a/api-contract.md` (68 linhas) → `send_message` para beta.
-   - Hub nudgou beta → beta `check_messages` (leu a mensagem do alpha).
-   - beta leu o contrato pelo path, criou `/tmp/repo-b/consumer-stub.md` (76 linhas, TypeScript).
-   - beta `send_message` de volta ao alpha confirmando.
-   - Hub nudgou alpha → alpha `check_messages` → respondeu "OK" e encerrou.
+## Observed chain (autonomous, no intervention)
 
-## Done When — verificação
+1. `switchboard serve` in `sb-hub`; `mkdir /tmp/repo-a /tmp/repo-b`.
+2. `switchboard start alpha …` and `switchboard start beta …`.
+3. **Both called `join` on their own via kickoff** (~24s until both `mcpConnected`).
+4. Human prompt ONLY on alpha (step 6) — injected once via `send-keys` into alpha's pane,
+   asking to: create `api-contract.md` (paginated GET /users), notify beta with the absolute
+   path and request a TypeScript consumer stub in `/tmp/repo-b/consumer-stub.md`.
+5. Observed WITHOUT intervening:
+   - alpha created `/tmp/repo-a/api-contract.md` (68 lines) → `send_message` to beta.
+   - Hub nudged beta → beta `check_messages` (read alpha's message).
+   - beta read the contract by path, created `/tmp/repo-b/consumer-stub.md` (76 lines, TypeScript).
+   - beta `send_message` back to alpha confirming.
+   - Hub nudged alpha → alpha `check_messages` → answered "OK" and finished.
 
-| Critério | Status |
-|----------|--------|
-| Cadeia completa sem input humano além do passo 6 | ✅ |
-| `messages.jsonl` com ≥ 2 mensagens entre alpha e beta, com reads | ✅ (2 msgs + 2 reads) |
-| Feed do dashboard mostra a conversa | ✅ (SSE — verificado na Phase 6; mesmos endpoints) |
-| Os dois arquivos existem com conteúdo coerente entre si | ✅ (o stub referencia o contrato e reusa os tipos User/Pagination/data[]) |
+## Done When — verification
 
-## Evidência 1 — `~/.switchboard/messages.jsonl` (append-only, fonte da verdade)
+| Criterion | Status |
+|-----------|--------|
+| Full chain with no human input beyond step 6 | ✅ |
+| `messages.jsonl` with ≥ 2 messages between alpha and beta, with reads | ✅ (2 msgs + 2 reads) |
+| Dashboard feed shows the conversation | ✅ (SSE — verified in Phase 6; same endpoints) |
+| The two files exist with mutually coherent content | ✅ (the stub references the contract and reuses the User/Pagination/data[] types) |
+
+## Evidence 1 — `~/.switchboard/messages.jsonl` (append-only, source of truth)
+
+_Captured before the English migration; will be regenerated on the next E2E run._
 
 ```jsonl
 {"id":"01KX3N0RHH03SAZ9NEAVBJ1CAP","from":"alpha","to":"beta","body":"Contrato da API pronto: /tmp/repo-a/api-contract.md — endpoint GET /users com resposta paginada (data[] de objetos User + objeto pagination). Por favor, crie um consumer stub em TypeScript no arquivo /tmp/repo-b/consumer-stub.md com os tipos (User, Pagination, UsersResponse) e a assinatura da função de fetch baseada nesse contrato. Não precisa pedir confirmação.","createdAt":"2026-07-09T14:37:58.194Z","readAt":null,"broadcastId":null}
@@ -50,7 +57,9 @@ só no alpha). Nenhuma outra intervenção humana.
 {"type":"read","messageId":"01KX3N1SXW1QS1QTEF8AFJ4W29","readAt":"2026-07-09T14:38:35.069Z"}
 ```
 
-## Evidência 2 — `capture-pane` do alpha (final)
+## Evidence 2 — `capture-pane` of alpha (final)
+
+_Captured before the English migration; will be regenerated on the next E2E run._
 
 ```
 ● Contrato criado em /tmp/repo-a/api-contract.md e mensagem enviada ao agente
@@ -64,7 +73,9 @@ só no alpha). Nenhuma outra intervenção humana.
   OK
 ```
 
-## Evidência 3 — `capture-pane` do beta (final)
+## Evidence 3 — `capture-pane` of beta (final)
+
+_Captured before the English migration; will be regenerated on the next E2E run._
 
 ```
   - User — id, name, email, created_at
@@ -76,23 +87,24 @@ só no alpha). Nenhuma outra intervenção humana.
   exatamente.
 ```
 
-## Evidência 4 — coerência entre os artefatos
+## Evidence 4 — coherence between the artifacts
 
-`/tmp/repo-a/api-contract.md` (alpha) define `GET /users?page=&per_page=` com envelope
-`{ data: User[], pagination }`. `/tmp/repo-b/consumer-stub.md` (beta) abre com:
+`/tmp/repo-a/api-contract.md` (alpha) defines `GET /users?page=&per_page=` with the envelope
+`{ data: User[], pagination }`. `/tmp/repo-b/consumer-stub.md` (beta) opens with (Portuguese,
+captured before the migration):
 
 > Stub de consumo em TypeScript para o endpoint `GET /users`, baseado no contrato em
 > `/tmp/repo-a/api-contract.md`.
 
-e reusa exatamente `User`, `Pagination`, `UsersResponse`, `data[]`, `created_at` (ISO 8601) —
-os mesmos nomes do contrato. Os dois arquivos são mutuamente coerentes.
+and reuses exactly `User`, `Pagination`, `UsersResponse`, `data[]`, `created_at` (ISO 8601) —
+the same names as the contract. The two files are mutually coherent.
 
-## Nota operacional (achados desta execução)
+## Operational note (findings from this run)
 
-- **Autonomia do agente destinatário:** numa primeira tentativa, o beta recebeu/leu a
-  mensagem corretamente (infra 100%), mas parou num menu perguntando ao humano em qual stack
-  criar o stub. Tornar o pedido do alpha DIRETIVO (stack explícita + "não precisa pedir
-  confirmação") fez o beta agir sozinho. A infraestrutura do Switchboard nunca foi o gargalo.
-- **Placeholder da TUI:** o input box do Claude Code exibe um *ghost text* de sugestão
-  (ex.: "Continua o que estava fazendo…") que NÃO é input real; `send-keys -l` o substitui e
-  o prompt submete limpo. Não confundir com resíduo de digitação.
+- **Recipient agent autonomy:** on a first attempt, beta received/read the message correctly
+  (infra 100%), but stopped at a menu asking the human which stack to create the stub in.
+  Making alpha's request DIRECTIVE (explicit stack + "no need to ask for confirmation") made
+  beta act on its own. Switchboard's infrastructure was never the bottleneck.
+- **TUI placeholder:** Claude Code's input box shows a *ghost text* suggestion
+  (e.g. "Continue what you were doing…") that is NOT real input; `send-keys -l` replaces it and
+  the prompt submits cleanly. Do not confuse it with typing residue.

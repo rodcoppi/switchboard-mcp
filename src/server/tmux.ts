@@ -15,8 +15,8 @@
 // ANY send-keys, the pane's current command is checked. If Claude Code was
 // closed but the tmux session survived, the pane is sitting on a SHELL and a
 // send-keys there would EXECUTE the nudge text as a command (local RCE). The
-// guard is an ALLOW-LIST (default-DENY, exactly as PRD 10.3 mandates: "só
-// nudgar se o pane roda node/claude"): only node/claude (+ the claude-code
+// guard is an ALLOW-LIST (default-DENY, exactly as PRD 10.3 mandates: "only
+// nudge if the pane runs node/claude"): only node/claude (+ the claude-code
 // variant) and cat (required by the Phase 3 Done When, PRD section 16) may
 // receive keys. EVERYTHING else — shells, but also REPLs/remotes that would
 // interpret or forward the typed text (python, ssh, nc, psql, pwsh, …) — is
@@ -68,9 +68,9 @@ export const defaultExec: ExecFn = async (file, args) => {
   } catch (err) {
     const raw = err as NodeJS.ErrnoException & { stderr?: string };
     const stderr = typeof raw.stderr === "string" ? raw.stderr.trim() : "";
-    const detail = stderr !== "" ? stderr : String(raw.code ?? "erro desconhecido");
+    const detail = stderr !== "" ? stderr : String(raw.code ?? "unknown error");
     const sanitized = new Error(
-      `${file} ${args[0] ?? ""} falhou: ${detail}`,
+      `${file} ${args[0] ?? ""} failed: ${detail}`,
     ) as Error & { code?: string | number; stderr?: string };
     sanitized.code = raw.code as string | number | undefined;
     sanitized.stderr = stderr;
@@ -79,7 +79,7 @@ export const defaultExec: ExecFn = async (file, args) => {
 };
 
 /**
- * ALLOW-LIST for the pane guard (PRD 10.3: "só nudgar se o pane roda
+ * ALLOW-LIST for the pane guard (PRD 10.3: "only nudge if the pane runs
  * node/claude" — default-deny). Anything NOT here is unsafe: every shell
  * (bash/zsh/pwsh/nu/…), every REPL or remote (python/ssh/psql/nc/…) would
  * interpret or forward the typed nudge as a command. Members:
@@ -130,7 +130,7 @@ export function isSafePaneCommand(raw: string): boolean {
 
 export interface NudgeResult {
   sent: boolean;
-  /** Present when sent === false: human-readable abort reason (Portuguese). */
+  /** Present when sent === false: human-readable abort reason (English). */
   reason?: string;
 }
 
@@ -212,7 +212,7 @@ const defaultSleep = (ms: number): Promise<void> =>
 function assertValidSession(session: string): void {
   if (session.length === 0 || /[:\s]/.test(session)) {
     throw new Error(
-      `Nome de sessão tmux inválido: ${JSON.stringify(session)} (vazio, com ":" ou espaços).`,
+      `Invalid tmux session name: ${JSON.stringify(session)} (empty, containing ":" or spaces).`,
     );
   }
 }
@@ -252,8 +252,8 @@ export function createTmux(options: TmuxOptions = {}): Tmux {
       // P5: a newline in the middle would submit partial input; the caller
       // (dispatcher) already flattens — reaching here is a programming error.
       throw new Error(
-        `sendKeysLiteral: texto contém \\r/\\n — nudges são SEMPRE uma linha (P5). ` +
-          `Achate com replace(/[\\r\\n]+/g, " ") antes de enviar.`,
+        `sendKeysLiteral: text contains \\r/\\n — nudges are ALWAYS a single line (P5). ` +
+          `Flatten with replace(/[\\r\\n]+/g, " ") before sending.`,
       );
     }
     await exec("tmux", ["send-keys", "-t", paneTarget(session), "-l", "--", text]);
@@ -324,17 +324,17 @@ export function createTmux(options: TmuxOptions = {}): Tmux {
       return {
         safe: false,
         reason:
-          `não foi possível ler o pane_current_command da sessão "${session}" ` +
-          `(sessão morta?): ${String((err as Error).message ?? err)} — fail-closed`,
+          `could not read pane_current_command of session "${session}" ` +
+          `(session dead?): ${String((err as Error).message ?? err)} — fail-closed`,
       };
     }
     if (isSafePaneCommand(raw)) return { safe: true };
     return {
       safe: false,
       reason:
-        `pane da sessão "${session}" não é seguro para send-keys ` +
-        `(pane_current_command=${JSON.stringify(raw)} fora da allow-list node/claude/cat — ` +
-        `o texto poderia ser executado como comando)`,
+        `pane of session "${session}" is not safe for send-keys ` +
+        `(pane_current_command=${JSON.stringify(raw)} outside the node/claude/cat allow-list — ` +
+        `the text could be executed as a command)`,
     };
   }
 
@@ -371,8 +371,8 @@ export function createTmux(options: TmuxOptions = {}): Tmux {
       return {
         sent: false,
         reason:
-          `pane ficou inseguro entre o texto e o Enter — Enter suprimido ` +
-          `(${recheck.reason ?? "motivo desconhecido"})`,
+          `pane became unsafe between the text and the Enter — Enter suppressed ` +
+          `(${recheck.reason ?? "unknown reason"})`,
       };
     }
 

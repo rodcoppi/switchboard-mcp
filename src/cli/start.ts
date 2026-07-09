@@ -86,8 +86,8 @@ export function parseClaudeArgs(raw: string | undefined): string[] {
   }
   if (quote !== null) {
     throw new CliError(
-      `--claude-args com aspas (${quote}) não fechadas: ${raw}\n` +
-        `Feche as aspas — ex.: --claude-args "--model opus --append-system-prompt 'texto com espaços'"`,
+      `--claude-args has unterminated quotes (${quote}): ${raw}\n` +
+        `Close the quotes — e.g.: --claude-args "--model opus --append-system-prompt 'text with spaces'"`,
     );
   }
   if (hasCurrent) args.push(current);
@@ -103,8 +103,8 @@ export function parseClaudeArgs(raw: string | undefined): string[] {
  * the raw --claude-args string OR a pre-parsed argv array — runStart
  * pre-parses in step 1a so bad quoting fails BEFORE the register mutates the
  * hub. `claudeBin` is a test-only injection point (integration tests run
- * `sh`/`cat` instead of a real claude — PRD: "NÃO abra claude real nos
- * testes").
+ * `sh`/`cat` instead of a real claude — PRD: "never open a real claude in
+ * tests").
  */
 export function buildAgentCommand(input: {
   name: string;
@@ -130,9 +130,9 @@ export function buildAgentCommand(input: {
  */
 export function kickoffText(name: string): string {
   return (
-    `[switchboard] Você é o agente '${name}' nesta rede local de agentes. ` +
-    `Confirme chamando a tool join com agent_name="${name}". ` +
-    `Depois continue seu trabalho normalmente; quando receber notificações [switchboard], use check_messages.`
+    `[switchboard] You are the agent '${name}' on this local agent network. ` +
+    `Confirm by calling the join tool with agent_name="${name}". ` +
+    `Then continue your work normally; when you receive [switchboard] notifications, use check_messages.`
   );
 }
 
@@ -229,7 +229,7 @@ export async function runKickoffAgent(options: KickoffOptions): Promise<NudgeRes
     if (!(await tmux.hasSession(session))) {
       return {
         sent: false,
-        reason: `sessão "${session}" não existe mais — kickoff cancelado`,
+        reason: `session "${session}" no longer exists — kickoff canceled`,
       };
     }
     let pane = "";
@@ -243,16 +243,16 @@ export async function runKickoffAgent(options: KickoffOptions): Promise<NudgeRes
       return {
         sent: false,
         reason:
-          `TUI do claude não ficou pronta em ${readinessTimeoutMs}ms após o delay inicial ` +
-          `(diálogo de confiança pendente? aceite-o no attach) — kickoff não enviado; ` +
-          `o agente pode chamar a tool join manualmente`,
+          `the claude TUI did not become ready in ${readinessTimeoutMs}ms after the initial delay ` +
+          `(trust dialog pending? accept it in the attach) — kickoff not sent; ` +
+          `the agent can call the join tool manually`,
       };
     }
     await sleep(readinessPollMs);
   }
 
-  // Guarded nudge path (PRD 11 step 6: "mesma função do dispatcher, com a
-  // mesma guarda de pane"). Text is one line by construction; no token.
+  // Guarded nudge path (PRD 11 step 6: "same function as the dispatcher, with
+  // the same pane guard"). Text is one line by construction; no token.
   return tmux.nudgeSession(session, kickoffText(options.name), enterDelayMs);
 }
 
@@ -287,7 +287,7 @@ export interface StartOptions {
    * Interactive attach (default: spawn tmux attach with stdio inherit).
    * Resolves with the attach exit code — non-zero means the attach FAILED
    * (e.g. stdin is a pipe: "open terminal failed") and the user never saw
-   * the session, so runStart prints how to attach instead of "Desanexado".
+   * the session, so runStart prints how to attach instead of "Detached".
    */
   attach?: (session: string) => Promise<number | void>;
   /** Detached kickoff spawner (default: re-enters via `kickoff-agent`). */
@@ -317,9 +317,9 @@ function printPermissionsReminderOnce(baseDir: string, out: OutFn): void {
   const marker = path.join(baseDir, REMINDER_MARKER);
   if (fs.existsSync(marker)) return;
   out(
-    `Lembrete de permissões (só nesta primeira execução): para as tools do Switchboard ` +
-      `rodarem sem prompt de aprovação a cada uso, adicione a allow rule "mcp__switchboard__*" ` +
-      `nas permissions do settings.json do Claude Code. Quem usa bypassPermissions já está coberto.`,
+    `Permissions reminder (only on this first run): for the Switchboard tools to run ` +
+      `without an approval prompt on every use, add the allow rule "mcp__switchboard__*" ` +
+      `to the permissions in Claude Code's settings.json. Anyone using bypassPermissions is already covered.`,
   );
   try {
     fs.mkdirSync(baseDir, { recursive: true });
@@ -344,8 +344,8 @@ function defaultAttach(session: string): Promise<number> {
     child.on("error", reject);
     // Resolve WITH the exit code: `tmux attach` fails immediately when the
     // terminal is not usable ("open terminal failed: not a terminal") or the
-    // session died — swallowing that would make runStart print "Desanexado…
-    // continua rodando" for a session the user never saw.
+    // session died — swallowing that would make runStart print "Detached…
+    // keeps running" for a session the user never saw.
     child.on("exit", (code, signal) => resolve(signal !== null ? 1 : (code ?? 1)));
   });
 }
@@ -372,8 +372,8 @@ function defaultSpawnKickoff(name: string, session: string, out: OutFn = console
   // warn and move on (same language as runKickoffAgent when it gives up).
   child.on("error", () => {
     out(
-      `Não foi possível agendar o kickoff (falha ao criar o processo em background) — ` +
-        `o agente pode chamar a tool join manualmente.`,
+      `Could not schedule the kickoff (failed to create the background process) — ` +
+        `the agent can call the join tool manually.`,
     );
   });
   child.unref();
@@ -400,9 +400,9 @@ export const START_SETTLE_MS = 400;
 /** Shared guidance for the concurrent-start race (two starts, same name). */
 function concurrentStartHint(name: string): string {
   return (
-    `Se outro "switchboard start ${name}" rodou ao mesmo tempo, atenção: ESTE registro ` +
-    `regenerou o token do agente, então o join da sessão que sobreviveu vai falhar. ` +
-    `Rode "switchboard stop ${name}" e depois um novo "switchboard start ${name}".`
+    `If another "switchboard start ${name}" ran at the same time, note: THIS registration ` +
+    `regenerated the agent's token, so the join of the surviving session will fail. ` +
+    `Run "switchboard stop ${name}" and then a fresh "switchboard start ${name}".`
   );
 }
 
@@ -413,8 +413,8 @@ export async function runStart(options: StartOptions): Promise<StartResult> {
   // 1a. Name validation — same regex as the store (fail fast, before HTTP).
   if (!AGENT_NAME_RE.test(name)) {
     throw new CliError(
-      `Nome de agente inválido: "${name}". Use minúsculas, dígitos e hífens ` +
-        `(2 a 31 caracteres, começando com letra ou dígito): ^[a-z0-9][a-z0-9-]{1,30}$`,
+      `Invalid agent name: "${name}". Use lowercase letters, digits and hyphens ` +
+        `(2 to 31 characters, starting with a letter or digit): ^[a-z0-9][a-z0-9-]{1,30}$`,
     );
   }
 
@@ -427,7 +427,7 @@ export async function runStart(options: StartOptions): Promise<StartResult> {
   // and cryptically; fail here with a clear message instead.
   const cwd = path.resolve(expandHome(options.dir ?? process.cwd()));
   if (!fs.existsSync(cwd) || !fs.statSync(cwd).isDirectory()) {
-    throw new CliError(`Diretório não existe: ${cwd} (flag --dir).`);
+    throw new CliError(`Directory does not exist: ${cwd} (--dir flag).`);
   }
 
   // 1a. "sb-hub" is reserved for the Hub itself: serveHeaderLines and the
@@ -438,12 +438,12 @@ export async function runStart(options: StartOptions): Promise<StartResult> {
   const tmuxSession = config.tmuxSessionPrefix + name;
   if (tmuxSession === "sb-hub") {
     throw new CliError(
-      `O nome "${name}" geraria a sessão tmux "sb-hub", reservada para o próprio Hub ` +
-        `(a recomendação do "switchboard serve" é rodar dentro dela). Escolha outro nome de agente.`,
+      `The name "${name}" would produce the tmux session "sb-hub", reserved for the Hub itself ` +
+        `(the "switchboard serve" recommendation is to run inside it). Choose another agent name.`,
     );
   }
 
-  // 1b. Hub alive? (clear "rode switchboard serve primeiro" error otherwise).
+  // 1b. Hub alive? (clear "run switchboard serve first" error otherwise).
   const hubUrl = options.hubUrl ?? defaultHubUrl(options.baseDir);
   await checkHubHealth(hubUrl);
 
@@ -451,9 +451,9 @@ export async function runStart(options: StartOptions): Promise<StartResult> {
   const tmux: StartTmux = options.tmux ?? createTmux();
   if (await tmux.hasSession(tmuxSession)) {
     throw new CliError(
-      `A sessão tmux "${tmuxSession}" já existe — o agente "${name}" parece estar rodando. ` +
-        `Para vê-lo: tmux attach -t ${tmuxSession}. ` +
-        `Para encerrar e recomeçar: switchboard stop ${name} e depois rode o start de novo.`,
+      `The tmux session "${tmuxSession}" already exists — the agent "${name}" seems to be running. ` +
+        `To see it: tmux attach -t ${tmuxSession}. ` +
+        `To stop and start over: switchboard stop ${name} and then run start again.`,
     );
   }
 
@@ -474,7 +474,7 @@ export async function runStart(options: StartOptions): Promise<StartResult> {
   // during the register HTTP round-trip — fail cleanly BEFORE new-session.
   if (await tmux.hasSession(tmuxSession)) {
     throw new CliError(
-      `A sessão tmux "${tmuxSession}" surgiu durante o registro. ` + concurrentStartHint(name),
+      `The tmux session "${tmuxSession}" appeared during registration. ` + concurrentStartHint(name),
     );
   }
 
@@ -498,9 +498,9 @@ export async function runStart(options: StartOptions): Promise<StartResult> {
   } catch (err) {
     const detail = (err instanceof Error ? err.message : String(err))
       .split(token)
-      .join("<token-redigido>");
+      .join("<token-redacted>");
     throw new CliError(
-      `Falha ao criar a sessão tmux "${tmuxSession}": ${detail}\n` + concurrentStartHint(name),
+      `Failed to create the tmux session "${tmuxSession}": ${detail}\n` + concurrentStartHint(name),
     );
   }
 
@@ -511,13 +511,13 @@ export async function runStart(options: StartOptions): Promise<StartResult> {
   await sleep(options.settleMs ?? START_SETTLE_MS);
   if (!(await tmux.hasSession(tmuxSession))) {
     throw new CliError(
-      `A sessão tmux "${tmuxSession}" morreu logo após abrir — o comando do agente falhou ` +
-        `no nascimento. O binário "claude" está no PATH? Os --claude-args são válidos? ` +
-        `O registro do agente permanece no Hub; corrija e rode "switchboard start ${name}" de novo.`,
+      `The tmux session "${tmuxSession}" died right after opening — the agent command failed ` +
+        `at birth. Is the "claude" binary on the PATH? Are the --claude-args valid? ` +
+        `The agent's registration stays in the Hub; fix it and run "switchboard start ${name}" again.`,
     );
   }
 
-  out(`Agente "${name}" registrado no Hub e sessão tmux "${tmuxSession}" criada em ${cwd}.`);
+  out(`Agent "${name}" registered in the Hub and tmux session "${tmuxSession}" created in ${cwd}.`);
   printPermissionsReminderOnce(options.baseDir ?? defaultBaseDir(), out);
 
   // 6 (spawned BEFORE the blocking attach of step 5): detached kickoff.
@@ -527,8 +527,8 @@ export async function runStart(options: StartOptions): Promise<StartResult> {
       options.spawnKickoff ?? ((n: string, s: string) => defaultSpawnKickoff(n, s, out));
     spawnKickoff(name, tmuxSession);
     out(
-      `Kickoff agendado: em ~${Math.round(config.kickoffDelayMs / 1000)}s (quando a TUI estiver pronta) ` +
-        `o agente será instruído a chamar a tool join. Use --no-kickoff para desativar.`,
+      `Kickoff scheduled: in ~${Math.round(config.kickoffDelayMs / 1000)}s (once the TUI is ready) ` +
+        `the agent will be instructed to call the join tool. Use --no-kickoff to disable.`,
     );
   }
 
@@ -539,26 +539,26 @@ export async function runStart(options: StartOptions): Promise<StartResult> {
     const attachExit = (await (options.attach ?? defaultAttach)(tmuxSession)) ?? 0;
     if (attachExit === 0) {
       out(
-        `Desanexado da sessão "${tmuxSession}". O agente continua rodando em background; ` +
-          `use "switchboard stop ${name}" para encerrá-lo.`,
+        `Detached from session "${tmuxSession}". The agent keeps running in the background; ` +
+          `use "switchboard stop ${name}" to stop it.`,
       );
     } else {
       // Attach failed (e.g. stdin is a pipe — "open terminal failed"): the
       // user never entered the session, so say how to attach for real.
       out(
-        `O tmux attach falhou (exit ${attachExit}) — terminal não interativo? ` +
-          `Para acompanhar o agente: tmux attach -t ${tmuxSession}. ` +
-          `Estado dos agentes: switchboard status.`,
+        `The tmux attach failed (exit ${attachExit}) — non-interactive terminal? ` +
+          `To follow the agent: tmux attach -t ${tmuxSession}. ` +
+          `Agent state: switchboard status.`,
       );
     }
   } else if (isTTY) {
     // Inside tmux already (env TMUX set): nesting attach breaks the terminal.
     out(
-      `Você já está dentro de uma sessão tmux — attach aninhado não é suportado. ` +
-        `Em outra aba/terminal, rode: tmux attach -t ${tmuxSession}`,
+      `You are already inside a tmux session — nested attach is not supported. ` +
+        `In another tab/terminal, run: tmux attach -t ${tmuxSession}`,
     );
   } else {
-    out(`Sessão criada em background. Para acompanhar o agente: tmux attach -t ${tmuxSession}`);
+    out(`Session created in the background. To follow the agent: tmux attach -t ${tmuxSession}`);
   }
 
   return { tmuxSession, cwd };
@@ -572,18 +572,18 @@ export function registerStartCommand(program: Command): void {
   program
     .command("start")
     .description(
-      "Registra um agente no Hub e abre o Claude Code dele numa sessão tmux dedicada.",
+      "Registers an agent in the Hub and opens its Claude Code in a dedicated tmux session.",
     )
-    .argument("<name>", "nome do agente (minúsculas, dígitos e hífens)")
+    .argument("<name>", "agent name (lowercase letters, digits and hyphens)")
     // NO default value for --role: `role: undefined` means "flag omitted" and
     // the register then PRESERVES the role already stored (re-attach, PRD 8);
     // a default "" would silently erase it on every start without --role.
-    .option("--role <descrição>", "papel do agente (ex.: \"backend da API\")")
-    .option("--dir <dir>", "diretório de trabalho do agente (default: diretório atual)")
-    .option("--no-kickoff", "não injetar a instrução automática de join após abrir")
+    .option("--role <description>", "agent role (e.g.: \"API backend\")")
+    .option("--dir <dir>", "agent working directory (default: current directory)")
+    .option("--no-kickoff", "do not inject the automatic join instruction after opening")
     .option(
       "--claude-args <args>",
-      "argumentos extras para o claude (aspas simples/duplas agrupam)",
+      "extra arguments for claude (single/double quotes group)",
     )
     .action(
       async (
@@ -615,14 +615,14 @@ export function registerKickoffAgentCommand(program: Command): void {
     // truth) — recomputing prefix+name here could diverge if the config
     // changed between the spawn and this process reading it.
     .command("kickoff-agent <name> [session]", { hidden: true })
-    .description("(interno) espera a TUI ficar pronta e injeta a instrução de join")
+    .description("(internal) waits for the TUI to be ready and injects the join instruction")
     .action(async (name: string, session?: string) => {
       await runCliAction(async () => {
         const result = await runKickoffAgent({ name, session });
         if (!result.sent) {
           // Detached process: stdio is ignored in production, but log anyway
           // for the manual/debug invocation path.
-          console.error(`kickoff-agent ${name}: não enviado — ${result.reason ?? "motivo desconhecido"}`);
+          console.error(`kickoff-agent ${name}: not sent — ${result.reason ?? "unknown reason"}`);
           process.exitCode = 1;
         }
       });

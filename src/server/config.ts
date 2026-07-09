@@ -75,14 +75,14 @@ export function loadConfig(baseDir: string = defaultBaseDir()): Config {
     parsed = JSON.parse(fs.readFileSync(file, "utf8"));
   } catch (err) {
     console.warn(
-      `[switchboard] config.json inválido em ${file} — usando defaults. Erro: ${String(err)}`,
+      `[switchboard] invalid config.json at ${file} — using defaults. Error: ${String(err)}`,
     );
     return { ...DEFAULTS };
   }
 
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     console.warn(
-      `[switchboard] config.json em ${file} não é um objeto JSON — usando defaults.`,
+      `[switchboard] config.json at ${file} is not a JSON object — using defaults.`,
     );
     return { ...DEFAULTS };
   }
@@ -98,7 +98,7 @@ export function loadConfig(baseDir: string = defaultBaseDir()): Config {
         config.logLevel = value as LogLevel;
       } else {
         console.warn(
-          `[switchboard] config.json: valor inválido para "logLevel" (${JSON.stringify(value)}) — usando default "${DEFAULTS.logLevel}".`,
+          `[switchboard] config.json: invalid value for "logLevel" (${JSON.stringify(value)}) — using default "${DEFAULTS.logLevel}".`,
         );
       }
     } else if (typeof DEFAULTS[key] === "number") {
@@ -106,14 +106,14 @@ export function loadConfig(baseDir: string = defaultBaseDir()): Config {
         (config as unknown as Record<string, unknown>)[key] = value;
       } else {
         console.warn(
-          `[switchboard] config.json: valor inválido para "${key}" (${JSON.stringify(value)}) — usando default.`,
+          `[switchboard] config.json: invalid value for "${key}" (${JSON.stringify(value)}) — using default.`,
         );
       }
     } else if (typeof value === typeof DEFAULTS[key]) {
       (config as unknown as Record<string, unknown>)[key] = value;
     } else {
       console.warn(
-        `[switchboard] config.json: valor inválido para "${key}" (${JSON.stringify(value)}) — usando default.`,
+        `[switchboard] config.json: invalid value for "${key}" (${JSON.stringify(value)}) — using default.`,
       );
     }
   }

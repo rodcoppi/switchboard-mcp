@@ -32,32 +32,32 @@ import type { Delivery } from "../src/shared/types.js";
 // ---------------------------------------------------------------------------
 
 describe("parseClaudeArgs", () => {
-  it("undefined/vazio → []", () => {
+  it("undefined/empty → []", () => {
     expect(parseClaudeArgs(undefined)).toEqual([]);
     expect(parseClaudeArgs("")).toEqual([]);
     expect(parseClaudeArgs("   ")).toEqual([]);
   });
 
-  it("split simples por whitespace (espaços múltiplos colapsam)", () => {
+  it("simple whitespace split (multiple spaces collapse)", () => {
     expect(parseClaudeArgs("--model opus")).toEqual(["--model", "opus"]);
     expect(parseClaudeArgs("  --model   opus  ")).toEqual(["--model", "opus"]);
   });
 
-  it("aspas simples agrupam um token com espaços (aspas removidas)", () => {
+  it("single quotes group a token with spaces (quotes removed)", () => {
     expect(parseClaudeArgs("--append-system-prompt 'foo bar baz'")).toEqual([
       "--append-system-prompt",
       "foo bar baz",
     ]);
   });
 
-  it("aspas duplas agrupam um token com espaços (aspas removidas)", () => {
+  it("double quotes group a token with spaces (quotes removed)", () => {
     expect(parseClaudeArgs('--append-system-prompt "foo bar"')).toEqual([
       "--append-system-prompt",
       "foo bar",
     ]);
   });
 
-  it("aspas no meio do token e token vazio quoted", () => {
+  it("quotes in the middle of the token and an empty quoted token", () => {
     expect(parseClaudeArgs("-c 'printenv; exec cat'")).toEqual([
       "-c",
       "printenv; exec cat",
@@ -65,18 +65,18 @@ describe("parseClaudeArgs", () => {
     expect(parseClaudeArgs("a''b ''")).toEqual(["ab", ""]);
   });
 
-  it("aspas não fechadas → CliError clara (nunca adivinhar)", () => {
-    expect(() => parseClaudeArgs("--x 'aberto")).toThrow(CliError);
-    expect(() => parseClaudeArgs('--x "aberto')).toThrow(/não fechadas/);
+  it("unterminated quotes → clear CliError (never guess)", () => {
+    expect(() => parseClaudeArgs("--x 'open")).toThrow(CliError);
+    expect(() => parseClaudeArgs('--x "open')).toThrow(/unterminated/);
   });
 });
 
 // ---------------------------------------------------------------------------
-// buildAgentCommand — PRD 11 passo 4, argv como ARRAY.
+// buildAgentCommand — PRD 11 step 4, argv as an ARRAY.
 // ---------------------------------------------------------------------------
 
 describe("buildAgentCommand", () => {
-  it("monta env NAME/TOKEN + claude (sem args extras)", () => {
+  it("assembles env NAME/TOKEN + claude (no extra args)", () => {
     expect(buildAgentCommand({ name: "alpha", token: "tok123" })).toEqual([
       "env",
       "SWITCHBOARD_AGENT_NAME=alpha",
@@ -85,7 +85,7 @@ describe("buildAgentCommand", () => {
     ]);
   });
 
-  it("anexa os claude-args parseados com semântica de argv (aspas preservam espaços)", () => {
+  it("appends the parsed claude-args with argv semantics (quotes preserve spaces)", () => {
     expect(
       buildAgentCommand({
         name: "beta",
@@ -104,7 +104,7 @@ describe("buildAgentCommand", () => {
     ]);
   });
 
-  it("claudeBin injetável (testes usam sh/cat no lugar do claude real)", () => {
+  it("injectable claudeBin (tests use sh/cat in place of the real claude)", () => {
     expect(buildAgentCommand({ name: "g", token: "t", claudeBin: "cat" })).toEqual([
       "env",
       "SWITCHBOARD_AGENT_NAME=g",
@@ -115,29 +115,29 @@ describe("buildAgentCommand", () => {
 });
 
 // ---------------------------------------------------------------------------
-// kickoffText — texto EXATO do PRD 11 passo 6, uma linha, sem token.
+// kickoffText — EXACT text from PRD 11 step 6, one line, no token.
 // ---------------------------------------------------------------------------
 
 describe("kickoffText", () => {
-  it("é EXATAMENTE o texto do PRD 11 passo 6", () => {
+  it("is EXACTLY the text from PRD 11 step 6", () => {
     expect(kickoffText("alpha")).toBe(
-      `[switchboard] Você é o agente 'alpha' nesta rede local de agentes. ` +
-        `Confirme chamando a tool join com agent_name="alpha". ` +
-        `Depois continue seu trabalho normalmente; quando receber notificações [switchboard], use check_messages.`,
+      `[switchboard] You are the agent 'alpha' on this local agent network. ` +
+        `Confirm by calling the join tool with agent_name="alpha". ` +
+        `Then continue your work normally; when you receive [switchboard] notifications, use check_messages.`,
     );
   });
 
-  it("é sempre UMA linha (P5)", () => {
+  it("is always ONE line (P5)", () => {
     expect(kickoffText("beta")).not.toMatch(/[\r\n]/);
   });
 
-  it("NUNCA contém o token (o agente lê do env)", () => {
+  it("NEVER contains the token (the agent reads it from the env)", () => {
     expect(kickoffText("gamma")).not.toMatch(/TOKEN/i);
   });
 });
 
 // ---------------------------------------------------------------------------
-// isTuiReady — marcadores de readiness do NOTES.md (spike 0.3).
+// isTuiReady — readiness markers from NOTES.md (spike 0.3).
 // ---------------------------------------------------------------------------
 
 const TRUST_DIALOG_PANE = [
@@ -149,18 +149,18 @@ const TRUST_DIALOG_PANE = [
 const READY_PANE = ["╭──────╮", "│ > ", "╰──────╯", "  ? for shortcuts"].join("\n");
 
 describe("isTuiReady", () => {
-  it("reconhece o marcador '? for shortcuts'", () => {
+  it("recognizes the '? for shortcuts' marker", () => {
     expect(isTuiReady("bla\n? for shortcuts\n")).toBe(true);
   });
 
-  it("reconhece o marcador do input box '│ >'", () => {
+  it("recognizes the input box marker '│ >'", () => {
     expect(isTuiReady("╭──╮\n│ > \n╰──╯")).toBe(true);
   });
 
-  it("reconhece o rodapé do bypass permissions mode (substitui '? for shortcuts')", () => {
-    // Observado com claude 2.1.205 + --permission-mode bypassPermissions: o
-    // rodapé perde "? for shortcuts". Sem este marcador o kickoff de um agente
-    // em bypass (que a seção 9.5 diz estar "coberto") daria timeout.
+  it("recognizes the bypass permissions mode footer (replaces '? for shortcuts')", () => {
+    // Observed with claude 2.1.205 + --permission-mode bypassPermissions: the
+    // footer loses "? for shortcuts". Without this marker the kickoff of an
+    // agent in bypass (which section 9.5 says is "covered") would time out.
     const bypassFooter = [
       "❯ ",
       "────────",
@@ -169,23 +169,23 @@ describe("isTuiReady", () => {
     expect(isTuiReady(bypassFooter)).toBe(true);
   });
 
-  it("reconhece outros permission-mode footers (accept edits / plan mode)", () => {
+  it("recognizes other permission-mode footers (accept edits / plan mode)", () => {
     expect(isTuiReady("❯ \n  accept edits on (shift+tab to cycle)")).toBe(true);
     expect(isTuiReady("❯ \n  plan mode on (shift+tab to cycle)")).toBe(true);
   });
 
-  it("diálogo de confiança (claude 2.1.205) NÃO é ready — dígitos selecionam opções", () => {
+  it("trust dialog (claude 2.1.205) is NOT ready — digits select options", () => {
     expect(isTuiReady(TRUST_DIALOG_PANE)).toBe(false);
   });
 
-  it("pane vazio/ilegível não é ready (fail-closed)", () => {
+  it("empty/unreadable pane is not ready (fail-closed)", () => {
     expect(isTuiReady("")).toBe(false);
     expect(isTuiReady("$ ")).toBe(false);
   });
 });
 
 // ---------------------------------------------------------------------------
-// runKickoffAgent — delay inicial + poll de readiness + nudge guardado.
+// runKickoffAgent — initial delay + readiness poll + guarded nudge.
 // ---------------------------------------------------------------------------
 
 interface FakeKickoffWorld {
@@ -236,7 +236,7 @@ function makeKickoffWorld(input: {
 const NO_CONFIG_DIR = path.join(os.tmpdir(), "switchboard-none-cli-test");
 
 describe("runKickoffAgent", () => {
-  it("espera o delay, NÃO digita durante o trust dialog e só nudga quando a TUI fica pronta", async () => {
+  it("waits the delay, does NOT type during the trust dialog and only nudges when the TUI is ready", async () => {
     const world = makeKickoffWorld({
       panes: [TRUST_DIALOG_PANE, TRUST_DIALOG_PANE, READY_PANE],
     });
@@ -254,20 +254,20 @@ describe("runKickoffAgent", () => {
     });
 
     expect(result.sent).toBe(true);
-    // Delay inicial ANTES de qualquer olhada no pane.
+    // Initial delay BEFORE any look at the pane.
     expect(world.sleeps[0]).toBe(8000);
-    // 3 capturas (2 trust dialog + 1 ready), nudge SÓ depois da última.
+    // 3 captures (2 trust dialog + 1 ready), nudge ONLY after the last one.
     expect(world.calls.filter((c) => c === "capturePane")).toHaveLength(3);
     expect(world.calls.indexOf("nudgeSession")).toBeGreaterThan(
       world.calls.lastIndexOf("capturePane"),
     );
-    // Texto EXATO do PRD, via caminho de nudge com guarda, com o delay do Enter.
+    // EXACT PRD text, via the guarded nudge path, with the Enter delay.
     expect(world.nudges).toEqual([
       { session: "sb-alpha", text: kickoffText("alpha"), enterDelayMs: 500 },
     ]);
   });
 
-  it("TUI nunca fica pronta → desiste após o budget SEM nudgar (kickoff cego proibido)", async () => {
+  it("TUI never becomes ready → gives up after the budget WITHOUT nudging (blind kickoff forbidden)", async () => {
     const world = makeKickoffWorld({ panes: [TRUST_DIALOG_PANE] });
     const result = await runKickoffAgent({
       name: "alpha",
@@ -282,11 +282,11 @@ describe("runKickoffAgent", () => {
     });
 
     expect(result.sent).toBe(false);
-    expect(result.reason).toMatch(/não ficou pronta/);
+    expect(result.reason).toMatch(/did not become ready/);
     expect(world.nudges).toHaveLength(0);
   });
 
-  it("sessão morta → cancela sem nudgar", async () => {
+  it("dead session → cancels without nudging", async () => {
     const world = makeKickoffWorld({ panes: [READY_PANE], hasSession: false });
     const result = await runKickoffAgent({
       name: "alpha",
@@ -299,14 +299,14 @@ describe("runKickoffAgent", () => {
     });
 
     expect(result.sent).toBe(false);
-    expect(result.reason).toMatch(/não existe mais/);
+    expect(result.reason).toMatch(/no longer exists/);
     expect(world.nudges).toHaveLength(0);
   });
 
-  it("abort da guarda de pane propaga (sent:false com o motivo)", async () => {
+  it("pane guard abort propagates (sent:false with the reason)", async () => {
     const world = makeKickoffWorld({
       panes: [READY_PANE],
-      nudgeResult: { sent: false, reason: "pane fora da allow-list" },
+      nudgeResult: { sent: false, reason: "pane outside the allow-list" },
     });
     const result = await runKickoffAgent({
       name: "alpha",
@@ -319,16 +319,16 @@ describe("runKickoffAgent", () => {
     });
 
     expect(result.sent).toBe(false);
-    expect(result.reason).toBe("pane fora da allow-list");
+    expect(result.reason).toBe("pane outside the allow-list");
   });
 });
 
 // ---------------------------------------------------------------------------
-// quoteShellArg + newSession com argv em ARRAY (tmux.ts).
+// quoteShellArg + newSession with argv as an ARRAY (tmux.ts).
 // ---------------------------------------------------------------------------
 
 describe("quoteShellArg / newSession(array)", () => {
-  it("quoteShellArg: simples fica cru; espaços e metachars são quotados; ' escapada", () => {
+  it("quoteShellArg: simple stays raw; spaces and metachars are quoted; ' escaped", () => {
     expect(quoteShellArg("claude")).toBe("claude");
     expect(quoteShellArg("SWITCHBOARD_AGENT_NAME=alpha")).toBe("SWITCHBOARD_AGENT_NAME=alpha");
     expect(quoteShellArg("a b")).toBe("'a b'");
@@ -337,7 +337,7 @@ describe("quoteShellArg / newSession(array)", () => {
     expect(quoteShellArg("")).toBe("''");
   });
 
-  it("newSession(array) junta os elementos shell-quotados num único shell-command", async () => {
+  it("newSession(array) joins the shell-quoted elements into a single shell-command", async () => {
     const calls: string[][] = [];
     const exec: ExecFn = async (_file, args) => {
       calls.push([...args]);
@@ -356,7 +356,7 @@ describe("quoteShellArg / newSession(array)", () => {
     ]);
   });
 
-  it("newSession(string) mantém o comportamento legado (comando cru)", async () => {
+  it("newSession(string) keeps the legacy behavior (raw command)", async () => {
     const calls: string[][] = [];
     const exec: ExecFn = async (_file, args) => {
       calls.push([...args]);
@@ -369,41 +369,41 @@ describe("quoteShellArg / newSession(array)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// formatRelative — LAST SEEN tipo "2min atrás".
+// formatRelative — LAST SEEN like "2min ago".
 // ---------------------------------------------------------------------------
 
 describe("formatRelative", () => {
   const now = Date.parse("2026-07-08T12:00:00.000Z");
   const ago = (ms: number) => new Date(now - ms).toISOString();
 
-  it("timestamps inválidos → —", () => {
-    expect(formatRelative("nunca", now)).toBe("—");
+  it("invalid timestamps → —", () => {
+    expect(formatRelative("never", now)).toBe("—");
     expect(formatRelative("", now)).toBe("—");
   });
 
-  it("< 10s → agora", () => {
-    expect(formatRelative(ago(3_000), now)).toBe("agora");
+  it("< 10s → now", () => {
+    expect(formatRelative(ago(3_000), now)).toBe("now");
   });
 
-  it("segundos", () => {
-    expect(formatRelative(ago(45_000), now)).toBe("45s atrás");
+  it("seconds", () => {
+    expect(formatRelative(ago(45_000), now)).toBe("45s ago");
   });
 
-  it("minutos (exemplo da spec: 2min atrás)", () => {
-    expect(formatRelative(ago(2 * 60_000), now)).toBe("2min atrás");
+  it("minutes (spec example: 2min ago)", () => {
+    expect(formatRelative(ago(2 * 60_000), now)).toBe("2min ago");
   });
 
-  it("horas", () => {
-    expect(formatRelative(ago(3 * 3_600_000), now)).toBe("3h atrás");
+  it("hours", () => {
+    expect(formatRelative(ago(3 * 3_600_000), now)).toBe("3h ago");
   });
 
-  it("dias", () => {
-    expect(formatRelative(ago(2 * 86_400_000), now)).toBe("2d atrás");
+  it("days", () => {
+    expect(formatRelative(ago(2 * 86_400_000), now)).toBe("2d ago");
   });
 });
 
 // ---------------------------------------------------------------------------
-// formatStatusTable — dados fake, formatação limpa.
+// formatStatusTable — fake data, clean formatting.
 // ---------------------------------------------------------------------------
 
 describe("formatStatusTable", () => {
@@ -420,7 +420,7 @@ describe("formatStatusTable", () => {
     },
     {
       name: "alpha",
-      role: "backend da API",
+      role: "API backend",
       status: "online",
       mcpConnected: true,
       unreadCount: 2,
@@ -429,25 +429,25 @@ describe("formatStatusTable", () => {
     },
   ];
 
-  it("sem agentes → mensagem orientando o start", () => {
-    expect(formatStatusTable([], now)).toMatch(/Nenhum agente registrado/);
+  it("no agents → message pointing to start", () => {
+    expect(formatStatusTable([], now)).toMatch(/No registered agents/);
   });
 
-  it("cabeçalho NAME | ROLE | STATUS | MCP | UNREAD | LAST SEEN e linhas ordenadas por nome", () => {
+  it("header NAME | ROLE | STATUS | MCP | UNREAD | LAST SEEN and rows sorted by name", () => {
     const lines = formatStatusTable(rows, now).split("\n");
     expect(lines[0]).toMatch(/^NAME\s+ROLE\s+STATUS\s+MCP\s+UNREAD\s+LAST SEEN$/);
-    expect(lines[1]).toMatch(/^alpha\s+backend da API\s+online\s+sim\s+2\s+2min atrás$/);
-    expect(lines[2]).toMatch(/^beta\s+frontend\s+offline\s+não\s+0\s+3h atrás$/);
+    expect(lines[1]).toMatch(/^alpha\s+API backend\s+online\s+yes\s+2\s+2min ago$/);
+    expect(lines[2]).toMatch(/^beta\s+frontend\s+offline\s+no\s+0\s+3h ago$/);
   });
 
-  it("colunas alinham (toda linha tem as células nas mesmas posições)", () => {
+  it("columns align (every row has cells at the same positions)", () => {
     const lines = formatStatusTable(rows, now).split("\n");
     const statusColumn = lines[0].indexOf("STATUS");
     expect(lines[1].slice(statusColumn)).toMatch(/^online/);
     expect(lines[2].slice(statusColumn)).toMatch(/^offline/);
   });
 
-  it("role vazio vira — e role longo é truncado com …", () => {
+  it("empty role becomes — and a long role is truncated with …", () => {
     const longRole = "x".repeat(60);
     const table = formatStatusTable(
       [
@@ -461,7 +461,7 @@ describe("formatStatusTable", () => {
     expect(table).not.toContain(longRole);
   });
 
-  it("campos extras (ex.: um token vazado) NUNCA aparecem — só as 6 colunas são lidas", () => {
+  it("extra fields (e.g. a leaked token) NEVER appear — only the 6 columns are read", () => {
     const secret = "deadbeef".repeat(8);
     const dirty = [{ ...rows[0], token: secret } as unknown as StatusRow];
     expect(formatStatusTable(dirty, now)).not.toContain(secret);
@@ -469,11 +469,11 @@ describe("formatStatusTable", () => {
 });
 
 // ---------------------------------------------------------------------------
-// describeDelivery — send imprime o delivery com explicação.
+// describeDelivery — send prints the delivery with an explanation.
 // ---------------------------------------------------------------------------
 
 describe("describeDelivery", () => {
-  it("cobre os 4 valores de Delivery com textos distintos e não vazios", () => {
+  it("covers the 4 Delivery values with distinct, non-empty texts", () => {
     const values: Delivery[] = ["nudged", "coalesced", "queued_offline", "queued_muted"];
     const texts = values.map(describeDelivery);
     for (const text of texts) expect(text.length).toBeGreaterThan(0);
@@ -482,11 +482,11 @@ describe("describeDelivery", () => {
 });
 
 // ---------------------------------------------------------------------------
-// serveHeaderLines — PRD 11: primeira linha com dashboard + MCP + mcp add.
+// serveHeaderLines — PRD 11: first line with dashboard + MCP + mcp add.
 // ---------------------------------------------------------------------------
 
 describe("serveHeaderLines", () => {
-  it("primeira linha traz dashboard, endpoint MCP e o comando claude mcp add prontos", () => {
+  it("first line carries the dashboard, MCP endpoint and the ready-to-use claude mcp add command", () => {
     const [first, second] = serveHeaderLines("http://127.0.0.1:4577");
     expect(first).toContain("http://127.0.0.1:4577/");
     expect(first).toContain("http://127.0.0.1:4577/mcp");
@@ -498,29 +498,29 @@ describe("serveHeaderLines", () => {
 });
 
 // ---------------------------------------------------------------------------
-// runStart — validações locais (sem hub): nome e diretório.
+// runStart — local validations (no hub): name and directory.
 // ---------------------------------------------------------------------------
 
-describe("runStart: validações locais", () => {
-  it("nome inválido (mesma regex do store) falha ANTES de qualquer HTTP", async () => {
+describe("runStart: local validations", () => {
+  it("invalid name (same regex as the store) fails BEFORE any HTTP", async () => {
     await expect(
       runStart({ name: "Bad_Name", hubUrl: "http://127.0.0.1:9" }),
-    ).rejects.toThrow(/Nome de agente inválido/);
+    ).rejects.toThrow(/Invalid agent name/);
   });
 
-  it("diretório inexistente falha com mensagem clara", async () => {
+  it("nonexistent directory fails with a clear message", async () => {
     await expect(
-      runStart({ name: "okname", dir: "/nao/existe/mesmo", hubUrl: "http://127.0.0.1:9" }),
-    ).rejects.toThrow(/Diretório não existe/);
+      runStart({ name: "okname", dir: "/does/not/exist", hubUrl: "http://127.0.0.1:9" }),
+    ).rejects.toThrow(/Directory does not exist/);
   });
 
-  it("hub morto → erro claro mandando rodar switchboard serve primeiro", async () => {
+  it("dead hub → clear error telling to run switchboard serve first", async () => {
     await expect(
       runStart({ name: "okname", dir: os.tmpdir(), hubUrl: "http://127.0.0.1:9" }),
-    ).rejects.toThrow(/Rode "switchboard serve" primeiro/);
+    ).rejects.toThrow(/Run "switchboard serve" first/);
   });
 
-  it("--claude-args inválido falha ANTES de qualquer HTTP/tmux (sem registro fantasma)", async () => {
+  it("invalid --claude-args fails BEFORE any HTTP/tmux (no ghost registration)", async () => {
     const tmuxCalls: string[] = [];
     const tmux = {
       async hasSession(): Promise<boolean> {
@@ -535,21 +535,21 @@ describe("runStart: validações locais", () => {
       runStart({
         name: "okname",
         dir: os.tmpdir(),
-        // hub MORTO de propósito: se o parse não fosse fail-fast, o erro
-        // observado seria o do health check, não o das aspas.
+        // hub DEAD on purpose: if the parse were not fail-fast, the observed
+        // error would be the health check's, not the quote's.
         hubUrl: "http://127.0.0.1:9",
         baseDir: NO_CONFIG_DIR,
         tmux,
-        claudeArgs: "--model 'aberto",
+        claudeArgs: "--model 'open",
       }),
-    ).rejects.toThrow(/não fechadas/);
-    expect(tmuxCalls).toEqual([]); // nem tmux, nem HTTP: nada foi tocado
+    ).rejects.toThrow(/unterminated/);
+    expect(tmuxCalls).toEqual([]); // neither tmux nor HTTP: nothing was touched
   });
 
-  it('nome "hub" é recusado (sessão sb-hub reservada ao serve) antes de qualquer HTTP', async () => {
+  it('name "hub" is refused (sb-hub session reserved for serve) before any HTTP', async () => {
     await expect(
       runStart({ name: "hub", hubUrl: "http://127.0.0.1:9", baseDir: NO_CONFIG_DIR }),
-    ).rejects.toThrow(/reservada para o próprio Hub/);
+    ).rejects.toThrow(/reserved for the Hub itself/);
   });
 });
 
@@ -558,15 +558,15 @@ describe("runStart: validações locais", () => {
 // ---------------------------------------------------------------------------
 
 describe("tailLines", () => {
-  it("últimas n linhas (newline final ignorado)", () => {
+  it("last n lines (trailing newline ignored)", () => {
     expect(tailLines("a\nb\nc\nd\n", 2)).toEqual(["c", "d"]);
   });
 
-  it("arquivo menor que n → tudo", () => {
+  it("file smaller than n → everything", () => {
     expect(tailLines("a\nb\n", 100)).toEqual(["a", "b"]);
   });
 
-  it("conteúdo vazio → []", () => {
+  it("empty content → []", () => {
     expect(tailLines("", 10)).toEqual([]);
   });
 });
@@ -590,21 +590,21 @@ describe("runLogs", () => {
     return file;
   }
 
-  it("arquivo ausente → erro claro (o hub já rodou?)", async () => {
-    await expect(runLogs({ baseDir: dir })).rejects.toThrow(/Arquivo de log não existe/);
+  it("missing file → clear error (has the hub run?)", async () => {
+    await expect(runLogs({ baseDir: dir })).rejects.toThrow(/Log file does not exist/);
   });
 
-  it("imprime as últimas ~100 linhas", async () => {
-    writeLog(Array.from({ length: 150 }, (_, i) => `linha ${i + 1}`).join("\n") + "\n");
+  it("prints the last ~100 lines", async () => {
+    writeLog(Array.from({ length: 150 }, (_, i) => `line ${i + 1}`).join("\n") + "\n");
     const out: string[] = [];
     await runLogs({ baseDir: dir, out: (l) => out.push(l) });
     expect(out).toHaveLength(100);
-    expect(out[0]).toBe("linha 51");
-    expect(out[99]).toBe("linha 150");
+    expect(out[0]).toBe("line 51");
+    expect(out[99]).toBe("line 150");
   });
 
-  it("-f segue appends (só linhas completas) e sai limpo no abort", async () => {
-    const file = writeLog("antiga\n");
+  it("-f follows appends (only complete lines) and exits cleanly on abort", async () => {
+    const file = writeLog("old\n");
     const out: string[] = [];
     const controller = new AbortController();
     const done = runLogs({
@@ -615,20 +615,20 @@ describe("runLogs", () => {
       out: (l) => out.push(l),
     });
 
-    // A cauda inicial sai primeiro.
-    await pollUntil(() => out.includes("antiga"), "cauda inicial");
+    // The initial tail comes out first.
+    await pollUntil(() => out.includes("old"), "initial tail");
 
-    fs.appendFileSync(file, "nova 1\nnova 2\nparcial");
-    await pollUntil(() => out.includes("nova 2"), "linhas novas completas");
-    expect(out).toContain("nova 1");
-    // Linha sem newline final ainda NÃO foi emitida.
-    expect(out).not.toContain("parcial");
+    fs.appendFileSync(file, "new 1\nnew 2\npartial");
+    await pollUntil(() => out.includes("new 2"), "complete new lines");
+    expect(out).toContain("new 1");
+    // A line without a trailing newline was NOT emitted yet.
+    expect(out).not.toContain("partial");
 
-    fs.appendFileSync(file, " completada\n");
-    await pollUntil(() => out.includes("parcial completada"), "linha completada");
+    fs.appendFileSync(file, " completed\n");
+    await pollUntil(() => out.includes("partial completed"), "completed line");
 
     controller.abort();
-    await done; // resolve limpo (mesmo caminho do Ctrl-C)
+    await done; // resolves cleanly (same path as Ctrl-C)
   });
 });
 
@@ -641,7 +641,7 @@ async function pollUntil(
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     if (fn()) return;
-    if (Date.now() > deadline) throw new Error(`Timeout esperando: ${what}`);
+    if (Date.now() > deadline) throw new Error(`Timeout waiting for: ${what}`);
     await new Promise((r) => setTimeout(r, 25));
   }
 }

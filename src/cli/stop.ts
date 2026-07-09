@@ -25,14 +25,14 @@ export interface StopTmux {
   killSession(session: string): Promise<void>;
 }
 
-/** Terminal yes/no prompt ("s"/"sim" confirms). Injectable for tests. */
+/** Terminal yes/no prompt ("y"/"yes" confirms). Injectable for tests. */
 export type ConfirmFn = (question: string) => Promise<boolean>;
 
 async function defaultConfirm(question: string): Promise<boolean> {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   try {
     const answer = await rl.question(question);
-    return /^s(im)?$/i.test(answer.trim());
+    return /^y(es)?$/i.test(answer.trim());
   } finally {
     rl.close();
   }
@@ -54,7 +54,7 @@ async function confirmIfUnread(input: {
   if (input.yes) return true;
   if (!input.isTTY) {
     throw new CliError(
-      `${input.unreadLabel} Sem terminal interativo para confirmar — repita com --yes para forçar.`,
+      `${input.unreadLabel} No interactive terminal to confirm — repeat with --yes to force.`,
     );
   }
   let confirmed: boolean;
@@ -65,13 +65,13 @@ async function confirmIfUnread(input: {
     // is the USER CANCELLING, not a bug; treat it exactly like answering "n"
     // instead of letting runCliAction print a stack trace.
     if (err instanceof Error && err.name === "AbortError") {
-      input.out("Cancelado — nada foi parado.");
+      input.out("Canceled — nothing was stopped.");
       return false;
     }
     throw err;
   }
   if (confirmed) return true;
-  input.out("Cancelado — nada foi parado.");
+  input.out("Canceled — nothing was stopped.");
   return false;
 }
 
@@ -90,8 +90,8 @@ export interface StopOptions {
 /** Post-kill reminder (PRD section 11: stop never unregisters). */
 function registryReminder(name: string): string {
   return (
-    `O registro do agente "${name}" permanece no Hub — um próximo ` +
-    `"switchboard start ${name}" reaproveita o nome (re-attach).`
+    `The registration of agent "${name}" stays in the Hub — a future ` +
+    `"switchboard start ${name}" reuses the name (re-attach).`
   );
 }
 
@@ -105,17 +105,17 @@ export async function runStop(options: StopOptions): Promise<{ killed: boolean }
   if (!agent) {
     const names = agents.map((a) => a.name);
     throw new CliError(
-      `Agente "${options.name}" não está registrado no Hub. ` +
-        `Registrados: ${names.length > 0 ? names.join(", ") : "(nenhum)"}.`,
+      `Agent "${options.name}" is not registered in the Hub. ` +
+        `Registered: ${names.length > 0 ? names.join(", ") : "(none)"}.`,
     );
   }
 
   if (agent.unreadCount > 0) {
     const proceed = await confirmIfUnread({
-      unreadLabel: `O agente "${agent.name}" tem ${agent.unreadCount} mensagem(ns) não lida(s).`,
+      unreadLabel: `Agent "${agent.name}" has ${agent.unreadCount} unread message(s).`,
       question:
-        `O agente "${agent.name}" tem ${agent.unreadCount} mensagem(ns) não lida(s). ` +
-        `Parar mesmo assim? [s/N] `,
+        `Agent "${agent.name}" has ${agent.unreadCount} unread message(s). ` +
+        `Stop anyway? [y/N] `,
       yes: options.yes ?? false,
       isTTY: options.isTTY ?? process.stdin.isTTY === true,
       confirm: options.confirm ?? defaultConfirm,
@@ -128,15 +128,15 @@ export async function runStop(options: StopOptions): Promise<{ killed: boolean }
   // tmuxSession — PRD 8: the registry is the source of truth), never from a
   // prefix+name recomputation: a tmuxSessionPrefix edited in config.json
   // after the start (or a custom tmuxSession registered via REST) would make
-  // the recomputed name miss the LIVE session and report "já estava parado"
+  // the recomputed name miss the LIVE session and report "already stopped"
   // while the hub keeps nudging it.
   const session = agent.tmuxSession;
   const tmux: StopTmux = options.tmux ?? createTmux();
   if (await tmux.hasSession(session)) {
     await tmux.killSession(session);
-    out(`Sessão tmux "${session}" encerrada.`);
+    out(`Tmux session "${session}" stopped.`);
   } else {
-    out(`A sessão tmux "${session}" não existe — o agente já estava parado.`);
+    out(`The tmux session "${session}" does not exist — the agent was already stopped.`);
   }
   out(registryReminder(agent.name));
   return { killed: true };
@@ -172,7 +172,7 @@ export async function runDown(options: DownOptions = {}): Promise<{ killed: stri
   }
 
   if (live.length === 0) {
-    out("Nenhum agente com sessão tmux viva para parar.");
+    out("No agent with a live tmux session to stop.");
     out(hubStopInstruction());
     return { killed: [] };
   }
@@ -184,10 +184,10 @@ export async function runDown(options: DownOptions = {}): Promise<{ killed: stri
       .map((a) => `${a.name}: ${a.unread}`)
       .join(", ");
     const proceed = await confirmIfUnread({
-      unreadLabel: `Há ${totalUnread} mensagem(ns) não lida(s) no total (${detail}).`,
+      unreadLabel: `There are ${totalUnread} unread message(s) in total (${detail}).`,
       question:
-        `Há ${totalUnread} mensagem(ns) não lida(s) no total (${detail}). ` +
-        `Parar TODOS os ${live.length} agente(s) mesmo assim? [s/N] `,
+        `There are ${totalUnread} unread message(s) in total (${detail}). ` +
+        `Stop ALL ${live.length} agent(s) anyway? [y/N] `,
       yes: options.yes ?? false,
       isTTY: options.isTTY ?? process.stdin.isTTY === true,
       confirm: options.confirm ?? defaultConfirm,
@@ -200,9 +200,9 @@ export async function runDown(options: DownOptions = {}): Promise<{ killed: stri
   for (const agent of live) {
     await tmux.killSession(agent.session);
     killed.push(agent.name);
-    out(`Sessão tmux "${agent.session}" encerrada (agente ${agent.name}).`);
+    out(`Tmux session "${agent.session}" stopped (agent ${agent.name}).`);
   }
-  out(`Os registros permanecem no Hub — "switchboard start <nome>" reaproveita cada nome.`);
+  out(`The registrations stay in the Hub — "switchboard start <name>" reuses each name.`);
   out(hubStopInstruction());
   return { killed };
 }
@@ -210,25 +210,25 @@ export async function runDown(options: DownOptions = {}): Promise<{ killed: stri
 /** down NEVER kills the hub (PRD 11) — it instructs the human instead. */
 function hubStopInstruction(): string {
   return (
-    `O Hub continua rodando. Para pará-lo: Ctrl-C no terminal do "switchboard serve" ` +
-    `(ou "tmux kill-session -t sb-hub", se ele roda na sessão recomendada sb-hub).`
+    `The Hub keeps running. To stop it: Ctrl-C in the "switchboard serve" terminal ` +
+    `(or "tmux kill-session -t sb-hub", if it runs in the recommended sb-hub session).`
   );
 }
 
 export function registerStopCommands(program: Command): void {
   program
     .command("stop")
-    .description("Encerra a sessão tmux de um agente (o registro no Hub permanece).")
-    .argument("<name>", "nome do agente")
-    .option("--yes", "não pedir confirmação mesmo com mensagens não lidas")
+    .description("Stops an agent's tmux session (the registration in the Hub stays).")
+    .argument("<name>", "agent name")
+    .option("--yes", "do not ask for confirmation even with unread messages")
     .action(async (name: string, opts: { yes?: boolean }) => {
       await runCliAction(() => runStop({ name, yes: opts.yes }).then(() => undefined));
     });
 
   program
     .command("down")
-    .description("Encerra as sessões tmux de TODOS os agentes registrados (o Hub continua no ar).")
-    .option("--yes", "não pedir confirmação mesmo com mensagens não lidas")
+    .description("Stops the tmux sessions of ALL registered agents (the Hub stays up).")
+    .option("--yes", "do not ask for confirmation even with unread messages")
     .action(async (opts: { yes?: boolean }) => {
       await runCliAction(() => runDown({ yes: opts.yes }).then(() => undefined));
     });

@@ -210,7 +210,7 @@ export class Dispatcher {
         const updated = this.store.updateAgent(name, { status: next });
         this.bus.emit({ type: "agent_updated", payload: toPublicAgent(updated) });
         this.log.info(
-          `[dispatcher] polling: ${name} ficou ${next} (tmux ${tmuxSession}).`,
+          `[dispatcher] polling: ${name} became ${next} (tmux ${tmuxSession}).`,
         );
 
         if (next === "online" && !updated.muted && this.store.unreadCount(name) > 0) {
@@ -228,8 +228,8 @@ export class Dispatcher {
   }
 
   /**
-   * Manual nudge (dashboard button — PRD 10.1: "força um nudge manual").
-   * Interpretation of "força" documented here on purpose: it BYPASSES the
+   * Manual nudge (dashboard button — PRD 10.1: "force a manual nudge").
+   * Interpretation of "force" documented here on purpose: it BYPASSES the
    * cooldown and the mute flag (both are politeness/delivery controls that
    * the human operator may override), but NEVER the pane-command guard —
    * that one is a security invariant (PRD 10.3, section 15, pitfall P2) and
@@ -238,7 +238,7 @@ export class Dispatcher {
   async forceNudge(name: string): Promise<ManualNudgeResult> {
     const agent = this.store.getAgent(name);
     if (!agent) {
-      return { sent: false, reason: `agente desconhecido: "${name}"` };
+      return { sent: false, reason: `unknown agent: "${name}"` };
     }
     return this.performNudge(agent);
   }
@@ -255,14 +255,14 @@ export class Dispatcher {
     this.flushTimer.unref(); // never hold the process open
     this.pollTimer = setInterval(() => {
       void this.pollOnce().catch((err) => {
-        this.log.error(`[dispatcher] erro no polling de status:`, err);
+        this.log.error(`[dispatcher] error in status polling:`, err);
       });
     }, this.config.agentPollIntervalMs);
     this.pollTimer.unref();
     // Immediate first poll so status converges right after boot (replay may
     // have loaded agents whose sessions are still alive).
     void this.pollOnce().catch((err) => {
-      this.log.error(`[dispatcher] erro no polling inicial:`, err);
+      this.log.error(`[dispatcher] error in initial polling:`, err);
     });
   }
 
@@ -286,7 +286,7 @@ export class Dispatcher {
   /** Fire-and-forget wrapper: the decision paths must never await tmux. */
   private fireNudge(agent: Agent): void {
     void this.performNudge(agent).catch((err) => {
-      this.log.error(`[dispatcher] erro inesperado nudgando ${agent.name}:`, err);
+      this.log.error(`[dispatcher] unexpected error nudging ${agent.name}:`, err);
     });
   }
 
@@ -303,13 +303,13 @@ export class Dispatcher {
     const froms = this.store.unreadSenders(agent.name).join(", ");
     // unread === 0 is only reachable via forceNudge (every automatic path
     // gates on unread > 0): the count/senders template would degenerate into
-    // "0 nova(s) mensagem(ns) de: ." — use a purpose-built manual-poke line.
+    // "0 new message(s) from: ." — use a purpose-built manual-poke line.
     const text = (
       unread === 0
-        ? `[switchboard] Cutucada manual do operator. Use a tool check_messages para verificar sua fila.`
-        : `[switchboard] ${unread} nova(s) mensagem(ns) de: ${froms}. ` +
-          `Use a tool check_messages para ler.`
-    ).replace(/[\r\n]+/g, " "); // nudge é SEMPRE uma linha (P5)
+        ? `[switchboard] Manual nudge from operator. Use the check_messages tool to check your queue.`
+        : `[switchboard] ${unread} new message(s) from: ${froms}. ` +
+          `Use the check_messages tool to read them.`
+    ).replace(/[\r\n]+/g, " "); // a nudge is ALWAYS a single line (P5)
     const at = new Date(this.now()).toISOString();
     // Stamp SYNCHRONOUSLY (same-tick bursts must already see the cooldown —
     // that is what coalesces them), but remember the previous value: a nudge
@@ -326,14 +326,14 @@ export class Dispatcher {
         this.config.nudgeEnterDelayMs,
       );
     } catch (err) {
-      result = { sent: false, reason: `erro executando tmux: ${String(err)}` };
+      result = { sent: false, reason: `error running tmux: ${String(err)}` };
     }
 
     if (result.sent) {
       this.nudgeBlocked.delete(agent.name);
       this.bus.emit({ type: "nudge_sent", payload: { agent: agent.name, at, unread } });
       this.log.info(
-        `[dispatcher] nudge enviado para ${agent.name} (${unread} não lida(s) de: ${froms}).`,
+        `[dispatcher] nudge sent to ${agent.name} (${unread} unread from: ${froms}).`,
       );
       return { sent: true };
     }
@@ -343,8 +343,8 @@ export class Dispatcher {
     // warn level. Revert the optimistic cooldown stamp (only if no other
     // nudge re-stamped it meanwhile) so delivery is not delayed by up to 15s
     // once the agent actually recovers.
-    const reason = result.reason ?? "motivo desconhecido";
-    this.log.warn(`[dispatcher] nudge para ${agent.name} ABORTADO: ${reason}.`);
+    const reason = result.reason ?? "unknown reason";
+    this.log.warn(`[dispatcher] nudge to ${agent.name} ABORTED: ${reason}.`);
     this.nudgeBlocked.add(agent.name);
     const current = this.store.getAgent(agent.name);
     if (current && current.lastNudgeAt === at) {

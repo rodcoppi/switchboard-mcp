@@ -13,13 +13,13 @@ const LOG_LEVELS: readonly LogLevel[] = ["debug", "info", "warn", "error"];
 
 /**
  * PRD 11 header. First line = dashboard + MCP + `claude mcp add` in one line
- * ("imprime na PRIMEIRA linha", so it must precede the hub's own startup
+ * ("prints on the FIRST line", so it must precede the hub's own startup
  * logs); second line = the tmux sb-hub recommendation.
  */
 export function serveHeaderLines(url: string): string[] {
   return [
-    `Dashboard: ${url}/  |  MCP: ${url}/mcp  |  Registro (uma vez): claude mcp add --transport http --scope user switchboard ${url}/mcp`,
-    `Recomendação: rode este serve dentro de uma sessão tmux "sb-hub" (tmux new -s sb-hub) para ele sobreviver ao fechamento do terminal.`,
+    `Dashboard: ${url}/  |  MCP: ${url}/mcp  |  Register (once): claude mcp add --transport http --scope user switchboard ${url}/mcp`,
+    `Recommendation: run this serve inside a tmux session "sb-hub" (tmux new -s sb-hub) so it survives closing the terminal.`,
   ];
 }
 
@@ -27,20 +27,20 @@ export function registerServeCommand(program: Command): void {
   program
     .command("serve")
     .description(
-      "Sobe o Hub em foreground (logs no stdout + arquivo). " +
-        "Recomendado: rodar dentro de uma sessão tmux 'sb-hub' para sobreviver ao fechamento do terminal.",
+      "Starts the Hub in the foreground (logs on stdout + file). " +
+        "Recommended: run inside a tmux session 'sb-hub' so it survives closing the terminal.",
     )
-    .option("--port <porta>", `porta do Hub (default: ${DEFAULTS.port}, ou o valor do config.json)`)
-    .option("--log-level <nível>", `nível de log: ${LOG_LEVELS.join(" | ")}`)
+    .option("--port <port>", `Hub port (default: ${DEFAULTS.port}, or the config.json value)`)
+    .option("--log-level <level>", `log level: ${LOG_LEVELS.join(" | ")}`)
     // Hidden flag: keeps the data dir injectable (verification/tests) without a
     // new env var. Production simply omits it and uses ~/.switchboard.
-    .addOption(new Option("--dir <dir>", "diretório de dados (default: ~/.switchboard)").hideHelp())
+    .addOption(new Option("--dir <dir>", "data directory (default: ~/.switchboard)").hideHelp())
     .action(async (opts: { port?: string; logLevel?: string; dir?: string }) => {
       let port: number | undefined;
       if (opts.port !== undefined) {
         port = Number(opts.port);
         if (!Number.isInteger(port) || port < 0 || port > 65535) {
-          console.error(`switchboard serve: porta inválida "${opts.port}" (esperado 0..65535).`);
+          console.error(`switchboard serve: invalid port "${opts.port}" (expected 0..65535).`);
           process.exit(1);
         }
       }
@@ -49,7 +49,7 @@ export function registerServeCommand(program: Command): void {
       if (opts.logLevel !== undefined) {
         if (!(LOG_LEVELS as string[]).includes(opts.logLevel)) {
           console.error(
-            `switchboard serve: log-level inválido "${opts.logLevel}" (esperado ${LOG_LEVELS.join(" | ")}).`,
+            `switchboard serve: invalid log-level "${opts.logLevel}" (expected ${LOG_LEVELS.join(" | ")}).`,
           );
           process.exit(1);
         }
@@ -77,9 +77,9 @@ export function registerServeCommand(program: Command): void {
         // like every other subcommand error.
         if ((err as NodeJS.ErrnoException).code === "EADDRINUSE") {
           console.error(
-            `A porta ${configuredPort} já está em uso — provavelmente já existe um ` +
-              `"switchboard serve" rodando (confira com "switchboard status" ou "switchboard logs"). ` +
-              `Para usar outra porta: --port <porta>.`,
+            `Port ${configuredPort} is already in use — there is probably a ` +
+              `"switchboard serve" already running (check with "switchboard status" or "switchboard logs"). ` +
+              `To use another port: --port <port>.`,
           );
           process.exit(1);
         }
@@ -95,12 +95,12 @@ export function registerServeCommand(program: Command): void {
       const shutdown = (signal: string) => {
         if (shuttingDown) return;
         shuttingDown = true;
-        hub.log.info(`[hub] ${signal} recebido — encerrando.`);
+        hub.log.info(`[hub] ${signal} received — shutting down.`);
         hub
           .close()
           .then(() => process.exit(0))
           .catch((err) => {
-            console.error(`Erro ao encerrar o Hub: ${String(err)}`);
+            console.error(`Error shutting down the Hub: ${String(err)}`);
             process.exit(1);
           });
       };

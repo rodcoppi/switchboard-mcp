@@ -102,8 +102,8 @@ afterEach(() => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-describe("onNewMessage — decisão síncrona (pseudocódigo 10.2)", () => {
-  it("cooldown gera coalescing: 3 mensagens em rajada → 1 nudge imediato + pendência", async () => {
+describe("onNewMessage — synchronous decision (pseudocode 10.2)", () => {
+  it("cooldown produces coalescing: 3 messages in a burst → 1 immediate nudge + pending", async () => {
     const { tmux, nudges } = mockTmux();
     const dispatcher = makeDispatcher(tmux);
     registerOnline("alpha");
@@ -114,12 +114,12 @@ describe("onNewMessage — decisão síncrona (pseudocódigo 10.2)", () => {
     expect(deliver(dispatcher, "beta", "alpha", "m3")).toBe("coalesced");
     await settle();
 
-    expect(nudges).toHaveLength(1); // exatamente UM nudge para a rajada
+    expect(nudges).toHaveLength(1); // exactly ONE nudge for the burst
     expect(nudges[0].session).toBe("sb-alpha");
     expect(dispatcher.pendingAgents).toEqual(["alpha"]);
   });
 
-  it("lastNudgeAt é atualizado (sincronamente) quando o nudge é decidido", async () => {
+  it("lastNudgeAt is updated (synchronously) when the nudge is decided", async () => {
     const { tmux } = mockTmux();
     const dispatcher = makeDispatcher(tmux);
     registerOnline("alpha");
@@ -127,122 +127,122 @@ describe("onNewMessage — decisão síncrona (pseudocódigo 10.2)", () => {
 
     expect(store.getAgent("alpha")!.lastNudgeAt).toBeNull();
     expect(deliver(dispatcher, "beta", "alpha", "m1")).toBe("nudged");
-    // Síncrono: o cooldown começa na decisão, antes do tmux completar.
+    // Synchronous: the cooldown starts at the decision, before tmux completes.
     expect(store.getAgent("alpha")!.lastNudgeAt).toBe(iso(nowMs));
     await settle();
     expect(store.getAgent("alpha")!.lastNudgeAt).toBe(iso(nowMs));
   });
 
-  it("muted → queued_muted, sem NENHUMA chamada tmux e sem pendência", async () => {
+  it("muted → queued_muted, with NO tmux call and no pending", async () => {
     const { tmux, nudges, hasSessionCalls } = mockTmux();
     const dispatcher = makeDispatcher(tmux);
     registerOnline("alpha");
     store.updateAgent("alpha", { muted: true });
     store.registerAgent({ name: "beta", role: "", tmuxSession: "sb-beta", cwd: "" });
 
-    expect(deliver(dispatcher, "beta", "alpha", "psiu")).toBe("queued_muted");
+    expect(deliver(dispatcher, "beta", "alpha", "psst")).toBe("queued_muted");
     await settle();
     expect(nudges).toHaveLength(0);
     expect(hasSessionCalls).toHaveLength(0);
     expect(dispatcher.pendingAgents).toEqual([]);
   });
 
-  it("tmux morto (status offline) → queued_offline, status permanece offline, sem tmux", async () => {
+  it("dead tmux (offline status) → queued_offline, status stays offline, no tmux", async () => {
     const { tmux, nudges } = mockTmux();
     const dispatcher = makeDispatcher(tmux);
     store.registerAgent({ name: "alpha", role: "", tmuxSession: "sb-alpha", cwd: "" });
     store.registerAgent({ name: "beta", role: "", tmuxSession: "sb-beta", cwd: "" });
     expect(store.getAgent("alpha")!.status).toBe("offline");
 
-    expect(deliver(dispatcher, "beta", "alpha", "oi")).toBe("queued_offline");
+    expect(deliver(dispatcher, "beta", "alpha", "hi")).toBe("queued_offline");
     await settle();
     expect(nudges).toHaveLength(0);
     expect(store.getAgent("alpha")!.status).toBe("offline");
   });
 
-  it("guarda de pane aborta no caminho assíncrono: agente vira offline com warn (10.3)", async () => {
+  it("pane guard aborts on the async path: the agent goes offline with a warn (10.3)", async () => {
     const { tmux, nudges } = mockTmux({
-      nudgeResult: () => ({ sent: false, reason: "pane em shell (bash)" }),
+      nudgeResult: () => ({ sent: false, reason: "pane in a shell (bash)" }),
     });
     const dispatcher = makeDispatcher(tmux);
     registerOnline("alpha");
     store.registerAgent({ name: "beta", role: "", tmuxSession: "sb-beta", cwd: "" });
 
-    expect(deliver(dispatcher, "beta", "alpha", "oi")).toBe("nudged");
+    expect(deliver(dispatcher, "beta", "alpha", "hi")).toBe("nudged");
     await settle();
-    expect(nudges).toHaveLength(1); // tentado…
-    expect(store.getAgent("alpha")!.status).toBe("offline"); // …abortado e marcado offline
+    expect(nudges).toHaveLength(1); // attempted…
+    expect(store.getAgent("alpha")!.status).toBe("offline"); // …aborted and marked offline
     const updated = events.filter(
       (e) => e.type === "agent_updated" && (e.payload as Agent).name === "alpha",
     );
     expect(updated.length).toBeGreaterThan(0);
-    // Nenhum nudge_sent foi emitido (nada foi digitado).
+    // No nudge_sent was emitted (nothing was typed).
     expect(events.filter((e) => e.type === "nudge_sent")).toHaveLength(0);
   });
 
-  it("nudge abortado REVERTE lastNudgeAt: a recuperação não herda cooldown de um nudge que nunca digitou", async () => {
+  it("an aborted nudge REVERTS lastNudgeAt: recovery does not inherit a cooldown from a nudge that never typed", async () => {
     const { tmux, nudges } = mockTmux({
-      nudgeResult: () => ({ sent: false, reason: "pane em shell (bash)" }),
+      nudgeResult: () => ({ sent: false, reason: "pane in a shell (bash)" }),
     });
     const dispatcher = makeDispatcher(tmux);
     registerOnline("alpha");
     store.registerAgent({ name: "beta", role: "", tmuxSession: "sb-beta", cwd: "" });
 
     expect(store.getAgent("alpha")!.lastNudgeAt).toBeNull();
-    expect(deliver(dispatcher, "beta", "alpha", "oi")).toBe("nudged");
-    // Stamp SÍNCRONO presente antes do resultado do tmux (é o que coalesce rajadas)…
+    expect(deliver(dispatcher, "beta", "alpha", "hi")).toBe("nudged");
+    // SYNCHRONOUS stamp present before the tmux result (it's what coalesces bursts)…
     expect(store.getAgent("alpha")!.lastNudgeAt).toBe(iso(nowMs));
     await settle();
-    // …mas o abort da guarda devolve o valor anterior: nada foi digitado,
-    // logo nenhum cooldown de 15s pode atrasar a entrega pós-recuperação.
+    // …but the guard abort restores the previous value: nothing was typed,
+    // so no 15s cooldown can delay the post-recovery delivery.
     expect(nudges).toHaveLength(1);
     expect(store.getAgent("alpha")!.lastNudgeAt).toBeNull();
     expect(store.getAgent("alpha")!.status).toBe("offline");
   });
 });
 
-describe("texto do nudge (10.2 — template exato, uma linha, sem corpo de mensagem)", () => {
-  it("uma não lida: texto exato com remetente único", async () => {
+describe("nudge text (10.2 — exact template, one line, no message body)", () => {
+  it("one unread: exact text with a single sender", async () => {
     const { tmux, nudges } = mockTmux();
     const dispatcher = makeDispatcher(tmux);
     registerOnline("alpha");
     store.registerAgent({ name: "beta", role: "", tmuxSession: "sb-beta", cwd: "" });
 
-    deliver(dispatcher, "beta", "alpha", "corpo secreto da mensagem");
+    deliver(dispatcher, "beta", "alpha", "secret body of the message");
     await settle();
 
     expect(nudges[0].text).toBe(
-      "[switchboard] 1 nova(s) mensagem(ns) de: beta. Use a tool check_messages para ler.",
+      "[switchboard] 1 new message(s) from: beta. Use the check_messages tool to read them.",
     );
-    expect(nudges[0].text).not.toMatch(/[\r\n]/); // SEMPRE uma linha (P5)
-    expect(nudges[0].text).not.toContain("corpo secreto"); // corpo NUNCA via tmux
+    expect(nudges[0].text).not.toMatch(/[\r\n]/); // ALWAYS a single line (P5)
+    expect(nudges[0].text).not.toContain("secret body"); // body NEVER via tmux
     expect(nudges[0].enterDelayMs).toBe(config.nudgeEnterDelayMs);
   });
 
-  it("várias não lidas coalescidas: contagem e remetentes agregados no flush", async () => {
+  it("several coalesced unreads: count and senders aggregated in the flush", async () => {
     const { tmux, nudges } = mockTmux();
     const dispatcher = makeDispatcher(tmux);
     registerOnline("alpha");
     store.registerAgent({ name: "beta", role: "", tmuxSession: "sb-beta", cwd: "" });
 
-    deliver(dispatcher, "beta", "alpha", "m1"); // nudge imediato (1 de beta)
+    deliver(dispatcher, "beta", "alpha", "m1"); // immediate nudge (1 from beta)
     deliver(dispatcher, "operator", "alpha", "m2"); // coalesced
     await settle();
     expect(nudges).toHaveLength(1);
 
-    nowMs += COOLDOWN; // cooldown expira
+    nowMs += COOLDOWN; // cooldown expires
     dispatcher.flushPending();
     await settle();
 
     expect(nudges).toHaveLength(2);
     expect(nudges[1].text).toBe(
-      "[switchboard] 2 nova(s) mensagem(ns) de: beta, operator. Use a tool check_messages para ler.",
+      "[switchboard] 2 new message(s) from: beta, operator. Use the check_messages tool to read them.",
     );
   });
 });
 
-describe("flushPending (timer de 5s do 10.2)", () => {
-  it("após o cooldown com unread > 0: dispara 1 nudge e remove a pendência", async () => {
+describe("flushPending (5s timer from 10.2)", () => {
+  it("after the cooldown with unread > 0: fires 1 nudge and removes the pending entry", async () => {
     const { tmux, nudges } = mockTmux();
     const dispatcher = makeDispatcher(tmux);
     registerOnline("alpha");
@@ -254,28 +254,28 @@ describe("flushPending (timer de 5s do 10.2)", () => {
     expect(nudges).toHaveLength(1);
     expect(dispatcher.pendingAgents).toEqual(["alpha"]);
 
-    // Cooldown AINDA ativo: flush não faz nada.
+    // Cooldown STILL active: flush does nothing.
     nowMs += COOLDOWN - 1;
     dispatcher.flushPending();
     await settle();
     expect(nudges).toHaveLength(1);
     expect(dispatcher.pendingAgents).toEqual(["alpha"]);
 
-    // Cooldown expirado + unread > 0: UM nudge e pendência removida.
+    // Cooldown expired + unread > 0: ONE nudge and pending removed.
     nowMs += 1;
     dispatcher.flushPending();
     await settle();
     expect(nudges).toHaveLength(2);
     expect(dispatcher.pendingAgents).toEqual([]);
 
-    // Flush de novo: nada pendente, nada disparado.
+    // Flush again: nothing pending, nothing fired.
     nowMs += COOLDOWN;
     dispatcher.flushPending();
     await settle();
     expect(nudges).toHaveLength(2);
   });
 
-  it("unread == 0 (agente já leu): flush NÃO nudga", async () => {
+  it("unread == 0 (agent already read): flush does NOT nudge", async () => {
     const { tmux, nudges } = mockTmux();
     const dispatcher = makeDispatcher(tmux);
     registerOnline("alpha");
@@ -287,16 +287,16 @@ describe("flushPending (timer de 5s do 10.2)", () => {
     await settle();
     expect(nudges).toHaveLength(1);
 
-    // Agente leu tudo antes do flush (check_messages).
+    // Agent read everything before the flush (check_messages).
     for (const m of store.unreadFor("alpha")) store.markRead(m.id);
 
     nowMs += COOLDOWN;
     dispatcher.flushPending();
     await settle();
-    expect(nudges).toHaveLength(1); // nenhum nudge extra
+    expect(nudges).toHaveLength(1); // no extra nudge
   });
 
-  it("REGRESSÃO (vazamento de pendência): dívida quitada no flush é DESCARTADA e mensagem futura gera exatamente 1 nudge", async () => {
+  it("REGRESSION (pending leak): a debt settled in the flush is DISCARDED and a future message generates exactly 1 nudge", async () => {
     const { tmux, nudges } = mockTmux();
     const dispatcher = makeDispatcher(tmux);
     registerOnline("alpha");
@@ -308,57 +308,57 @@ describe("flushPending (timer de 5s do 10.2)", () => {
     expect(nudges).toHaveLength(1);
     expect(dispatcher.pendingAgents).toEqual(["alpha"]);
 
-    // Agente leu TUDO (check_messages) antes do flush.
+    // Agent read EVERYTHING (check_messages) before the flush.
     for (const m of store.unreadFor("alpha")) store.markRead(m.id);
     nowMs += COOLDOWN;
     dispatcher.flushPending();
     await settle();
     expect(nudges).toHaveLength(1);
-    expect(dispatcher.pendingAgents).toEqual([]); // dívida quitada — sem entrada fantasma
+    expect(dispatcher.pendingAgents).toEqual([]); // debt settled — no ghost entry
 
-    // Muito depois, UMA única mensagem nova → UM nudge imediato…
+    // Much later, ONE single new message → ONE immediate nudge…
     nowMs += COOLDOWN * 10;
     expect(deliver(dispatcher, "beta", "alpha", "m3")).toBe("nudged");
     await settle();
     expect(nudges).toHaveLength(2);
     expect(dispatcher.pendingAgents).toEqual([]);
 
-    // …e NENHUM segundo nudge duplicado no flush seguinte.
+    // …and NO duplicate second nudge in the following flush.
     nowMs += COOLDOWN;
     dispatcher.flushPending();
     await settle();
     expect(nudges).toHaveLength(2);
   });
 
-  it("REGRESSÃO (vazamento de pendência): nudge imediato quita a dívida de coalescing — flush não re-dispara", async () => {
+  it("REGRESSION (pending leak): an immediate nudge settles the coalescing debt — flush does not re-fire", async () => {
     const { tmux, nudges } = mockTmux();
     const dispatcher = makeDispatcher(tmux);
     registerOnline("alpha");
     store.registerAgent({ name: "beta", role: "", tmuxSession: "sb-beta", cwd: "" });
 
     deliver(dispatcher, "beta", "alpha", "m1"); // nudged
-    deliver(dispatcher, "beta", "alpha", "m2"); // coalesced → pendência
+    deliver(dispatcher, "beta", "alpha", "m2"); // coalesced → pending
     await settle();
     expect(nudges).toHaveLength(1);
     expect(dispatcher.pendingAgents).toEqual(["alpha"]);
 
-    // Cooldown expira SEM o flush rodar; m3 chega → nudge IMEDIATO cobre as
-    // 3 não lidas e quita a pendência antiga.
+    // Cooldown expires WITHOUT the flush running; m3 arrives → an IMMEDIATE
+    // nudge covers the 3 unreads and settles the old pending entry.
     nowMs += COOLDOWN;
     expect(deliver(dispatcher, "beta", "alpha", "m3")).toBe("nudged");
     await settle();
     expect(nudges).toHaveLength(2);
-    expect(nudges[1].text).toContain("3 nova(s)");
+    expect(nudges[1].text).toContain("3 new message(s)");
     expect(dispatcher.pendingAgents).toEqual([]);
 
-    // Flush posterior NÃO repete o nudge idêntico.
+    // A later flush does NOT repeat the identical nudge.
     nowMs += COOLDOWN;
     dispatcher.flushPending();
     await settle();
     expect(nudges).toHaveLength(2);
   });
 
-  it("agente silenciado depois de coalescido: flush suprime o nudge (mute = 10.1)", async () => {
+  it("agent muted after being coalesced: flush suppresses the nudge (mute = 10.1)", async () => {
     const { tmux, nudges } = mockTmux();
     const dispatcher = makeDispatcher(tmux);
     registerOnline("alpha");
@@ -372,12 +372,12 @@ describe("flushPending (timer de 5s do 10.2)", () => {
     nowMs += COOLDOWN;
     dispatcher.flushPending();
     await settle();
-    expect(nudges).toHaveLength(1); // só o inicial; o flush não nudgou o mutado
+    expect(nudges).toHaveLength(1); // only the initial one; the flush did not nudge the muted agent
   });
 });
 
-describe("polling de status (10.4)", () => {
-  it("emite agent_updated SÓ quando o status muda", async () => {
+describe("status polling (10.4)", () => {
+  it("emits agent_updated ONLY when the status changes", async () => {
     const { tmux, alive } = mockTmux();
     const dispatcher = makeDispatcher(tmux);
     store.registerAgent({ name: "alpha", role: "", tmuxSession: "sb-alpha", cwd: "" });
@@ -387,41 +387,41 @@ describe("polling de status (10.4)", () => {
         (e) => e.type === "agent_updated" && (e.payload as Agent).name === name,
       );
 
-    // offline → offline: nenhuma mudança, nenhum evento.
+    // offline → offline: no change, no event.
     await dispatcher.pollOnce();
     expect(updatesFor("alpha")).toHaveLength(0);
     expect(store.getAgent("alpha")!.status).toBe("offline");
 
-    // offline → online: 1 evento.
+    // offline → online: 1 event.
     alive.add("sb-alpha");
     await dispatcher.pollOnce();
     expect(updatesFor("alpha")).toHaveLength(1);
     expect(store.getAgent("alpha")!.status).toBe("online");
 
-    // online → online: nenhum evento novo.
+    // online → online: no new event.
     await dispatcher.pollOnce();
     await dispatcher.pollOnce();
     expect(updatesFor("alpha")).toHaveLength(1);
 
-    // online → offline: 1 evento novo.
+    // online → offline: 1 new event.
     alive.delete("sb-alpha");
     await dispatcher.pollOnce();
     expect(updatesFor("alpha")).toHaveLength(2);
     expect(store.getAgent("alpha")!.status).toBe("offline");
   });
 
-  it("agente que fica online com unread > 0 é nudgado (cooldown expirado)", async () => {
+  it("an agent that comes online with unread > 0 is nudged (cooldown expired)", async () => {
     const { tmux, alive, nudges } = mockTmux();
     const dispatcher = makeDispatcher(tmux);
     store.registerAgent({ name: "alpha", role: "", tmuxSession: "sb-alpha", cwd: "" });
     store.registerAgent({ name: "beta", role: "", tmuxSession: "sb-beta", cwd: "" });
 
-    // Mensagem chega com o agente offline → queued_offline, sem nudge.
-    expect(deliver(dispatcher, "beta", "alpha", "oi")).toBe("queued_offline");
+    // Message arrives with the agent offline → queued_offline, no nudge.
+    expect(deliver(dispatcher, "beta", "alpha", "hi")).toBe("queued_offline");
     await settle();
     expect(nudges).toHaveLength(0);
 
-    // Sessão volta: polling marca online e entrega o nudge pendente.
+    // Session comes back: polling marks online and delivers the pending nudge.
     alive.add("sb-alpha");
     await dispatcher.pollOnce();
     await settle();
@@ -430,40 +430,40 @@ describe("polling de status (10.4)", () => {
     expect(nudges[0].session).toBe("sb-alpha");
   });
 
-  it("agente que fica online com unread > 0 mas em cooldown vira pendência (respeita cooldown)", async () => {
+  it("an agent that comes online with unread > 0 but in cooldown becomes pending (respects cooldown)", async () => {
     const { tmux, alive, nudges } = mockTmux();
     const dispatcher = makeDispatcher(tmux);
     registerOnline("alpha");
     store.registerAgent({ name: "beta", role: "", tmuxSession: "sb-beta", cwd: "" });
     alive.add("sb-alpha");
 
-    deliver(dispatcher, "beta", "alpha", "m1"); // nudged: cooldown começa
+    deliver(dispatcher, "beta", "alpha", "m1"); // nudged: cooldown starts
     await settle();
     expect(nudges).toHaveLength(1);
 
-    // Sessão cai e volta DENTRO do cooldown, com uma segunda não lida.
+    // Session drops and comes back WITHIN the cooldown, with a second unread.
     store.updateAgent("alpha", { status: "offline" });
     const m2 = store.appendMessage({ from: "beta", to: "alpha", body: "m2" });
     expect(dispatcher.onNewMessage(m2, store.getAgent("alpha")!)).toBe("queued_offline");
 
-    nowMs += 1000; // cooldown (15s) ainda ativo
+    nowMs += 1000; // cooldown (15s) still active
     await dispatcher.pollOnce();
     await settle();
-    expect(nudges).toHaveLength(1); // NÃO nudgou de novo
-    expect(dispatcher.pendingAgents).toEqual(["alpha"]); // …mas ficou pendente
+    expect(nudges).toHaveLength(1); // did NOT nudge again
+    expect(dispatcher.pendingAgents).toEqual(["alpha"]); // …but became pending
 
     nowMs += COOLDOWN;
     dispatcher.flushPending();
     await settle();
-    expect(nudges).toHaveLength(2); // o flush entregou depois do cooldown
+    expect(nudges).toHaveLength(2); // the flush delivered after the cooldown
   });
 
-  it("sessão viva com pane inseguro NÃO flapa online↔offline: quarentena até a guarda passar", async () => {
-    // O pane está num shell: o nudge aborta enquanto ele estiver inseguro.
+  it("a live session with an unsafe pane does NOT flap online↔offline: quarantine until the guard passes", async () => {
+    // The pane is in a shell: the nudge aborts while it stays unsafe.
     let paneSafeNow = false;
     const { tmux, alive, unsafePanes, nudges } = mockTmux({
       nudgeResult: () =>
-        paneSafeNow ? { sent: true } : { sent: false, reason: "pane em shell (bash)" },
+        paneSafeNow ? { sent: true } : { sent: false, reason: "pane in a shell (bash)" },
     });
     const dispatcher = makeDispatcher(tmux);
     store.registerAgent({ name: "alpha", role: "", tmuxSession: "sb-alpha", cwd: "" });
@@ -476,20 +476,20 @@ describe("polling de status (10.4)", () => {
         (e) => e.type === "agent_updated" && (e.payload as Agent).name === "alpha",
       );
 
-    // 1º poll: promoção normal (sem histórico de abort) → online.
+    // 1st poll: normal promotion (no abort history) → online.
     await dispatcher.pollOnce();
     expect(store.getAgent("alpha")!.status).toBe("online");
 
-    // Mensagem chega → decisão nudged → guarda aborta → offline + quarentena.
-    expect(deliver(dispatcher, "beta", "alpha", "oi")).toBe("nudged");
+    // Message arrives → nudged decision → guard aborts → offline + quarantine.
+    expect(deliver(dispatcher, "beta", "alpha", "hi")).toBe("nudged");
     await settle();
     expect(nudges).toHaveLength(1);
     expect(store.getAgent("alpha")!.status).toBe("offline");
     const eventsAfterAbort = updatesForAlpha().length;
 
-    // Polls seguintes (sessão viva, pane AINDA inseguro): status estável em
-    // offline, ZERO agent_updated novos, ZERO novas tentativas de nudge —
-    // mesmo com o cooldown expirado e flush rodando.
+    // Subsequent polls (live session, pane STILL unsafe): status stable at
+    // offline, ZERO new agent_updated, ZERO new nudge attempts —
+    // even with the cooldown expired and the flush running.
     nowMs += COOLDOWN;
     await dispatcher.pollOnce();
     await dispatcher.pollOnce();
@@ -499,8 +499,8 @@ describe("polling de status (10.4)", () => {
     expect(updatesForAlpha().length).toBe(eventsAfterAbort);
     expect(nudges).toHaveLength(1);
 
-    // Pane volta a ser seguro (claude reaberto): o poll promove online e a
-    // entrega sai IMEDIATAMENTE (o abort reverteu o cooldown).
+    // The pane becomes safe again (claude reopened): the poll promotes online
+    // and the delivery goes out IMMEDIATELY (the abort reverted the cooldown).
     paneSafeNow = true;
     unsafePanes.delete("sb-alpha");
     await dispatcher.pollOnce();
@@ -510,7 +510,7 @@ describe("polling de status (10.4)", () => {
     expect(events.filter((e) => e.type === "nudge_sent")).toHaveLength(1);
   });
 
-  it("agente que fica online SEM unread não é nudgado", async () => {
+  it("an agent that comes online WITHOUT unread is not nudged", async () => {
     const { tmux, alive, nudges } = mockTmux();
     const dispatcher = makeDispatcher(tmux);
     store.registerAgent({ name: "alpha", role: "", tmuxSession: "sb-alpha", cwd: "" });
@@ -523,23 +523,23 @@ describe("polling de status (10.4)", () => {
   });
 });
 
-describe("nudge manual (forceNudge — botão do dashboard, PRD 10.1)", () => {
-  it("ignora cooldown e mute, mas NUNCA a guarda de pane", async () => {
+describe("manual nudge (forceNudge — dashboard button, PRD 10.1)", () => {
+  it("ignores cooldown and mute, but NEVER the pane guard", async () => {
     const { tmux, nudges } = mockTmux();
     const dispatcher = makeDispatcher(tmux);
     registerOnline("alpha");
     store.registerAgent({ name: "beta", role: "", tmuxSession: "sb-beta", cwd: "" });
 
-    deliver(dispatcher, "beta", "alpha", "m1"); // cooldown ativo a partir daqui
+    deliver(dispatcher, "beta", "alpha", "m1"); // cooldown active from here
     await settle();
     expect(nudges).toHaveLength(1);
 
     store.updateAgent("alpha", { muted: true });
-    const forced = await dispatcher.forceNudge("alpha"); // mutado E em cooldown
+    const forced = await dispatcher.forceNudge("alpha"); // muted AND in cooldown
     expect(forced.sent).toBe(true);
     expect(nudges).toHaveLength(2);
 
-    // Guarda de pane continua valendo: abort → offline, sem sucesso.
+    // The pane guard still applies: abort → offline, no success.
     const guarded = mockTmux({ nudgeResult: () => ({ sent: false, reason: "shell" }) });
     const dispatcher2 = makeDispatcher(guarded.tmux);
     registerOnline("gamma");
@@ -548,15 +548,15 @@ describe("nudge manual (forceNudge — botão do dashboard, PRD 10.1)", () => {
     expect(store.getAgent("gamma")!.status).toBe("offline");
   });
 
-  it("agente desconhecido → {sent:false} com motivo", async () => {
+  it("unknown agent → {sent:false} with a reason", async () => {
     const { tmux } = mockTmux();
     const dispatcher = makeDispatcher(tmux);
     const result = await dispatcher.forceNudge("zeta");
     expect(result.sent).toBe(false);
-    expect(result.reason).toContain("desconhecido");
+    expect(result.reason).toContain("unknown");
   });
 
-  it("com 0 não lidas usa texto dedicado de cutucada manual (nunca '0 nova(s) ... de: .')", async () => {
+  it("with 0 unreads uses the dedicated manual-nudge text (never '0 new message(s) ... from: .')", async () => {
     const { tmux, nudges } = mockTmux();
     const dispatcher = makeDispatcher(tmux);
     registerOnline("alpha");
@@ -565,22 +565,22 @@ describe("nudge manual (forceNudge — botão do dashboard, PRD 10.1)", () => {
     expect(result.sent).toBe(true);
     expect(nudges).toHaveLength(1);
     expect(nudges[0].text).toBe(
-      "[switchboard] Cutucada manual do operator. Use a tool check_messages para verificar sua fila.",
+      "[switchboard] Manual nudge from operator. Use the check_messages tool to check your queue.",
     );
-    expect(nudges[0].text).not.toContain("0 nova(s)");
-    expect(nudges[0].text).not.toContain("de: .");
-    expect(nudges[0].text).not.toMatch(/[\r\n]/); // SEMPRE uma linha (P5)
+    expect(nudges[0].text).not.toContain("0 new message(s)");
+    expect(nudges[0].text).not.toContain("from: .");
+    expect(nudges[0].text).not.toMatch(/[\r\n]/); // ALWAYS a single line (P5)
   });
 });
 
-describe("ciclo de vida (start/stop sem handles pendurados)", () => {
-  it("start é idempotente e stop pode ser chamado repetidas vezes", async () => {
+describe("lifecycle (start/stop with no dangling handles)", () => {
+  it("start is idempotent and stop can be called repeatedly", async () => {
     const { tmux } = mockTmux();
     const dispatcher = makeDispatcher(tmux);
     dispatcher.start();
     dispatcher.start(); // no-op
     await settle();
     dispatcher.stop();
-    dispatcher.stop(); // no-op — se um handle vazasse, o vitest travaria aqui
+    dispatcher.stop(); // no-op — if a handle leaked, vitest would hang here
   });
 });

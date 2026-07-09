@@ -45,13 +45,13 @@ async function pollUntil<T>(
     const value = await fn();
     if (value) return value as NonNullable<T>;
     if (Date.now() > deadline) {
-      throw new Error(`Timeout (${timeoutMs}ms) esperando: ${what}`);
+      throw new Error(`Timeout (${timeoutMs}ms) waiting for: ${what}`);
     }
     await new Promise((r) => setTimeout(r, 100));
   }
 }
 
-describe.skipIf(!hasTmux)("dispatcher + tmux real (Done When da Phase 3)", () => {
+describe.skipIf(!hasTmux)("dispatcher + real tmux (Phase 3 Done When)", () => {
   let dir: string;
   let store: Store;
   let bus: EventBus;
@@ -117,10 +117,10 @@ describe.skipIf(!hasTmux)("dispatcher + tmux real (Done When da Phase 3)", () =>
   });
 
   beforeAll(async () => {
-    // Sweep de sessões ÓRFÃS de runs anteriores: se um run morreu por SIGKILL
-    // (afterEach/afterAll nunca rodaram), sobram sessões sb-t3-<pid>- que
-    // nenhum run futuro varreria (o PREFIX embute o pid). Aqui matamos apenas
-    // as de pids MORTOS — runs concorrentes (pids vivos) ficam intactos.
+    // Sweep of ORPHAN sessions from previous runs: if a run died by SIGKILL
+    // (afterEach/afterAll never ran), leftover sb-t3-<pid>- sessions remain
+    // that no future run would sweep (the PREFIX embeds the pid). Here we kill
+    // only those of DEAD pids — concurrent runs (live pids) stay intact.
     const pidAlive = (pid: number): boolean => {
       try {
         process.kill(pid, 0);
@@ -147,55 +147,55 @@ describe.skipIf(!hasTmux)("dispatcher + tmux real (Done When da Phase 3)", () =>
     }
   });
 
-  it("(a) sessão rodando cat recebe o nudge após a mensagem (texto visível no capture-pane)", async () => {
+  it("(a) a session running cat receives the nudge after the message (text visible in capture-pane)", async () => {
     const session = await newTestSession("a", "cat");
     register("alpha", session);
 
-    // Polling de status detecta a sessão viva e marca online.
+    // Status polling detects the live session and marks it online.
     await dispatcher.pollOnce();
     expect(store.getAgent("alpha")!.status).toBe("online");
 
-    const result = sendToAgent("alpha", "contrato pronto em /tmp/a.md");
+    const result = sendToAgent("alpha", "contract ready at /tmp/a.md");
     expect(result.delivery).toBe("nudged");
 
-    // nudge_sent é emitido DEPOIS do Enter separado — quando chega, o ciclo
-    // texto → delay(500ms) → Enter terminou por completo.
+    // nudge_sent is emitted AFTER the separate Enter — when it arrives, the
+    // text → delay(500ms) → Enter cycle has fully completed.
     await pollUntil(
       () => events.some((e) => e.type === "nudge_sent"),
-      "evento nudge_sent após o Enter separado",
+      "nudge_sent event after the separate Enter",
     );
 
-    // O nudge completo aparece no pane >= 2 vezes: o eco do tty (texto
-    // digitado, ANTES do Enter) + a saída do cat (SÓ existe se o Enter
-    // SUBMETEU a linha) — mesmo critério de PASS do spike 0.2
-    // (01-sendkeys-basic.sh: "linha submetida apareceu 2x no pane"). Uma
-    // única ocorrência provaria apenas a digitação, não a submissão (P1).
-    // Linhas do capture são re-unidas porque o pane de 80 colunas quebra a
-    // linha digitada.
+    // The full nudge appears in the pane >= 2 times: the tty echo (typed
+    // text, BEFORE the Enter) + the cat output (which ONLY exists if the
+    // Enter SUBMITTED the line) — same PASS criterion as spike 0.2
+    // (01-sendkeys-basic.sh: "submitted line appeared 2x in the pane"). A
+    // single occurrence would prove only the typing, not the submission (P1).
+    // Capture lines are re-joined because the 80-column pane wraps the typed
+    // line.
     const expectedText =
-      "[switchboard] 1 nova(s) mensagem(ns) de: operator. Use a tool check_messages para ler.";
+      "[switchboard] 1 new message(s) from: operator. Use the check_messages tool to read them.";
     await pollUntil(async () => {
       const pane = await tmux.capturePane(session, 200);
       const flat = pane.split("\n").join("");
       return flat.split(expectedText).length - 1 >= 2;
-    }, "texto do nudge visível 2x no capture-pane (eco + saída do cat pós-Enter)");
+    }, "nudge text visible 2x in capture-pane (echo + cat output post-Enter)");
 
-    // O corpo da mensagem NUNCA trafega via tmux.
+    // The message body NEVER travels via tmux.
     const pane = await tmux.capturePane(session, 200);
-    expect(pane).not.toContain("contrato pronto");
+    expect(pane).not.toContain("contract ready");
 
-    // Enter foi um send-keys SEPARADO (P1): 1 literal + 1 Enter.
+    // Enter was a SEPARATE send-keys (P1): 1 literal + 1 Enter.
     expect(literalSendKeysFor(session)).toHaveLength(1);
     expect(sendKeysCallsFor(session)).toHaveLength(2);
 
-    // lastNudgeAt registrado e SSE nudge_sent emitido (payload da spec).
+    // lastNudgeAt recorded and SSE nudge_sent emitted (spec payload).
     expect(store.getAgent("alpha")!.lastNudgeAt).not.toBeNull();
     const nudgeEvents = events.filter((e) => e.type === "nudge_sent");
     expect(nudgeEvents).toHaveLength(1);
     expect(nudgeEvents[0].payload).toMatchObject({ agent: "alpha", unread: 1 });
   }, 20_000);
 
-  it("(b) 3 mensagens em < 5s geram EXATAMENTE 1 send-keys de nudge (coalescing)", async () => {
+  it("(b) 3 messages in < 5s generate EXACTLY 1 nudge send-keys (coalescing)", async () => {
     const session = await newTestSession("b", "cat");
     register("beta", session);
     await dispatcher.pollOnce();
@@ -206,14 +206,14 @@ describe.skipIf(!hasTmux)("dispatcher + tmux real (Done When da Phase 3)", () =>
     const d3 = sendToAgent("beta", "m3").delivery;
     expect([d1, d2, d3]).toEqual(["nudged", "coalesced", "coalesced"]);
 
-    // Espera o único nudge completar (nudge_sent chega DEPOIS do Enter) …
+    // Wait for the single nudge to complete (nudge_sent arrives AFTER the Enter) …
     await pollUntil(
       () => events.filter((e) => e.type === "nudge_sent").length >= 1,
-      "nudge (texto + Enter + nudge_sent) completar",
+      "nudge (text + Enter + nudge_sent) to complete",
     );
-    // … e então prova que foi EXATAMENTE um: 1 send-keys literal, 1 Enter,
-    // 1 nudge_sent, e as outras duas mensagens ficaram pendentes (cooldown
-    // de 15s ativo, timers desligados — nada mais pode disparar).
+    // … and then prove it was EXACTLY one: 1 literal send-keys, 1 Enter,
+    // 1 nudge_sent, and the other two messages stayed pending (15s cooldown
+    // active, timers off — nothing else can fire).
     expect(literalSendKeysFor(session)).toHaveLength(1);
     expect(sendKeysCallsFor(session)).toHaveLength(2);
     expect(events.filter((e) => e.type === "nudge_sent")).toHaveLength(1);
@@ -221,42 +221,42 @@ describe.skipIf(!hasTmux)("dispatcher + tmux real (Done When da Phase 3)", () =>
     expect(store.unreadCount("beta")).toBe(3);
   }, 20_000);
 
-  it("(c) OBRIGATÓRIO: pane rodando bash NUNCA recebe send-keys; agente vira offline", async () => {
+  it("(c) MANDATORY: a pane running bash NEVER receives send-keys; the agent goes offline", async () => {
     const session = await newTestSession("c", "bash");
     register("gamma", session);
 
-    // A sessão EXISTE (has-session passa): polling marca online.
+    // The session EXISTS (has-session passes): polling marks it online.
     await dispatcher.pollOnce();
     expect(store.getAgent("gamma")!.status).toBe("online");
 
-    // A decisão (síncrona, otimista) reporta nudged — mas a guarda de pane
-    // no caminho assíncrono aborta ANTES de qualquer send-keys (P2).
-    const result = sendToAgent("gamma", "rm -rf / # se isto rodar, é RCE");
+    // The (synchronous, optimistic) decision reports nudged — but the pane
+    // guard on the async path aborts BEFORE any send-keys (P2).
+    const result = sendToAgent("gamma", "rm -rf / # if this runs, it's RCE");
     expect(result.delivery).toBe("nudged");
 
     await pollUntil(
       () => store.getAgent("gamma")!.status === "offline",
-      "guarda de pane abortar e marcar gamma offline",
+      "pane guard to abort and mark gamma offline",
     );
 
-    // NENHUM send-keys foi executado contra a sessão (nem texto, nem Enter).
+    // NO send-keys was executed against the session (neither text nor Enter).
     expect(sendKeysCallsFor(session)).toHaveLength(0);
 
-    // E o pane não tem NADA digitado (prompt limpo, sem [switchboard]).
+    // And the pane has NOTHING typed (clean prompt, no [switchboard]).
     const pane = await tmux.capturePane(session, 200);
     expect(pane).not.toContain("[switchboard]");
     expect(pane).not.toContain("rm -rf");
 
-    // Nenhum nudge_sent emitido; nudge manual (força) TAMBÉM respeita a guarda.
+    // No nudge_sent emitted; a manual (forced) nudge ALSO respects the guard.
     expect(events.filter((e) => e.type === "nudge_sent")).toHaveLength(0);
     const forced = await dispatcher.forceNudge("gamma");
     expect(forced.sent).toBe(false);
     expect(sendKeysCallsFor(session)).toHaveLength(0);
 
-    // Anti-flapping: a sessão continua VIVA (has-session passa), mas o pane
-    // segue num shell — polls subsequentes NÃO devolvem gamma para online
-    // (nada de oscilação online↔offline a cada ciclo, nem novas tentativas
-    // de nudge fadadas a abortar).
+    // Anti-flapping: the session stays ALIVE (has-session passes), but the pane
+    // stays in a shell — subsequent polls do NOT bring gamma back online
+    // (no online↔offline oscillation each cycle, nor new nudge attempts
+    // doomed to abort).
     const agentUpdatesBefore = events.filter((e) => e.type === "agent_updated").length;
     await dispatcher.pollOnce();
     await dispatcher.pollOnce();
@@ -265,19 +265,19 @@ describe.skipIf(!hasTmux)("dispatcher + tmux real (Done When da Phase 3)", () =>
     expect(sendKeysCallsFor(session)).toHaveLength(0);
   }, 20_000);
 
-  it("(d) agente com sessão inexistente → queued_offline e status offline", async () => {
-    const ghost = PREFIX + "ghost"; // nunca criada
+  it("(d) agent with a non-existent session → queued_offline and offline status", async () => {
+    const ghost = PREFIX + "ghost"; // never created
     register("delta", ghost);
 
-    await dispatcher.pollOnce(); // has-session falha → permanece offline
+    await dispatcher.pollOnce(); // has-session fails → stays offline
     expect(store.getAgent("delta")!.status).toBe("offline");
 
-    const result = sendToAgent("delta", "alguém aí?");
+    const result = sendToAgent("delta", "anyone there?");
     expect(result.delivery).toBe("queued_offline");
     expect(store.getAgent("delta")!.status).toBe("offline");
-    expect(store.unreadCount("delta")).toBe(1); // gravada, esperando check_messages
+    expect(store.unreadCount("delta")).toBe(1); // recorded, awaiting check_messages
 
-    // Nenhum send-keys em lugar nenhum.
+    // No send-keys anywhere.
     expect(execCalls.filter((args) => args[0] === "send-keys")).toHaveLength(0);
   }, 20_000);
 });

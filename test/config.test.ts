@@ -39,9 +39,9 @@ describe("loadConfig", () => {
   });
 
   it("returns defaults + warn on invalid JSON (never crash)", () => {
-    writeConfig("{isto não é JSON");
+    writeConfig("{this is not JSON");
     expect(loadConfig(dir)).toEqual(DEFAULTS);
-    expect(warnings().some((w) => w.includes("config.json inválido"))).toBe(true);
+    expect(warnings().some((w) => w.includes("invalid config.json"))).toBe(true);
   });
 
   it("returns defaults + warn when the JSON is not an object", () => {
@@ -49,7 +49,7 @@ describe("loadConfig", () => {
       warnSpy.mockClear();
       writeConfig(bad);
       expect(loadConfig(dir)).toEqual(DEFAULTS);
-      expect(warnings().some((w) => w.includes("não é um objeto"))).toBe(true);
+      expect(warnings().some((w) => w.includes("is not a JSON object"))).toBe(true);
     }
   });
 
@@ -78,7 +78,7 @@ describe("loadConfig", () => {
     const config = loadConfig(dir);
     expect(config.port).toBe(DEFAULTS.port);
     expect(config.tmuxSessionPrefix).toBe(DEFAULTS.tmuxSessionPrefix);
-    expect(warnings().filter((w) => w.includes("valor inválido"))).toHaveLength(2);
+    expect(warnings().filter((w) => w.includes("invalid value"))).toHaveLength(2);
   });
 
   it("keeps the default + warns on logLevel outside the enum", () => {
@@ -104,7 +104,7 @@ describe("loadConfig", () => {
     );
     const config = loadConfig(dir);
     expect(config).toEqual(DEFAULTS);
-    expect(warnings().filter((w) => w.includes("valor inválido"))).toHaveLength(5);
+    expect(warnings().filter((w) => w.includes("invalid value"))).toHaveLength(5);
 
     warnSpy.mockClear();
     writeConfig(JSON.stringify({ port: 70000 }));

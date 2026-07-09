@@ -36,7 +36,7 @@ function api(pathname: string): string {
   return `http://127.0.0.1:${hub.port}${pathname}`;
 }
 
-async function registerAgent(name: string, role = `role de ${name}`): Promise<string> {
+async function registerAgent(name: string, role = `role of ${name}`): Promise<string> {
   const res = await fetch(api("/api/agents/register"), {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -78,7 +78,7 @@ async function callTool(
     content: Array<{ type: string; text: string }>;
   };
   const text = result.content.find((c) => c.type === "text");
-  expect(text, `tool ${name} deveria devolver content[type=text]`).toBeDefined();
+  expect(text, `tool ${name} should return content[type=text]`).toBeDefined();
   return JSON.parse(text!.text);
 }
 
@@ -105,7 +105,7 @@ async function pollUntil<T>(
     const value = await fn();
     if (value) return value as NonNullable<T>;
     if (Date.now() > deadline) {
-      throw new Error(`Timeout (${timeoutMs}ms) esperando: ${what}`);
+      throw new Error(`Timeout (${timeoutMs}ms) waiting for: ${what}`);
     }
     await new Promise((r) => setTimeout(r, 25));
   }
@@ -189,8 +189,8 @@ afterEach(async () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-describe("fluxo alpha → beta via MCP", () => {
-  it("join, send_message, SSE message_created, check_messages, JSONL e unread", async () => {
+describe("alpha → beta flow via MCP", () => {
+  it("join, send_message, SSE message_created, check_messages, JSONL and unread", async () => {
     await registerAgent("alpha");
     await registerAgent("beta");
 
@@ -215,23 +215,23 @@ describe("fluxo alpha → beta via MCP", () => {
       async () => {
         const sent = await callTool(alpha, "send_message", {
           to: "beta",
-          message: "contrato pronto em /tmp/a.md",
+          message: "contract ready at /tmp/a.md",
         });
         expect(sent.ok).toBe(true);
-        // Delivery vem do stub injetado (sem dispatcher/tmux neste arquivo).
+        // Delivery comes from the injected stub (no dispatcher/tmux in this file).
         expect(sent.delivery).toBe("queued_offline");
       },
     );
     expect(sse).toContain("message_created");
-    expect(sse).toContain("contrato pronto em /tmp/a.md");
+    expect(sse).toContain("contract ready at /tmp/a.md");
 
     // Message persisted in the temp-dir JSONL.
     const stored = await pollUntil(
       () =>
         jsonlLines().find(
-          (l: any) => l.from === "alpha" && l.to === "beta" && l.body?.includes("contrato"),
+          (l: any) => l.from === "alpha" && l.to === "beta" && l.body?.includes("contract"),
         ),
-      "mensagem alpha→beta no messages.jsonl",
+      "message alpha→beta in messages.jsonl",
     );
     expect((stored as Message).readAt).toBeNull();
 
@@ -240,7 +240,7 @@ describe("fluxo alpha → beta via MCP", () => {
     expect(checked.ok).toBe(true);
     expect(checked.messages).toHaveLength(1);
     expect(checked.messages[0].from).toBe("alpha");
-    expect(checked.messages[0].body).toBe("contrato pronto em /tmp/a.md");
+    expect(checked.messages[0].body).toBe("contract ready at /tmp/a.md");
     expect(typeof checked.messages[0].created_at).toBe("string");
     expect(checked.agents_online).toContain("alpha");
     expect(checked.agents_online).toContain("beta");
@@ -251,7 +251,7 @@ describe("fluxo alpha → beta via MCP", () => {
         jsonlLines().find(
           (l: any) => l.type === "read" && l.messageId === (stored as Message).id,
         ),
-      "evento read no messages.jsonl",
+      "read event in messages.jsonl",
     );
 
     // Unread zeroed on both REST and MCP views.
@@ -264,7 +264,7 @@ describe("fluxo alpha → beta via MCP", () => {
     expect(listed.ok).toBe(true);
     const betaListed = listed.agents.find((a: any) => a.name === "beta");
     expect(betaListed).toMatchObject({
-      role: "role de beta",
+      role: "role of beta",
       status: "online",
       mcp_connected: true,
       unread_count: 0,
@@ -277,7 +277,7 @@ describe("fluxo alpha → beta via MCP", () => {
 });
 
 describe("broadcast", () => {
-  it('to "all" expande em N registros com o mesmo broadcastId, excluindo o remetente', async () => {
+  it('to "all" expands into N records with the same broadcastId, excluding the sender', async () => {
     await registerAgent("alpha");
     await registerAgent("beta");
     await registerAgent("gamma");
@@ -285,11 +285,11 @@ describe("broadcast", () => {
 
     const sent = await callTool(alpha, "send_message", {
       to: "all",
-      message: "aviso geral",
+      message: "general notice",
     });
     expect(sent.ok).toBe(true);
 
-    const records = jsonlLines().filter((l: any) => l.body === "aviso geral") as Message[];
+    const records = jsonlLines().filter((l: any) => l.body === "general notice") as Message[];
     expect(records).toHaveLength(2); // beta + gamma, alpha excluded
     expect(records.map((m) => m.to).sort()).toEqual(["beta", "gamma"]);
     expect(records[0].broadcastId).not.toBeNull();
@@ -302,17 +302,17 @@ describe("broadcast", () => {
     expect(messages[0].broadcastId).toBe(records[0].broadcastId);
   }, 15_000);
 
-  it("broadcast sem outros agentes registrados retorna erro instrutivo", async () => {
+  it("broadcast with no other registered agents returns an instructive error", async () => {
     await registerAgent("alpha");
     const alpha = await joinAs("alpha");
-    const sent = await callTool(alpha, "send_message", { to: "all", message: "eco?" });
+    const sent = await callTool(alpha, "send_message", { to: "all", message: "echo?" });
     expect(sent.ok).toBe(false);
-    expect(sent.error).toContain("Broadcast sem destinatários");
+    expect(sent.error).toContain("Broadcast has no recipients");
   }, 15_000);
 });
 
-describe("anti-loop e limites (PRD seção 14)", () => {
-  it(`rate limit por PAR ORDENADO dispara no ${RATE_LIMIT + 1}º envio com a mensagem da spec`, async () => {
+describe("anti-loop and limits (PRD section 14)", () => {
+  it(`rate limit per ORDERED PAIR fires on the ${RATE_LIMIT + 1}th send with the spec message`, async () => {
     await registerAgent("alpha");
     await registerAgent("beta");
     await registerAgent("gamma");
@@ -327,12 +327,12 @@ describe("anti-loop e limites (PRD seção 14)", () => {
     }
     const blocked = await callTool(alpha, "send_message", {
       to: "gamma",
-      message: "uma a mais",
+      message: "one more",
     });
     expect(blocked.ok).toBe(false);
     expect(blocked.error).toBe(
-      `Rate limit para este destinatário atingido (${RATE_LIMIT}/min). ` +
-        `Se isto é uma conversa em loop, pare e reavalie se a troca está progredindo.`,
+      `Rate limit for this recipient reached (${RATE_LIMIT}/min). ` +
+        `If this is a conversation loop, stop and reassess whether the exchange is making progress.`,
     );
 
     // Ordered pair: alpha→gamma is exhausted, alpha→beta is NOT.
@@ -340,7 +340,7 @@ describe("anti-loop e limites (PRD seção 14)", () => {
     expect(other.ok).toBe(true);
   }, 15_000);
 
-  it("maxMessageBytes rejeita payload grande com a dica de arquivo + path", async () => {
+  it("maxMessageBytes rejects a large payload with the file + path hint", async () => {
     await registerAgent("alpha");
     await registerAgent("beta");
     const alpha = await joinAs("alpha");
@@ -348,49 +348,49 @@ describe("anti-loop e limites (PRD seção 14)", () => {
     const big = "x".repeat(hub.config.maxMessageBytes + 1);
     const sent = await callTool(alpha, "send_message", { to: "beta", message: big });
     expect(sent.ok).toBe(false);
-    expect(sent.error).toContain("Mensagem grande demais");
-    expect(sent.error).toContain("arquivo");
-    expect(sent.error).toContain("path absoluto");
+    expect(sent.error).toContain("Message too large");
+    expect(sent.error).toContain("file");
+    expect(sent.error).toContain("absolute path");
 
     // Nothing was stored.
     expect(jsonlLines()).toHaveLength(0);
   }, 15_000);
 
-  it("mensagem vazia retorna ok:false SEM queimar budget do rate limit nem gravar nada", async () => {
+  it("an empty message returns ok:false WITHOUT burning rate-limit budget or storing anything", async () => {
     await registerAgent("alpha");
     await registerAgent("beta");
     const alpha = await joinAs("alpha");
 
     const empty = await callTool(alpha, "send_message", { to: "beta", message: "" });
-    expect(empty.ok).toBe(false); // envelope padrão, nunca tool error cru
-    expect(empty.error).toContain("vazia");
+    expect(empty.ok).toBe(false); // standard envelope, never a raw tool error
+    expect(empty.error).toContain("Empty message");
     expect(jsonlLines()).toHaveLength(0);
 
-    // O budget do par está intacto: os RATE_LIMIT envios válidos ainda passam.
+    // The pair's budget is intact: the RATE_LIMIT valid sends still pass.
     for (let i = 0; i < RATE_LIMIT; i++) {
       const sent = await callTool(alpha, "send_message", { to: "beta", message: `m${i}` });
-      expect(sent.ok, `envio válido ${i + 1} após tentativa vazia`).toBe(true);
+      expect(sent.ok, `valid send ${i + 1} after the empty attempt`).toBe(true);
     }
   }, 15_000);
 
-  it("payload entre maxMessageBytes e o limite do parser recebe o erro instrutivo, não 500", async () => {
+  it("a payload between maxMessageBytes and the parser limit gets the instructive error, not 500", async () => {
     await registerAgent("alpha");
     await registerAgent("beta");
     const alpha = await joinAs("alpha");
 
-    // 150 KB: acima do default de 100kb do express.json (que sem o limit
-    // configurado viraria um 500 opaco), abaixo do limite do parser do hub.
+    // 150 KB: above express.json's 100kb default (which without the configured
+    // limit would become an opaque 500), below the hub parser's limit.
     const big = "x".repeat(150_000);
     const sent = await callTool(alpha, "send_message", { to: "beta", message: big });
     expect(sent.ok).toBe(false);
-    expect(sent.error).toContain("Mensagem grande demais");
-    expect(sent.error).toContain("path absoluto");
+    expect(sent.error).toContain("Message too large");
+    expect(sent.error).toContain("absolute path");
     expect(jsonlLines()).toHaveLength(0);
   }, 15_000);
 
-  it("payload acima do limite do parser responde 413 em JSON no /api e JSON-RPC no /mcp", async () => {
+  it("a payload above the parser limit responds 413 as JSON on /api and JSON-RPC on /mcp", async () => {
     await registerAgent("alpha");
-    const huge = "x".repeat(2_000_000); // > 1 MB do parser
+    const huge = "x".repeat(2_000_000); // > the parser's 1 MB
 
     const apiRes = await fetch(api("/api/messages"), {
       method: "POST",
@@ -400,8 +400,8 @@ describe("anti-loop e limites (PRD seção 14)", () => {
     expect(apiRes.status).toBe(413);
     const apiBody = (await apiRes.json()) as any;
     expect(apiBody.ok).toBe(false);
-    expect(apiBody.error).toContain("arquivo");
-    expect(apiBody.error).toContain("path absoluto");
+    expect(apiBody.error).toContain("file");
+    expect(apiBody.error).toContain("absolute path");
 
     const mcpRes = await fetch(api("/mcp"), {
       method: "POST",
@@ -418,29 +418,29 @@ describe("anti-loop e limites (PRD seção 14)", () => {
     });
     expect(mcpRes.status).toBe(413);
     const mcpBody = (await mcpRes.json()) as any;
-    expect(mcpBody.jsonrpc).toBe("2.0"); // envelope JSON-RPC, nunca {ok:false} no /mcp
+    expect(mcpBody.jsonrpc).toBe("2.0"); // JSON-RPC envelope, never {ok:false} on /mcp
     expect(mcpBody.error.code).toBe(-32600);
-    expect(mcpBody.error.message).toContain("path absoluto");
+    expect(mcpBody.error.message).toContain("absolute path");
     expect(jsonlLines()).toHaveLength(0);
   }, 15_000);
 
-  it("destinatário inexistente e self-send retornam erro orientando o modelo", async () => {
+  it("a nonexistent recipient and self-send return an error guiding the model", async () => {
     await registerAgent("alpha");
     const alpha = await joinAs("alpha");
 
-    const unknown = await callTool(alpha, "send_message", { to: "zeta", message: "oi" });
+    const unknown = await callTool(alpha, "send_message", { to: "zeta", message: "hi" });
     expect(unknown.ok).toBe(false);
-    expect(unknown.error).toContain('Destinatário desconhecido: "zeta"');
+    expect(unknown.error).toContain('Unknown recipient: "zeta"');
     expect(unknown.error).toContain("list_agents");
 
-    const self = await callTool(alpha, "send_message", { to: "alpha", message: "eu" });
+    const self = await callTool(alpha, "send_message", { to: "alpha", message: "me" });
     expect(self.ok).toBe(false);
-    expect(self.error).toContain("si mesmo");
+    expect(self.error).toContain("yourself");
   }, 15_000);
 });
 
-describe('nomes reservados "operator" e "all" (PRD seção 8: namespaces disjuntos)', () => {
-  it("register REST responde 400 e join MCP responde ok:false para ambos", async () => {
+describe('reserved names "operator" and "all" (PRD section 8: disjoint namespaces)', () => {
+  it("register REST responds 400 and join MCP responds ok:false for both", async () => {
     for (const reserved of ["operator", "all"]) {
       const res = await fetch(api("/api/agents/register"), {
         method: "POST",
@@ -450,32 +450,32 @@ describe('nomes reservados "operator" e "all" (PRD seção 8: namespaces disjunt
       expect(res.status, `register "${reserved}"`).toBe(400);
       const body = (await res.json()) as any;
       expect(body.ok).toBe(false);
-      expect(body.error).toContain("reservado");
+      expect(body.error).toContain("Reserved");
     }
 
     const client = await mcpClient();
     for (const reserved of ["operator", "all"]) {
       const joined = await callTool(client, "join", { agent_name: reserved });
       expect(joined.ok, `join "${reserved}"`).toBe(false);
-      expect(joined.error).toContain("reservado");
+      expect(joined.error).toContain("Reserved");
     }
 
-    // Nada foi registrado: impersonação do humano e colisão com o broadcast
-    // ficam impossíveis por colisão de nome.
+    // Nothing was registered: impersonating the human and colliding with the
+    // broadcast become impossible via name collision.
     const agents = (await (await fetch(api("/api/agents"))).json()) as any[];
     expect(agents).toHaveLength(0);
   }, 15_000);
 });
 
-describe("REST como operator", () => {
-  it("POST /api/messages fixa from=operator e o agente recebe via check_messages", async () => {
+describe("REST as operator", () => {
+  it("POST /api/messages pins from=operator and the agent receives it via check_messages", async () => {
     await registerAgent("alpha");
     const alpha = await joinAs("alpha");
 
     const res = await fetch(api("/api/messages"), {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ to: "alpha", body: "olá do humano" }),
+      body: JSON.stringify({ to: "alpha", body: "hello from the human" }),
     });
     expect(res.status).toBe(201);
     const body = (await res.json()) as any;
@@ -486,10 +486,10 @@ describe("REST como operator", () => {
     const checked = await callTool(alpha, "check_messages");
     expect(checked.messages).toHaveLength(1);
     expect(checked.messages[0].from).toBe("operator");
-    expect(checked.messages[0].body).toBe("olá do humano");
+    expect(checked.messages[0].body).toBe("hello from the human");
   }, 15_000);
 
-  it("POST /api/messages: 404 só para destinatário desconhecido; validação é 400", async () => {
+  it("POST /api/messages: 404 only for an unknown recipient; validation is 400", async () => {
     const post = (payload: unknown) =>
       fetch(api("/api/messages"), {
         method: "POST",
@@ -497,46 +497,46 @@ describe("REST como operator", () => {
         body: JSON.stringify(payload),
       });
 
-    // broadcast sem destinatários: estado inválido, não rota inexistente → 400
+    // broadcast with no recipients: invalid state, not a missing route → 400
     const broadcast = await post({ to: "all", body: "x" });
     expect(broadcast.status).toBe(400);
-    expect(((await broadcast.json()) as any).error).toContain("Broadcast sem destinatários");
+    expect(((await broadcast.json()) as any).error).toContain("Broadcast has no recipients");
 
-    // self-send (operator → operator): validação → 400
+    // self-send (operator → operator): validation → 400
     const self = await post({ to: "operator", body: "x" });
     expect(self.status).toBe(400);
-    expect(((await self.json()) as any).error).toContain("si mesmo");
+    expect(((await self.json()) as any).error).toContain("yourself");
 
-    // destinatário desconhecido: not-found real → 404
+    // unknown recipient: real not-found → 404
     const unknown = await post({ to: "zeta", body: "x" });
     expect(unknown.status).toBe(404);
-    expect(((await unknown.json()) as any).error).toContain("Destinatário desconhecido");
+    expect(((await unknown.json()) as any).error).toContain("Unknown recipient");
   }, 15_000);
 
-  it("GET /api/messages: mais recentes primeiro, filtro ?agent (from OU to) e truncamento ?limit", async () => {
+  it("GET /api/messages: most recent first, ?agent filter (from OR to) and ?limit truncation", async () => {
     await registerAgent("alpha");
     await registerAgent("beta");
     await registerAgent("gamma");
     const alpha = await joinAs("alpha");
     const beta = await joinAs("beta");
 
-    expect((await callTool(alpha, "send_message", { to: "beta", message: "primeira" })).ok).toBe(true);
-    expect((await callTool(beta, "send_message", { to: "alpha", message: "segunda" })).ok).toBe(true);
-    expect((await callTool(alpha, "send_message", { to: "gamma", message: "terceira" })).ok).toBe(true);
+    expect((await callTool(alpha, "send_message", { to: "beta", message: "first" })).ok).toBe(true);
+    expect((await callTool(beta, "send_message", { to: "alpha", message: "second" })).ok).toBe(true);
+    expect((await callTool(alpha, "send_message", { to: "gamma", message: "third" })).ok).toBe(true);
 
-    // ordem inversa de criação, comparada por corpo (não por broadcastId)
+    // reverse creation order, compared by body (not by broadcastId)
     const all = (await (await fetch(api("/api/messages"))).json()) as Message[];
-    expect(all.map((m) => m.body)).toEqual(["terceira", "segunda", "primeira"]);
+    expect(all.map((m) => m.body)).toEqual(["third", "second", "first"]);
 
-    // limit trunca de verdade, mantendo as mais recentes
+    // limit really truncates, keeping the most recent
     const limited = (await (await fetch(api("/api/messages?limit=2"))).json()) as Message[];
-    expect(limited.map((m) => m.body)).toEqual(["terceira", "segunda"]);
+    expect(limited.map((m) => m.body)).toEqual(["third", "second"]);
 
-    // ?agent casa remetente OU destinatário
+    // ?agent matches sender OR recipient
     const betaSide = (await (await fetch(api("/api/messages?agent=beta"))).json()) as Message[];
-    expect(betaSide.map((m) => m.body)).toEqual(["segunda", "primeira"]);
+    expect(betaSide.map((m) => m.body)).toEqual(["second", "first"]);
 
-    // limit inválido → 400 {ok:false}
+    // invalid limit → 400 {ok:false}
     for (const bad of ["abc", "0", "-1", "1.5"]) {
       const res = await fetch(api(`/api/messages?limit=${bad}`));
       expect(res.status, `limit=${bad}`).toBe(400);
@@ -544,7 +544,7 @@ describe("REST como operator", () => {
     }
   }, 15_000);
 
-  it("mute via REST reflete no delivery queued_muted", async () => {
+  it("mute via REST reflects in the queued_muted delivery", async () => {
     await registerAgent("alpha");
     await registerAgent("beta");
     const alpha = await joinAs("alpha");
@@ -557,25 +557,25 @@ describe("REST como operator", () => {
     expect(muteRes.status).toBe(200);
     expect(((await muteRes.json()) as any).agent.muted).toBe(true);
 
-    const sent = await callTool(alpha, "send_message", { to: "beta", message: "psiu" });
+    const sent = await callTool(alpha, "send_message", { to: "beta", message: "psst" });
     expect(sent.ok).toBe(true);
     expect(sent.delivery).toBe("queued_muted");
   }, 15_000);
 });
 
-describe("eventos SSE além do message_created (PRD 10.1)", () => {
-  it("check_messages emite message_read e mute emite agent_updated no stream", async () => {
+describe("SSE events beyond message_created (PRD 10.1)", () => {
+  it("check_messages emits message_read and mute emits agent_updated on the stream", async () => {
     await registerAgent("alpha");
     await registerAgent("beta");
     const alpha = await joinAs("alpha");
     const beta = await joinAs("beta");
 
-    const sent = await callTool(alpha, "send_message", { to: "beta", message: "leia-me" });
+    const sent = await callTool(alpha, "send_message", { to: "beta", message: "read me" });
     expect(sent.ok).toBe(true);
-    const stored = jsonlLines().find((l: any) => l.body === "leia-me") as Message;
+    const stored = jsonlLines().find((l: any) => l.body === "read me") as Message;
     expect(stored).toBeDefined();
 
-    // message_read no stream, com o messageId correto.
+    // message_read on the stream, with the correct messageId.
     const readSse = await collectSse(
       (text) => text.includes("message_read"),
       async () => {
@@ -587,7 +587,7 @@ describe("eventos SSE além do message_created (PRD 10.1)", () => {
     expect(readSse).toContain("message_read");
     expect(readSse).toContain(stored.id);
 
-    // agent_updated no stream, com muted:true no payload.
+    // agent_updated on the stream, with muted:true in the payload.
     const muteSse = await collectSse(
       (text) => text.includes("agent_updated") && text.includes('"muted":true'),
       async () => {
@@ -605,8 +605,8 @@ describe("eventos SSE além do message_created (PRD 10.1)", () => {
   }, 15_000);
 });
 
-describe("sessões MCP (achado P6)", () => {
-  it("sessão sem join: check_messages e send_message pedem join; list_agents funciona", async () => {
+describe("MCP sessions (finding P6)", () => {
+  it("session without join: check_messages and send_message require join; list_agents works", async () => {
     await registerAgent("alpha");
     const stranger = await mcpClient(); // connects but never joins
 
@@ -626,15 +626,15 @@ describe("sessões MCP (achado P6)", () => {
     expect(listed.agents[0].name).toBe("alpha");
   }, 15_000);
 
-  it("re-join da MESMA sessão com outro nome libera o nome anterior (sem agente fantasma)", async () => {
+  it("re-join of the SAME session with another name frees the previous name (no ghost agent)", async () => {
     await registerAgent("alpha");
     await registerAgent("gamma");
-    const client = await joinAs("alpha"); // ex.: o modelo alucinou o nome…
+    const client = await joinAs("alpha"); // e.g. the model hallucinated the name…
 
     let agents = (await (await fetch(api("/api/agents"))).json()) as any[];
     expect(agents.find((a) => a.name === "alpha").mcpConnected).toBe(true);
 
-    // …percebeu e corrigiu com um segundo join na mesma sessão MCP.
+    // …noticed and corrected with a second join on the same MCP session.
     const rejoined = await callTool(client, "join", {
       agent_name: "gamma",
       token: tokens.get("gamma"),
@@ -643,17 +643,17 @@ describe("sessões MCP (achado P6)", () => {
 
     agents = (await (await fetch(api("/api/agents"))).json()) as any[];
     expect(agents.find((a) => a.name === "gamma").mcpConnected).toBe(true);
-    // O nome antigo NÃO fica conectado para sempre.
+    // The old name does NOT stay connected forever.
     expect(agents.find((a) => a.name === "alpha").mcpConnected).toBe(false);
 
-    // E o mapeamento novo funciona: gamma consegue operar.
+    // And the new mapping works: gamma can operate.
     const checked = await callTool(client, "check_messages");
     expect(checked.ok).toBe(true);
   }, 15_000);
 
-  it("boot reconcilia estado fantasma: mcpConnected/online de um crash viram false/offline", async () => {
-    // agents.json exatamente como um kill -9 deixa: conectado e online
-    // (só o close() gracioso reseta via dropSession).
+  it("boot reconciles ghost state: mcpConnected/online from a crash become false/offline", async () => {
+    // agents.json exactly as a kill -9 leaves it: connected and online
+    // (only a graceful close() resets it via dropSession).
     const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), "switchboard-int-boot-"));
     const now = new Date().toISOString();
     fs.writeFileSync(
@@ -676,8 +676,8 @@ describe("sessões MCP (achado P6)", () => {
 
     const hub2 = await startHub({ baseDir: dir2, port: 0, quiet: true });
     try {
-      // Nenhuma sessão MCP sobrevive a um restart do hub (Map em memória):
-      // o boot precisa derrubar o estado fantasma imediatamente.
+      // No MCP session survives a hub restart (in-memory Map): the boot must
+      // tear down the ghost state immediately.
       const agents = (await (
         await fetch(`http://127.0.0.1:${hub2.port}/api/agents`)
       ).json()) as any[];
@@ -686,8 +686,8 @@ describe("sessões MCP (achado P6)", () => {
       expect(agents[0].mcpConnected).toBe(false);
       expect(agents[0].status).toBe("offline");
 
-      // De carona: PRD seção 7 — o primeiro serve cria config.json com defaults
-      // (este dir2 não recebeu o config.json que o beforeEach injeta).
+      // Along the way: PRD section 7 — the first serve creates config.json with
+      // defaults (this dir2 did not receive the config.json the beforeEach injects).
       expect(fs.existsSync(path.join(dir2, "config.json"))).toBe(true);
     } finally {
       await hub2.close();
@@ -695,7 +695,7 @@ describe("sessões MCP (achado P6)", () => {
     }
   }, 15_000);
 
-  it("sessão órfã expira por inatividade e o agente perde mcpConnected", async () => {
+  it("an orphan session expires from inactivity and the agent loses mcpConnected", async () => {
     // Dedicated hub with an aggressive sweep (injectable — NOTES.md finding 4).
     const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), "switchboard-int-sweep-"));
     const hub2 = await startHub({
@@ -731,7 +731,7 @@ describe("sessões MCP (achado P6)", () => {
           ).json()) as any[];
           return agents[0].mcpConnected === false;
         },
-        "agente alpha perder mcpConnected após expiração da sessão",
+        "agent alpha to lose mcpConnected after the session expires",
       );
       await client.close().catch(() => {});
     } finally {
@@ -741,20 +741,20 @@ describe("sessões MCP (achado P6)", () => {
   }, 15_000);
 });
 
-describe("capability token (adendo v1.1)", () => {
-  it("join sem token ou com token errado falha com erro instrutivo; com o token correto entra", async () => {
+describe("capability token (addendum v1.1)", () => {
+  it("join without a token or with the wrong token fails with an instructive error; with the correct token it enters", async () => {
     await registerAgent("alpha");
     const client = await mcpClient();
 
-    // Sem token: recusado, com instrução de printenv SWITCHBOARD_AGENT_TOKEN.
+    // No token: refused, with a printenv SWITCHBOARD_AGENT_TOKEN instruction.
     const missing = await callTool(client, "join", { agent_name: "alpha" });
     expect(missing.ok).toBe(false);
     expect(missing.error).toContain("printenv SWITCHBOARD_AGENT_TOKEN");
     expect(missing.error).toContain("token");
-    // O erro instrutivo jamais ecoa o token esperado.
+    // The instructive error never echoes the expected token.
     expect(missing.error).not.toContain(tokens.get("alpha")!);
 
-    // Token errado (formato válido, valor errado): recusado igualmente.
+    // Wrong token (valid format, wrong value): refused all the same.
     const wrong = await callTool(client, "join", {
       agent_name: "alpha",
       token: "deadbeef".repeat(8),
@@ -762,11 +762,11 @@ describe("capability token (adendo v1.1)", () => {
     expect(wrong.ok).toBe(false);
     expect(wrong.error).toContain("printenv SWITCHBOARD_AGENT_TOKEN");
 
-    // Os joins recusados não tocaram estado: o agente segue desconectado.
+    // The refused joins did not touch state: the agent stays disconnected.
     let agents = (await (await fetch(api("/api/agents"))).json()) as any[];
     expect(agents[0].mcpConnected).toBe(false);
 
-    // Token correto: entra, e o join normal NÃO ecoa o token de volta.
+    // Correct token: enters, and the normal join does NOT echo the token back.
     const ok = await callTool(client, "join", {
       agent_name: "alpha",
       token: tokens.get("alpha"),
@@ -778,20 +778,20 @@ describe("capability token (adendo v1.1)", () => {
     expect(agents[0].mcpConnected).toBe(true);
   }, 15_000);
 
-  it("join on-the-fly retorna o token novo e uma SEGUNDA sessão só entra apresentando-o", async () => {
-    // Primeira sessão a reivindicar o nome vira dona dele (PRD 9.1 v1.1).
+  it("on-the-fly join returns the new token and a SECOND session only enters by presenting it", async () => {
+    // The first session to claim the name becomes its owner (PRD 9.1 v1.1).
     const first = await mcpClient();
     const claimed = await callTool(first, "join", { agent_name: "nomad" });
     expect(claimed.ok).toBe(true);
     expect(claimed.token).toMatch(TOKEN_RE);
 
-    // Segunda sessão sem o token: recusada com o erro instrutivo.
+    // Second session without the token: refused with the instructive error.
     const second = await mcpClient();
     const denied = await callTool(second, "join", { agent_name: "nomad" });
     expect(denied.ok).toBe(false);
     expect(denied.error).toContain("printenv SWITCHBOARD_AGENT_TOKEN");
 
-    // Com o token emitido no claim: aceita (e não reemite o token).
+    // With the token issued at claim time: accepted (and it does not re-issue the token).
     const accepted = await callTool(second, "join", {
       agent_name: "nomad",
       token: claimed.token,
@@ -800,7 +800,7 @@ describe("capability token (adendo v1.1)", () => {
     expect(accepted).not.toHaveProperty("token");
   }, 15_000);
 
-  it("re-registro REGENERA o token: o antigo é invalidado, o novo funciona", async () => {
+  it("re-registration REGENERATES the token: the old one is invalidated, the new one works", async () => {
     const oldToken = await registerAgent("alpha");
     const newToken = await registerAgent("alpha"); // re-attach (P7)
     expect(newToken).toMatch(TOKEN_RE);
@@ -816,19 +816,19 @@ describe("capability token (adendo v1.1)", () => {
     expect(ok.ok).toBe(true);
   }, 15_000);
 
-  it("GET /api/agents, list_agents, join e eventos SSE NUNCA contêm o campo token", async () => {
+  it("GET /api/agents, list_agents, join and SSE events NEVER contain the token field", async () => {
     const alphaToken = await registerAgent("alpha");
     const betaToken = await registerAgent("beta");
     const alpha = await joinAs("alpha");
 
-    // REST: nenhum agente listado carrega token.
+    // REST: no listed agent carries a token.
     const agents = (await (await fetch(api("/api/agents"))).json()) as any[];
     expect(agents).toHaveLength(2);
     for (const agent of agents) {
       expect(agent, `GET /api/agents (${agent.name})`).not.toHaveProperty("token");
     }
 
-    // MCP: list_agents e a lista devolvida pelo join também são redigidas.
+    // MCP: list_agents and the list returned by join are redacted too.
     const listed = await callTool(alpha, "list_agents");
     for (const agent of listed.agents) {
       expect(agent, `list_agents (${agent.name})`).not.toHaveProperty("token");
@@ -841,7 +841,7 @@ describe("capability token (adendo v1.1)", () => {
       expect(agent, `join.agents (${agent.name})`).not.toHaveProperty("token");
     }
 
-    // SSE: o mute dispara agent_updated — payload redigido, sem token.
+    // SSE: the mute triggers agent_updated — redacted payload, no token.
     const sse = await collectSse(
       (text) => text.includes("agent_updated") && text.includes('"muted":true'),
       async () => {
@@ -851,7 +851,7 @@ describe("capability token (adendo v1.1)", () => {
           body: JSON.stringify({ muted: true }),
         });
         expect(res.status).toBe(200);
-        // A resposta do mute também é redigida.
+        // The mute response is redacted too.
         expect(((await res.json()) as any).agent).not.toHaveProperty("token");
       },
     );
@@ -861,10 +861,10 @@ describe("capability token (adendo v1.1)", () => {
     expect(sse).not.toContain(betaToken);
   }, 15_000);
 
-  it("nenhuma linha de log do hub contém o token", async () => {
+  it("no hub log line contains the token", async () => {
     const token = await registerAgent("alpha");
     await joinAs("alpha");
-    // Um join recusado também loga (warn) — e não pode vazar o token esperado.
+    // A refused join also logs (warn) — and must not leak the expected token.
     const stranger = await mcpClient();
     const denied = await callTool(stranger, "join", {
       agent_name: "alpha",
@@ -872,15 +872,15 @@ describe("capability token (adendo v1.1)", () => {
     });
     expect(denied.ok).toBe(false);
 
-    // O logger escreve síncrono (appendFileSync); o arquivo já está completo.
+    // The logger writes synchronously (appendFileSync); the file is already complete.
     const logContent = fs.readFileSync(path.join(dir, "logs", "hub.log"), "utf8");
     expect(logContent.length).toBeGreaterThan(0);
-    expect(logContent).toContain("agente registrado: alpha"); // o fluxo logou…
-    expect(logContent).not.toContain(token); // …mas nunca o token
+    expect(logContent).toContain("agent registered: alpha"); // the flow logged…
+    expect(logContent).not.toContain(token); // …but never the token
   }, 15_000);
 
-  it("snapshot legado sem token: join aceita, gera, retorna e passa a exigir o token", async () => {
-    // agents.json pré-v1.1: registro válido, sem o campo token.
+  it("legacy snapshot without a token: join accepts, generates, returns and starts requiring the token", async () => {
+    // pre-v1.1 agents.json: valid record, without the token field.
     const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), "switchboard-int-legacy-"));
     const now = new Date().toISOString();
     fs.writeFileSync(
@@ -888,7 +888,7 @@ describe("capability token (adendo v1.1)", () => {
       JSON.stringify([
         {
           name: "alpha",
-          role: "veterano",
+          role: "veteran",
           tmuxSession: "sb-alpha",
           cwd: "",
           status: "offline",
@@ -917,25 +917,25 @@ describe("capability token (adendo v1.1)", () => {
       return client;
     };
     try {
-      // Primeiro join sem token: aceito (registro legado), token gerado e RETORNADO.
+      // First join without a token: accepted (legacy record), token generated and RETURNED.
       const first = await connect();
       const claimed = await callTool(first, "join", { agent_name: "alpha" });
       expect(claimed.ok).toBe(true);
       expect(claimed.token).toMatch(TOKEN_RE);
 
-      // O token gerado foi persistido no snapshot (trust model local).
+      // The generated token was persisted in the snapshot (local trust model).
       const snapshot = JSON.parse(
         fs.readFileSync(path.join(dir2, "agents.json"), "utf8"),
       ) as any[];
       expect(snapshot[0].token).toBe(claimed.token);
 
-      // A partir daqui o nome está protegido: join sem token é recusado…
+      // From here on the name is protected: a join without a token is refused…
       const second = await connect();
       const denied = await callTool(second, "join", { agent_name: "alpha" });
       expect(denied.ok).toBe(false);
       expect(denied.error).toContain("printenv SWITCHBOARD_AGENT_TOKEN");
 
-      // …e com o token emitido, aceito.
+      // …and with the issued token, accepted.
       const ok = await callTool(second, "join", {
         agent_name: "alpha",
         token: claimed.token,
@@ -949,8 +949,8 @@ describe("capability token (adendo v1.1)", () => {
   }, 15_000);
 });
 
-describe("endpoints auxiliares", () => {
-  it("GET /api/health responde {ok, uptime, version}", async () => {
+describe("auxiliary endpoints", () => {
+  it("GET /api/health responds {ok, uptime, version}", async () => {
     const res = await fetch(api("/api/health"));
     expect(res.status).toBe(200);
     const body = (await res.json()) as any;
@@ -959,12 +959,12 @@ describe("endpoints auxiliares", () => {
     expect(typeof body.version).toBe("string");
   });
 
-  it("POST /api/agents/:name/nudge (hub com dispatcher): 404 desconhecido; 409 guard abortado", async () => {
-    // Phase 3: o endpoint dispara um nudge manual REAL, então este teste usa
-    // um hub dedicado SEM o stub de onMessage (dispatcher default). Sessão
-    // tmux com nome único que garantidamente não existe → a guarda de pane
-    // falha fechada (não foi possível ler o pane) → abortado, nada digitado,
-    // 409. Mesmo comportamento com tmux ausente (execFile ENOENT → fail-closed).
+  it("POST /api/agents/:name/nudge (hub with dispatcher): 404 unknown; 409 guard aborted", async () => {
+    // Phase 3: the endpoint fires a REAL manual nudge, so this test uses a
+    // dedicated hub WITHOUT the onMessage stub (default dispatcher). A tmux
+    // session with a unique name that is guaranteed not to exist → the pane
+    // guard fails closed (could not read the pane) → aborted, nothing typed,
+    // 409. Same behavior with tmux absent (execFile ENOENT → fail-closed).
     const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), "switchboard-int-nudge-"));
     const hub2 = await startHub({ baseDir: dir2, port: 0, quiet: true });
     try {
@@ -981,7 +981,7 @@ describe("endpoints auxiliares", () => {
       expect(res.status).toBe(409);
       const body = (await res.json()) as any;
       expect(body.ok).toBe(false);
-      expect(body.error).toContain("Nudge manual não entregue");
+      expect(body.error).toContain("Manual nudge not delivered");
       expect(body.error).toContain("check_messages");
 
       const unknown = await fetch(`${base}/api/agents/zeta/nudge`, { method: "POST" });
@@ -993,16 +993,16 @@ describe("endpoints auxiliares", () => {
     }
   }, 15_000);
 
-  it("POST /api/agents/:name/nudge com onMessage injetado (sem dispatcher) responde 501", async () => {
+  it("POST /api/agents/:name/nudge with an injected onMessage (no dispatcher) responds 501", async () => {
     await registerAgent("alpha");
     const res = await fetch(api("/api/agents/alpha/nudge"), { method: "POST" });
     expect(res.status).toBe(501);
     const body = (await res.json()) as any;
     expect(body.ok).toBe(false);
-    expect(body.error).toContain("sem o dispatcher");
+    expect(body.error).toContain("without the nudge dispatcher");
   });
 
-  it("body JSON malformado responde JSON, nunca HTML (achado 5)", async () => {
+  it("a malformed JSON body responds JSON, never HTML (finding 5)", async () => {
     const apiRes = await fetch(api("/api/messages"), {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -1020,14 +1020,14 @@ describe("endpoints auxiliares", () => {
     expect(((await mcpRes.json()) as any).error.code).toBe(-32700);
   });
 
-  it("re-registro do mesmo nome faz re-attach lógico (201, mcpConnected resetado)", async () => {
+  it("re-registering the same name does a logical re-attach (201, mcpConnected reset)", async () => {
     await registerAgent("alpha");
     await joinAs("alpha");
     // Re-register (e.g. a new `switchboard start alpha` after the session died).
-    await registerAgent("alpha", "novo role");
+    await registerAgent("alpha", "new role");
     const agents = (await (await fetch(api("/api/agents"))).json()) as any[];
     expect(agents).toHaveLength(1);
-    expect(agents[0].role).toBe("novo role");
+    expect(agents[0].role).toBe("new role");
     expect(agents[0].mcpConnected).toBe(false); // reset until the new join
   }, 15_000);
 });

@@ -1,4 +1,4 @@
-// Anti-loop rate limiting (PRD section 14, layer 2 — "mecânica").
+// Anti-loop rate limiting (PRD section 14, layer 2 — "mechanical").
 //
 // Sliding-window limiter keyed by the ORDERED pair from→to: alpha→beta and
 // beta→alpha are independent budgets, so a legitimate reply never competes
@@ -26,7 +26,7 @@ export class PairRateLimiter {
   constructor(options: PairRateLimiterOptions) {
     if (!Number.isInteger(options.limitPerMinute) || options.limitPerMinute <= 0) {
       throw new Error(
-        `PairRateLimiter: limitPerMinute deve ser um inteiro positivo (recebido ${options.limitPerMinute}).`,
+        `PairRateLimiter: limitPerMinute must be a positive integer (received ${options.limitPerMinute}).`,
       );
     }
     this.limit = options.limitPerMinute;
