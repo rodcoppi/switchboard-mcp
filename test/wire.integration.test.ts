@@ -272,15 +272,49 @@ describe.skipIf(!hasTmux)("wire + real hub + real tmux", () => {
     }
   }, 20_000);
 
-  it("wire: session that dies during resume (claude -c fails ~1-2s in) is caught with a clear wire error", async () => {
-    // The robustness gap this guards: `claude -c` does NOT fail instantly — it
+  it("wire AUTO-FALLBACK: claude -c dies during resume → a FRESH session (no -c) is opened automatically", async () => {
+    // The owner-chosen behavior: `claude -c` does NOT fail instantly — it
     // launches, tries to resume, and only then may exit (e.g. a -p-mode
-    // conversation makes interactive -c abort). start's 400ms settle would miss
-    // that and print a false "wired" success over a dead session; WIRE_SETTLE_MS
-    // waits long enough. Fake claude here prints + EXITS (no `exec cat`), so the
-    // session dies shortly after opening — the settle re-check must catch it.
+    // conversation makes interactive -c abort, or the folder simply never had
+    // a conversation). Instead of failing, wire retries ONCE without the
+    // continue flag. The fake claude here dies ONLY when called with -c and
+    // holds the pane otherwise — proving the retry really dropped the flag.
+    const pickyClaude = path.join(dir, "picky-claude.sh");
+    fs.writeFileSync(
+      pickyClaude,
+      '#!/bin/sh\ncase " $* " in *" -c "*) echo "resume failed"; exit 1;; esac\n' +
+        'echo "ARGS: $@"\nprintenv | grep SWITCHBOARD\nexec cat\n',
+      { mode: 0o755 },
+    );
+    fs.chmodSync(pickyClaude, 0o755);
+    const name = `${NAME_PREFIX}fall`;
+    const session = `sb-${name}`;
+
+    const result = await runWire({
+      ...wireArgs(),
+      name,
+      dir,
+      kickoff: false,
+      claudeBin: pickyClaude,
+      settleMs: 900, // > the script's exit; the real default is WIRE_SETTLE_MS
+    });
+
+    expect(result.fallback).toBe(true);
+    expect(await tmux.hasSession(session)).toBe(true);
+    const pane = await flatPane(session);
+    expect(pane).not.toMatch(/ARGS:.*-c\b/); // the fresh retry dropped -c
+    expect(pane).toContain("--dangerously-skip-permissions"); // bypass stays
+    const printed = out.join("\n");
+    expect(printed).toContain("Retrying with a FRESH session");
+    expect(printed).toContain("FRESH conversation");
+    expect(printed).not.toContain(storedToken(name));
+  }, 20_000);
+
+  it("wire: when even the fresh retry dies, the error blames the claude command itself", async () => {
+    // Second death after the fallback = the claude binary/args are broken —
+    // that IS an error (no infinite retries, no false success).
     const dyingClaude = path.join(dir, "dying-claude.sh");
-    fs.writeFileSync(dyingClaude, '#!/bin/sh\necho "resume failed"\nexit 1\n', { mode: 0o755 });
+    fs.writeFileSync(dyingClaude, '#!/bin/sh\necho "always dies"\nexit 1\n', { mode: 0o755 });
     fs.chmodSync(dyingClaude, 0o755);
     const name = `${NAME_PREFIX}dead`;
     const session = `sb-${name}`;
@@ -292,12 +326,10 @@ describe.skipIf(!hasTmux)("wire + real hub + real tmux", () => {
         dir,
         kickoff: false,
         claudeBin: dyingClaude,
-        settleMs: 900, // > the script's exit; the real default is WIRE_SETTLE_MS
+        settleMs: 900,
       }),
-    ).rejects.toThrow(/died right after opening|could not\s+resume/i);
-
-    // The clear error names the resume cause and points to `start` for a fresh
-    // session, and no orphan session is left behind.
+    ).rejects.toThrow(/died even without -c/);
+    expect(out.join("\n")).toContain("Retrying with a FRESH session");
     expect(await tmux.hasSession(session)).toBe(false);
   }, 20_000);
 

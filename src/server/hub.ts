@@ -17,6 +17,7 @@ import { EventBus, createApiRouter } from "./api.js";
 import { createMcpEndpoint } from "./mcp.js";
 import { createTmux } from "./tmux.js";
 import { Dispatcher } from "./dispatcher.js";
+import { createLauncher, type Launcher, type LauncherTuning } from "./launcher.js";
 
 export interface HubOptions {
   /** Data directory (default ~/.switchboard). Tests MUST inject a temp dir. */
@@ -35,6 +36,13 @@ export interface HubOptions {
    * the manual-nudge endpoint answers 501.
    */
   onMessage?: OnMessage;
+  /**
+   * Launcher tuning (tests: fake claude binary, shorter settle/poll). Only
+   * consulted when the hub creates the REAL launcher — i.e. when onMessage is
+   * NOT overridden. A hub with a custom onMessage has no launcher at all and
+   * POST /api/agents/launch answers 501 (like the manual-nudge placeholder).
+   */
+  launcher?: LauncherTuning;
   /** MCP session idle expiry / sweep cadence — injectable for tests. */
   sessionIdleTimeoutMs?: number;
   sessionSweepIntervalMs?: number;
@@ -107,12 +115,17 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
   // onMessage. Tests may inject options.onMessage instead — then no
   // dispatcher (and no tmux) exists at all.
   let dispatcher: Dispatcher | undefined;
+  let launcher: Launcher | undefined;
   let onMessage: OnMessage;
   if (options.onMessage) {
     onMessage = options.onMessage;
   } else {
-    dispatcher = new Dispatcher({ store, config, log, bus, tmux: createTmux() });
+    const tmux = createTmux();
+    dispatcher = new Dispatcher({ store, config, log, bus, tmux });
     onMessage = dispatcher.onNewMessage;
+    // Dashboard "Launch agent": same real tmux layer as the dispatcher. Tests
+    // that stub onMessage get NO launcher (endpoint answers 501).
+    launcher = createLauncher({ store, tmux, config, log, bus, ...options.launcher });
   }
 
   const version = readVersion();
@@ -149,6 +162,7 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
       bus,
       onMessage,
       nudger: dispatcher,
+      launcher,
       startedAt,
       version,
       heartbeatMs: options.heartbeatMs,
@@ -248,6 +262,7 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
     closed = true;
     log.info(`[hub] shutting down…`);
     dispatcher?.stop();
+    launcher?.stop(); // cancel pending kickoff timers/polls
     await mcp.close();
     const serverClosed = new Promise<void>((resolve) => {
       server.close(() => resolve());

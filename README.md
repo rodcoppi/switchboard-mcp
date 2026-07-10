@@ -57,7 +57,14 @@ invoke the `switchboard` CLI:
 In the examples below we use `switchboard <subcommand>` (assuming `npm link`); swap it for
 `node bin/switchboard.mjs <subcommand>` if you prefer not to link.
 
-### 2. Start the Hub (`serve`)
+### 2. Start the Hub (`serve`) — usually automatic
+
+**You normally don't need this step:** `switchboard start` and `switchboard wire`
+auto-start the Hub in the background when it is not running (a detached tmux session
+`sb-hub` — no terminal window stays open). After a reboot, just `wire`/`start` your first
+agent and the Hub comes up with it.
+
+To run it manually (e.g. to watch the logs live):
 
 ```bash
 switchboard serve
@@ -71,9 +78,9 @@ like:
 Dashboard: http://127.0.0.1:4577/  |  MCP: http://127.0.0.1:4577/mcp  |  Register (once): claude mcp add --transport http --scope user switchboard http://127.0.0.1:4577/mcp
 ```
 
-**Recommendation:** run `serve` inside a tmux session named `sb-hub`
-(`tmux new -s sb-hub`) so it survives closing the terminal. Useful flags:
-`--port <port>` and `--log-level debug|info|warn|error`.
+To inspect the auto-started Hub: `tmux attach -t sb-hub` (detach with `Ctrl-b d`) or
+`switchboard logs -f`. Useful flags of `serve`: `--port <port>` and
+`--log-level debug|info|warn|error`.
 
 ### 3. Register the MCP in Claude Code (`mcp add`)
 
@@ -152,8 +159,23 @@ these are the `wire` defaults, unlike `start`. Any extra `--claude-args` are add
 If a tmux session for that name already exists, `wire` **replaces it** (kills the old one and
 recreates it — no confirmation), then runs the same automatic kickoff as `start`.
 
+**Auto-fallback:** if the folder has no resumable conversation (never opened claude there, or the
+last one ran in `-p`/print mode), `claude -c` exits right away — `wire` detects that and
+automatically reopens a **fresh** session (without `-c`), telling you so. It never fails into a
+dead window; worst case you get a brand-new conversation already wired to the network.
+
 `wire` flags: `--name <name>`, `--role "<description>"`, `--dir <path>` (default: current folder),
 `--no-kickoff`, `--claude-args "<extra args for claude>"`.
+
+### Launching agents from the dashboard
+
+The dashboard (`http://127.0.0.1:4577/`) has a **Launch agent** form (bottom of the sidebar):
+type the project **directory**, optionally a name (defaults to the folder name) and a role,
+tick **continue conversation** to resume the folder's last claude conversation (same
+auto-fallback as `wire`), and hit Launch. The Hub itself creates the agent's tmux session and
+runs the automatic kickoff — no terminal needed. The new card appears live via SSE; attach to
+the agent anytime with `tmux attach -t sb-<name>`. Under the hood it is
+`POST /api/agents/launch {dir, name?, role?, continue?}` — localhost-only, like everything else.
 
 ---
 

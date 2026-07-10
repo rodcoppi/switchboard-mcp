@@ -263,6 +263,65 @@
       100% { box-shadow: 0 0 0 10px transparent; }
     }
 
+    /* --------------------------- Launcher form --------------------------- */
+    /* "Launch agent": the hub itself opens the agent's claude in a tmux
+       session (POST /api/agents/launch) — no terminal needed. */
+    .launcher {
+      flex: 0 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+      padding: 10px 12px;
+      border-top: 1px solid var(--border);
+      background: var(--bg-elev);
+    }
+    .launcher-title {
+      font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px;
+      color: var(--text-dim);
+    }
+    .launcher-label {
+      display: block;
+      margin-bottom: 3px;
+      font-size: 10px; text-transform: uppercase; letter-spacing: 0.6px;
+      color: var(--text-faint);
+    }
+    .launch-input {
+      width: 100%;
+      background: var(--bg-inset);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 6px 8px;
+      font-family: var(--mono);
+      font-size: 12px;
+    }
+    .launch-input:focus { outline: none; border-color: var(--accent); }
+    .launch-input::placeholder { color: var(--text-faint); }
+    .launcher-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .launcher-row {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 8px; margin-top: 2px;
+    }
+    .launcher-toggle {
+      display: inline-flex; align-items: center; gap: 6px;
+      color: var(--text-dim);
+      font-size: 11px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .launcher-toggle input { accent-color: var(--accent); margin: 0; }
+    .launch-btn {
+      background: var(--accent);
+      color: #041018;
+      border: none;
+      border-radius: var(--radius);
+      font-weight: 600;
+      font-size: 12px;
+      padding: 6px 14px;
+    }
+    .launch-btn:hover { filter: brightness(1.08); }
+    .launch-btn:disabled { opacity: 0.55; cursor: default; }
+
     /* ------------------------------- Main -------------------------------- */
     .main { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 
@@ -444,6 +503,35 @@
         <span id="sidebar-count">0</span>
       </div>
       <div class="agents" id="agents"></div>
+
+      <form class="launcher" id="launcher" autocomplete="off">
+        <div class="launcher-title">Launch agent</div>
+        <div>
+          <label class="launcher-label" for="launch-dir">directory (absolute path)</label>
+          <input class="launch-input" id="launch-dir" name="dir"
+            placeholder="/home/you/project" spellcheck="false" />
+        </div>
+        <div class="launcher-grid">
+          <div>
+            <label class="launcher-label" for="launch-name">name</label>
+            <input class="launch-input" id="launch-name" name="name"
+              placeholder="defaults to folder name" spellcheck="false" />
+          </div>
+          <div>
+            <label class="launcher-label" for="launch-role">role</label>
+            <input class="launch-input" id="launch-role" name="role"
+              placeholder="e.g. API backend" />
+          </div>
+        </div>
+        <div class="launcher-row">
+          <label class="launcher-toggle"
+            title="Resume the folder's previous Claude Code conversation (claude -c). Falls back to a fresh session when there is nothing to resume.">
+            <input type="checkbox" id="launch-continue" checked />
+            continue conversation
+          </label>
+          <button class="launch-btn" id="launch-btn" type="submit">launch</button>
+        </div>
+      </form>
     </aside>
 
     <main class="main">
@@ -1018,6 +1106,65 @@
       }
     }
 
+    // Launch an agent from the dashboard: the hub creates the tmux session
+    // running claude (POST /api/agents/launch). Success is confirmed by a
+    // toast; the new agent card arrives via the agent_updated SSE. The hub
+    // settles the session before answering (~2.5s, ~5s with the resume
+    // fallback), so the button shows a busy state meanwhile. All feedback goes
+    // through toast() → textContent (server data never touches innerHTML).
+    async function launchAgent(ev) {
+      ev.preventDefault();
+      const dir = $("#launch-dir").value.trim();
+      if (dir.length === 0) {
+        toast("Directory is required: the absolute path the agent should work in.", "warn");
+        return;
+      }
+      const name = $("#launch-name").value.trim();
+      const role = $("#launch-role").value.trim();
+      const btn = $("#launch-btn");
+      const prevLabel = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = "launching…";
+      try {
+        const payload = { dir, continue: $("#launch-continue").checked };
+        if (name) payload.name = name;
+        if (role) payload.role = role;
+        const res = await fetch("/api/agents/launch", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.ok) {
+          toast(data.error || `Failed to launch (HTTP ${res.status}).`, "error", 8000);
+          return;
+        }
+        const agentName = data.agent && data.agent.name ? data.agent.name : name || dir;
+        if (data.fallback) {
+          toast(
+            `No resumable conversation in ${dir} — opened a fresh session for ${agentName}.`,
+            "warn",
+            7000,
+          );
+        }
+        toast(
+          `Agent ${agentName} launched` +
+            `${data.replaced ? " (replaced its previous session)" : ""}. ` +
+            `The kickoff will instruct it to join.`,
+          "ok",
+        );
+        $("#launch-dir").value = "";
+        $("#launch-name").value = "";
+        $("#launch-role").value = "";
+        // No render here: the agent card arrives via the agent_updated SSE.
+      } catch {
+        toast("Network failure while launching.", "error");
+      } finally {
+        btn.disabled = false;
+        btn.textContent = prevLabel;
+      }
+    }
+
     // =====================================================================
     // Bootstrap
     // =====================================================================
@@ -1099,6 +1246,9 @@
         }
       });
       $("#filter-clear").addEventListener("click", () => setFilter(state.filter));
+
+      // Launcher wiring.
+      $("#launcher").addEventListener("submit", launchAgent);
 
       // Bootstrap snapshot (agents + messages + health) BEFORE the live stream,
       // so the SSE only ever adds to a populated view (PRD Phase 6 behavior).

@@ -162,6 +162,8 @@ export interface WireOptions {
   spawnKickoff?: (name: string, session: string) => void;
   sleep?: (ms: number) => Promise<void>;
   settleMs?: number;
+  /** Hub liveness strategy (default: auto-start a background sb-hub; see start.ts). */
+  ensureHub?: (hubUrl: string, opts: { out: OutFn }) => Promise<void>;
   /** TEST-ONLY: binary in place of "claude" (never open a real claude in tests). */
   claudeBin?: string;
 }
@@ -198,6 +200,7 @@ export async function runWire(options: WireOptions): Promise<StartResult> {
     spawnKickoff: options.spawnKickoff,
     sleep: options.sleep,
     settleMs: options.settleMs,
+    ensureHub: options.ensureHub,
     claudeBin: options.claudeBin,
   });
 }

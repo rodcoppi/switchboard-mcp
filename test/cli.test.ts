@@ -22,7 +22,7 @@ import {
 import { formatStatusTable, type StatusRow } from "../src/cli/status.js";
 import { describeDelivery } from "../src/cli/send.js";
 import { runLogs, tailLines } from "../src/cli/logs.js";
-import { CliError, formatRelative } from "../src/cli/common.js";
+import { CliError, checkHubHealth, formatRelative } from "../src/cli/common.js";
 import { serveHeaderLines } from "../src/cli/serve.js";
 import { createTmux, quoteShellArg, type ExecFn } from "../src/server/tmux.js";
 import type { Delivery } from "../src/shared/types.js";
@@ -514,9 +514,17 @@ describe("runStart: local validations", () => {
     ).rejects.toThrow(/Directory does not exist/);
   });
 
-  it("dead hub → clear error telling to run switchboard serve first", async () => {
+  it("dead hub + fail-fast strategy → clear error telling to run switchboard serve first", async () => {
+    // The DEFAULT ensureHub now AUTO-STARTS a background hub (owner decision);
+    // injecting checkHubHealth keeps the old fail-fast semantics under test
+    // without booting anything real.
     await expect(
-      runStart({ name: "okname", dir: os.tmpdir(), hubUrl: "http://127.0.0.1:9" }),
+      runStart({
+        name: "okname",
+        dir: os.tmpdir(),
+        hubUrl: "http://127.0.0.1:9",
+        ensureHub: (url) => checkHubHealth(url),
+      }),
     ).rejects.toThrow(/Run "switchboard serve" first/);
   });
 

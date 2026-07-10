@@ -27,6 +27,9 @@ import {
 } from "../shared/types.js";
 import type { Logger } from "./log.js";
 import type { Store } from "./store.js";
+// Value import for the instanceof mapping below. No runtime cycle: launcher.ts
+// imports this module with `import type` only (erased at compile time).
+import { LaunchError, type Launcher } from "./launcher.js";
 
 // ---------------------------------------------------------------------------
 // EventBus — SSE fan-out (PRD 10.1: GET /api/events).
@@ -223,6 +226,13 @@ export interface ApiOptions {
   onMessage: OnMessage;
   /** Manual nudge executor for POST /api/agents/:name/nudge (dispatcher). */
   nudger?: ManualNudger;
+  /**
+   * Server-side agent launcher for POST /api/agents/launch (the dashboard's
+   * "Launch agent" form). Undefined when the hub was started with a custom
+   * onMessage override (no tmux — tests): the endpoint then answers 501,
+   * exactly like the manual-nudge placeholder.
+   */
+  launcher?: Launcher;
   /** Hub start timestamp (epoch ms) for /api/health uptime. */
   startedAt: number;
   /** Hub version string for /api/health (from package.json). */
@@ -232,7 +242,8 @@ export interface ApiOptions {
 }
 
 export function createApiRouter(options: ApiOptions): express.Router {
-  const { store, config, log, bus, onMessage, nudger, startedAt, version } = options;
+  const { store, config, log, bus, onMessage, nudger, launcher, startedAt, version } =
+    options;
   const heartbeatMs = options.heartbeatMs ?? 25_000;
   const router = express.Router();
 
@@ -371,6 +382,82 @@ export function createApiRouter(options: ApiOptions): express.Router {
     } catch (err) {
       // Invalid name or MAX_AGENTS cap — store errors are already in English.
       res.status(400).json({ ok: false, error: (err as Error).message });
+    }
+  });
+
+  // POST /api/agents/launch — the dashboard's "Launch agent" form: the hub
+  // itself creates the agent's tmux session running claude (server-side
+  // sibling of `switchboard wire`). Body {dir, name?, role?, continue?}.
+  // The launcher registers via the store (agent_updated SSE emitted there),
+  // replaces a homonymous live session automatically, settles, auto-falls
+  // back from a dead `claude -c` and schedules the in-process kickoff. The
+  // response agent is REDACTED (toPublicAgent inside the launcher) — the
+  // capability token only ever rides the tmux session env, never this HTTP
+  // response and never the logs (v1.1, PRD 15).
+  router.post("/api/agents/launch", async (req, res) => {
+    if (!launcher) {
+      // Hub started with a custom onMessage override (no tmux — tests).
+      res.status(501).json({
+        ok: false,
+        error:
+          "Launcher unavailable: this hub was started without the tmux launcher " +
+          "(custom onMessage).",
+      });
+      return;
+    }
+    const raw = (req.body ?? {}) as Record<string, unknown>;
+    if (typeof raw.dir !== "string" || raw.dir.trim() === "") {
+      res.status(400).json({
+        ok: false,
+        error:
+          `Invalid body: expected {"dir": "<absolute directory>", "name"?, "role"?, ` +
+          `"continue"?} with "dir" required.`,
+      });
+      return;
+    }
+    for (const key of ["name", "role"] as const) {
+      if (raw[key] !== undefined && typeof raw[key] !== "string") {
+        res.status(400).json({
+          ok: false,
+          error: `Invalid body: field "${key}" must be a string when present.`,
+        });
+        return;
+      }
+    }
+    if (raw.continue !== undefined && typeof raw.continue !== "boolean") {
+      res.status(400).json({
+        ok: false,
+        error: `Invalid body: field "continue" must be a boolean when present.`,
+      });
+      return;
+    }
+
+    try {
+      const result = await launcher.launchAgent({
+        dir: raw.dir,
+        name: raw.name as string | undefined,
+        role: raw.role as string | undefined,
+        continueConversation: (raw.continue as boolean | undefined) ?? false,
+      });
+      log.info(
+        `[api] launch: agent ${result.agent.name} launched from the dashboard ` +
+          `(replaced=${result.replaced}, fallback=${result.fallback}).`,
+      );
+      res.status(201).json({
+        ok: true,
+        agent: result.agent,
+        replaced: result.replaced,
+        fallback: result.fallback,
+      });
+    } catch (err) {
+      if (err instanceof LaunchError) {
+        // Actionable message for the dashboard toast: 400 for input problems,
+        // 500 for server-side launch failures — never the generic 500 page.
+        res.status(err.status).json({ ok: false, error: err.message });
+        return;
+      }
+      log.error(`[api] unexpected error launching an agent:`, err);
+      res.status(500).json({ ok: false, error: "Internal Hub error." });
     }
   });
 

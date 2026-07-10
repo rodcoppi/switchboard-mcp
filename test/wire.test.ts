@@ -21,7 +21,7 @@ import {
   WIRE_CONTINUE_FLAG,
 } from "../src/cli/wire.js";
 import { buildAgentCommand } from "../src/cli/start.js";
-import { CliError } from "../src/cli/common.js";
+import { CliError, checkHubHealth, ensureHubUp } from "../src/cli/common.js";
 import { AGENT_NAME_RE } from "../src/server/store.js";
 
 // ---------------------------------------------------------------------------
@@ -227,10 +227,38 @@ describe("runWire: local validations", () => {
     expect(tmuxCalls).toEqual([]); // nothing touched: neither tmux nor HTTP
   });
 
-  it("dead hub → clear error telling to run switchboard serve first", async () => {
+  it("dead hub + fail-fast strategy → clear error telling to run switchboard serve first", async () => {
+    // The DEFAULT ensureHub now AUTO-STARTS a background hub (owner decision);
+    // injecting checkHubHealth keeps the old fail-fast semantics — which is
+    // exactly what this test asserts (and how status/send/stop still behave).
     await expect(
-      runWire({ name: "okname", dir: os.tmpdir(), hubUrl: "http://127.0.0.1:9", baseDir: NO_CONFIG_DIR }),
+      runWire({
+        name: "okname",
+        dir: os.tmpdir(),
+        hubUrl: "http://127.0.0.1:9",
+        baseDir: NO_CONFIG_DIR,
+        ensureHub: (url) => checkHubHealth(url),
+      }),
     ).rejects.toThrow(/Run "switchboard serve" first/);
+  });
+
+  it("dead hub + auto-start strategy that cannot boot → clear auto-start error", async () => {
+    // The default path when the Hub is down: ensureHubUp boots it in the
+    // background. Here the injected boot is a no-op (nothing comes up), so
+    // after the (shortened) wait the user gets the actionable failure.
+    const printed: string[] = [];
+    await expect(
+      runWire({
+        name: "okname",
+        dir: os.tmpdir(),
+        hubUrl: "http://127.0.0.1:9",
+        baseDir: NO_CONFIG_DIR,
+        out: (l) => printed.push(l),
+        ensureHub: (url, { out }) =>
+          ensureHubUp(url, { out, bootHub: async () => {}, bootTimeoutMs: 300, sleep: async () => {} }),
+      }),
+    ).rejects.toThrow(/Could not auto-start the Hub/);
+    expect(printed.join("\n")).toContain("starting it in the background");
   });
 
   it("with NO --dir and NO --name, derives the name from the ACTUAL current directory (cwd)", async () => {

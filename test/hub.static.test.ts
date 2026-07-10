@@ -55,6 +55,8 @@ describe("Phase 6 — static dashboard serving", () => {
       "msg-body",
       "status-dot",
       "unread-badge",
+      "launcher",
+      "launch-btn",
     ]) {
       expect(html, `missing semantic class .${cls}`).toContain(cls);
     }
@@ -62,6 +64,8 @@ describe("Phase 6 — static dashboard serving", () => {
     expect(html).toContain("/api/events");
     expect(html).toContain("/api/agents");
     expect(html).toContain("/api/messages");
+    // The "Launch agent" form posts to the server-side launcher.
+    expect(html).toContain("/api/agents/launch");
   });
 
   it("GET /index.html serves the same dashboard file", async () => {
@@ -78,6 +82,21 @@ describe("Phase 6 — static dashboard serving", () => {
     expect(body.ok).toBe(true);
     expect(typeof body.uptime).toBe("number");
     expect(typeof body.version).toBe("string");
+  });
+
+  it("POST /api/agents/launch answers 501 when the hub was started without the launcher", async () => {
+    // This hub runs with a custom onMessage stub — no dispatcher, no tmux and
+    // therefore NO launcher: the endpoint must answer 501 in-protocol (same
+    // contract as the manual-nudge placeholder), never touch tmux.
+    const res = await fetch(url("/api/agents/launch"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dir: "/tmp" }),
+    });
+    expect(res.status).toBe(501);
+    const body = (await res.json()) as { ok: boolean; error: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toMatch(/launcher unavailable/i);
   });
 
   it("does NOT leak a capability token in the /api/agents listing the dashboard reads", async () => {

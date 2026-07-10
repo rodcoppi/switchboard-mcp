@@ -32,7 +32,7 @@ import { createTmux, type NudgeResult, type Tmux } from "../server/tmux.js";
 import type { PublicAgent } from "../shared/types.js";
 import {
   CliError,
-  checkHubHealth,
+  ensureHubUp,
   defaultHubUrl,
   hubPost,
   runCliAction,
@@ -302,6 +302,12 @@ export interface StartOptions {
   sleep?: (ms: number) => Promise<void>;
   /** Post-create liveness settle window in ms (default START_SETTLE_MS). */
   settleMs?: number;
+  /**
+   * Hub liveness strategy (default ensureHubUp: auto-starts a background
+   * sb-hub when down). Tests inject checkHubHealth-like behavior to keep the
+   * old fail-fast without booting anything.
+   */
+  ensureHub?: (hubUrl: string, opts: { out: OutFn }) => Promise<void>;
   /** TEST-ONLY: binary in place of "claude" (never open a real claude in tests). */
   claudeBin?: string;
 }
@@ -394,6 +400,12 @@ interface RegisterResponse {
 export interface StartResult {
   tmuxSession: string;
   cwd: string;
+  /**
+   * wire only: true when `claude -c` had no resumable conversation and the
+   * session was automatically recreated FRESH (without -c) — the owner-chosen
+   * auto-fallback instead of failing.
+   */
+  fallback?: boolean;
 }
 
 /**
@@ -536,9 +548,12 @@ export async function runAgentSession(options: AgentSessionOptions): Promise<Sta
     );
   }
 
-  // 1b. Hub alive? (clear "run switchboard serve first" error otherwise).
+  // 1b. Hub alive? start/wire AUTO-START it in the background when down
+  // (owner decision: "everything automatic" — no dedicated terminal for the
+  // Hub). Injectable: tests pass checkHubHealth to keep the old fail-fast.
   const hubUrl = options.hubUrl ?? defaultHubUrl(options.baseDir);
-  await checkHubHealth(hubUrl);
+  const ensureHub = options.ensureHub ?? ensureHubUp;
+  await ensureHub(hubUrl, { out });
 
   // 2. Existing session. start REFUSES it here (P7, never two starts on one
   // name) — a fast fail BEFORE touching the Hub. wire does NOT kill here: the
@@ -600,61 +615,84 @@ export async function runAgentSession(options: AgentSessionOptions): Promise<Sta
   // carry the full command line (with SWITCHBOARD_AGENT_TOKEN) to stderr via
   // the generic runCliAction branch (tmux.ts also sanitizes at the source;
   // this is defense in depth for any StartTmux implementation).
-  try {
-    await tmux.newSession(
-      tmuxSession,
-      cwd,
-      buildAgentCommand({
-        name,
-        token,
-        claudeArgs: claudeArgv,
-        claudeBin: options.claudeBin,
-      }),
-    );
-  } catch (err) {
-    const detail = (err instanceof Error ? err.message : String(err))
-      .split(token)
-      .join("<token-redacted>");
-    throw new CliError(
-      `Failed to create the tmux session "${tmuxSession}": ${detail}\n` + concurrentStartHint(name),
-    );
+  async function createAgentSession(argv: string[]): Promise<void> {
+    try {
+      await tmux.newSession(
+        tmuxSession,
+        cwd,
+        buildAgentCommand({
+          name,
+          token,
+          claudeArgs: argv,
+          claudeBin: options.claudeBin,
+        }),
+      );
+    } catch (err) {
+      const detail = (err instanceof Error ? err.message : String(err))
+        .split(token)
+        .join("<token-redacted>");
+      throw new CliError(
+        `Failed to create the tmux session "${tmuxSession}": ${detail}\n` + concurrentStartHint(name),
+      );
+    }
   }
+  await createAgentSession(claudeArgv);
 
   // 4b. The command may die at birth (typical: "claude" not on PATH, or bad
   // --claude-args) and take the session with it — reporting success there
   // would be a lie. Give it a settle window and re-check.
+  //
+  // wire AUTO-FALLBACK (owner decision): `claude -c` dies ~1-2s in when the
+  // folder has no resumable conversation (or the last one was created in
+  // -p/print mode). Instead of failing, wire retries ONCE without the
+  // continue flag — a fresh session — and says so. A second death then means
+  // the claude command itself is broken, which IS an error.
   const sleep = options.sleep ?? realSleep;
   const settleMs =
     options.settleMs ?? (mode === "wire" ? WIRE_SETTLE_MS : START_SETTLE_MS);
   await sleep(settleMs);
+  let fellBack = false;
   if (!(await tmux.hasSession(tmuxSession))) {
-    if (mode === "wire") {
+    const CONTINUE_FLAGS = ["-c", "--continue"];
+    const hadContinue = mode === "wire" && claudeArgv.some((a) => CONTINUE_FLAGS.includes(a));
+    if (!hadContinue) {
+      const retry = mode === "wire" ? "switchboard wire" : `switchboard start ${name}`;
       throw new CliError(
-        `The tmux session "${tmuxSession}" died right after opening — "claude -c" could not ` +
-          `resume this folder's conversation. Most likely there is no resumable conversation ` +
-          `here, or the last one was created in -p/print mode (interactive -c then aborts). ` +
-          `The agent's registration stays in the Hub. To open a FRESH session (no resume) ` +
-          `instead, use start: "switchboard start ${name} --dir ${cwd}".`,
+        `The tmux session "${tmuxSession}" died right after opening — the agent command failed ` +
+          `at birth. Is the "claude" binary on the PATH? Are the --claude-args valid? ` +
+          `The agent's registration stays in the Hub; fix it and run "${retry}" again.`,
       );
     }
-    throw new CliError(
-      `The tmux session "${tmuxSession}" died right after opening — the agent command failed ` +
-        `at birth. Is the "claude" binary on the PATH? Are the --claude-args valid? ` +
-        `The agent's registration stays in the Hub; fix it and run "switchboard start ${name}" again.`,
+    out(
+      `No resumable conversation in ${cwd} — "claude -c" exited right after opening. ` +
+        `Retrying with a FRESH session (no -c)...`,
     );
+    await createAgentSession(claudeArgv.filter((a) => !CONTINUE_FLAGS.includes(a)));
+    await sleep(settleMs);
+    if (!(await tmux.hasSession(tmuxSession))) {
+      throw new CliError(
+        `The tmux session "${tmuxSession}" died even without -c — the claude command itself ` +
+          `failed at birth. Is the "claude" binary on the PATH? Are the --claude-args valid? ` +
+          `The agent's registration stays in the Hub; fix it and run "switchboard wire" again.`,
+      );
+    }
+    fellBack = true;
   }
 
   if (mode === "wire") {
-    // Word it from the ACTUAL argv: wire normally forces -c (continue), but the
-    // user may express continue as --continue, or override it with -r/--resume
-    // (buildWireClaudeArgs then omits -c). Hardcoding "claude -c" would misstate
-    // those cases, so describe the intent instead of a literal flag.
-    const continuing = claudeArgv.includes("-c") || claudeArgv.includes("--continue");
+    // Word it from the ACTUAL outcome: wire normally forces -c (continue), but
+    // the user may express continue as --continue, override it with -r/--resume
+    // (buildWireClaudeArgs then omits -c), or the auto-fallback may have
+    // recreated the session fresh. Hardcoding "claude -c" would misstate those.
+    const continuing =
+      !fellBack && (claudeArgv.includes("-c") || claudeArgv.includes("--continue"));
     out(
       `Agent "${name}" wired into the Hub and reopened in tmux session "${tmuxSession}"` +
-        (continuing
-          ? `, continuing this folder's conversation in ${cwd}.`
-          : ` in ${cwd}.`),
+        (fellBack
+          ? ` with a FRESH conversation in ${cwd} (there was no resumable conversation to continue).`
+          : continuing
+            ? `, continuing this folder's conversation in ${cwd}.`
+            : ` in ${cwd}.`),
     );
   } else {
     out(`Agent "${name}" registered in the Hub and tmux session "${tmuxSession}" created in ${cwd}.`);
@@ -702,7 +740,7 @@ export async function runAgentSession(options: AgentSessionOptions): Promise<Sta
     out(`Session created in the background. To follow the agent: tmux attach -t ${tmuxSession}`);
   }
 
-  return { tmuxSession, cwd };
+  return { tmuxSession, cwd, fallback: fellBack };
 }
 
 // ---------------------------------------------------------------------------
