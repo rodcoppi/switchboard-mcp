@@ -189,6 +189,18 @@ export class Store {
   }
 
   /**
+   * Deletes an agent's REGISTRATION (post-v1, dashboard history management).
+   * Messages are untouched — messages.jsonl is append-only and remains the
+   * source of truth; a later re-registration under the same name sees its old
+   * unread again. Returns false when the name is unknown.
+   */
+  removeAgent(name: string): boolean {
+    if (!this.agents.delete(name)) return false;
+    this.saveAgentsSnapshot();
+    return true;
+  }
+
+  /**
    * NOTE: the array is a copy, but the Agent objects are LIVE references —
    * do not mutate them directly; use updateAgent.
    */

@@ -114,6 +114,28 @@ describe("agents", () => {
     expect(boot3.getAgent("alpha")?.status).toBe("offline");
   });
 
+  it("removeAgent deletes the registration, persists, and keeps messages (JSONL untouched)", () => {
+    const store = newStore();
+    registerAgent(store, "alpha");
+    registerAgent(store, "beta");
+    store.appendMessage({ from: "operator", to: "alpha", body: "kept forever" });
+
+    expect(store.removeAgent("alpha")).toBe(true);
+    expect(store.getAgent("alpha")).toBeUndefined();
+    expect(store.listAgents().map((a) => a.name)).toEqual(["beta"]);
+    // unknown name → false, nothing changes
+    expect(store.removeAgent("alpha")).toBe(false);
+
+    // The removal reached the snapshot AND the message survived the reboot —
+    // a later re-registration under the same name sees its old unread again.
+    const rebooted = newStore();
+    expect(rebooted.getAgent("alpha")).toBeUndefined();
+    expect(rebooted.getAgent("beta")).toBeDefined();
+    expect(rebooted.listMessages().some((m) => m.body === "kept forever")).toBe(true);
+    rebooted.registerAgent({ name: "alpha", tmuxSession: "sb-alpha", cwd: "/tmp" });
+    expect(rebooted.unreadCount("alpha")).toBe(1);
+  });
+
   it("reuses the record when the same name registers again (logical re-attach)", () => {
     const store = newStore();
     const first = registerAgent(store, "alpha");

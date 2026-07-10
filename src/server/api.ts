@@ -617,6 +617,34 @@ export function createApiRouter(options: ApiOptions): express.Router {
     res.json({ ok: true, agent: toPublicAgent(agent) });
   });
 
+  // DELETE /api/agents/:name — removes the agent's REGISTRATION (post-v1,
+  // dashboard "Remove" button for history management). Refused while the
+  // agent looks online (status is the poller's cache): a live tmux session
+  // must be stopped first, otherwise the registry and reality diverge and a
+  // later same-name registration would collide with the running session.
+  // Messages stay in the append-only JSONL (source of truth).
+  router.delete("/api/agents/:name", (req, res) => {
+    const name = req.params.name;
+    const agent = store.getAgent(name);
+    if (!agent) {
+      res.status(404).json({ ok: false, error: `Unknown agent: "${name}".` });
+      return;
+    }
+    if (agent.status === "online") {
+      res.status(409).json({
+        ok: false,
+        error:
+          `The agent "${name}" looks online (tmux session "${agent.tmuxSession}"). ` +
+          `Stop it first — "switchboard stop ${name}" — and then remove it.`,
+      });
+      return;
+    }
+    store.removeAgent(name);
+    bus.emit({ type: "agent_removed", payload: { name } });
+    log.info(`[api] agent registration removed: ${name}.`);
+    res.json({ ok: true, removed: name });
+  });
+
   // POST /api/agents/:name/nudge — manual nudge button (PRD 10.1: "force a
   // manual nudge"). "Force" = bypasses cooldown AND mute (politeness controls
   // the human operator may override), but NEVER the pane-command guard —

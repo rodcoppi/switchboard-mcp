@@ -123,8 +123,20 @@ export interface NudgeSentEvent {
   payload: { agent: string; at: string; unread: number };
 }
 
+/**
+ * Post-v1 extension (owner-approved, dashboard history management): emitted
+ * when an agent's REGISTRATION is deleted (DELETE /api/agents/:name). Its
+ * messages stay in the append-only JSONL (source of truth) — only the
+ * agents.json entry and the live UI card go away.
+ */
+export interface AgentRemovedEvent {
+  type: "agent_removed";
+  payload: { name: string };
+}
+
 export type SseEvent =
   | AgentUpdatedEvent
   | MessageCreatedEvent
   | MessageReadEvent
-  | NudgeSentEvent;
+  | NudgeSentEvent
+  | AgentRemovedEvent;

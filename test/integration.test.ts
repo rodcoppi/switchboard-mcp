@@ -513,6 +513,50 @@ describe("REST as operator", () => {
     expect(((await unknown.json()) as any).error).toContain("Unknown recipient");
   }, 15_000);
 
+  it("DELETE /api/agents/:name removes the registration (offline only), emits agent_removed, keeps messages", async () => {
+    await registerAgent("alpha");
+    await registerAgent("beta");
+    // a message TO alpha that must survive the removal (append-only JSONL)
+    await fetch(api("/api/messages"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ to: "alpha", body: "survives the removal" }),
+    });
+
+    // online agent → 409 telling to stop it first (registry/reality guard)
+    hub.store.updateAgent("alpha", { status: "online" });
+    const refused = await fetch(api("/api/agents/alpha"), { method: "DELETE" });
+    expect(refused.status).toBe(409);
+    expect(((await refused.json()) as any).error).toContain("switchboard stop alpha");
+
+    // offline agent → removed + SSE agent_removed on the stream
+    hub.store.updateAgent("alpha", { status: "offline" });
+    let removedStatus = 0;
+    let removedBody: any;
+    const sse = await collectSse(
+      (text) => text.includes('"agent_removed"') && text.includes('"alpha"'),
+      async () => {
+        const res = await fetch(api("/api/agents/alpha"), { method: "DELETE" });
+        removedStatus = res.status;
+        removedBody = await res.json();
+      },
+    );
+    expect(removedStatus).toBe(200);
+    expect(removedBody.removed).toBe("alpha");
+    expect(sse).toContain('"type":"agent_removed"');
+    expect(sse).toContain('"name":"alpha"');
+
+    // gone from the listing; unknown afterwards → 404
+    const agents = (await (await fetch(api("/api/agents"))).json()) as Array<{ name: string }>;
+    expect(agents.map((a) => a.name)).not.toContain("alpha");
+    const again = await fetch(api("/api/agents/alpha"), { method: "DELETE" });
+    expect(again.status).toBe(404);
+
+    // the message is still in the JSONL: re-registering the name sees it unread
+    await registerAgent("alpha");
+    expect(hub.store.unreadCount("alpha")).toBe(1);
+  }, 15_000);
+
   it("GET /api/messages: most recent first, ?agent filter (from OR to) and ?limit truncation", async () => {
     await registerAgent("alpha");
     await registerAgent("beta");
