@@ -14,6 +14,9 @@
 // any handler runs — spike NOTES.md finding 5) is handled by the hub-level
 // error middleware in hub.ts.
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import express from "express";
 import { ulid } from "ulid";
 import {
@@ -27,9 +30,10 @@ import {
 } from "../shared/types.js";
 import type { Logger } from "./log.js";
 import type { Store } from "./store.js";
-// Value import for the instanceof mapping below. No runtime cycle: launcher.ts
-// imports this module with `import type` only (erased at compile time).
-import { LaunchError, type Launcher } from "./launcher.js";
+// Value imports for the instanceof mapping and the /api/fs/dirs path
+// translation below. No runtime cycle: launcher.ts imports this module with
+// `import type` only (erased at compile time).
+import { LaunchError, normalizeIncomingPath, type Launcher } from "./launcher.js";
 
 // ---------------------------------------------------------------------------
 // EventBus — SSE fan-out (PRD 10.1: GET /api/events).
@@ -233,6 +237,12 @@ export interface ApiOptions {
    * exactly like the manual-nudge placeholder.
    */
   launcher?: Launcher;
+  /**
+   * Claude Code projects directory used by GET /api/fs/dirs for the
+   * best-effort "conversation" badge (default ~/.claude/projects).
+   * Injectable so tests never read the operator's real conversation index.
+   */
+  claudeProjectsDir?: string;
   /** Hub start timestamp (epoch ms) for /api/health uptime. */
   startedAt: number;
   /** Hub version string for /api/health (from package.json). */
@@ -241,10 +251,39 @@ export interface ApiOptions {
   heartbeatMs?: number;
 }
 
+/**
+ * GET /api/fs/dirs listing cap: keeps a pathological directory
+ * (node_modules-scale) cheap to serialize and render in the dashboard.
+ */
+const FS_DIRS_CAP = 500;
+
+/**
+ * Best-effort "this folder has a previous Claude Code conversation" probe for
+ * the dir browser badge. Claude Code stores each project's sessions under
+ * `<claudeProjectsDir>/<encoded>` where encoded = the absolute path with `/`,
+ * `.` and spaces each replaced by `-` (verified empirically on WSL:
+ * "/home/me/projects/ai panorama" → "-home-me-projects-ai-panorama"), holding
+ * one `.jsonl` per conversation. Any failure — missing dir, permissions,
+ * future encoding drift — just means "no badge"; never an error, and never
+ * more than directory NAMES read (no file contents).
+ */
+function hasClaudeConversation(claudeProjectsDir: string, absPath: string): boolean {
+  try {
+    const encoded = absPath.replace(/[/. ]/g, "-");
+    return fs
+      .readdirSync(path.join(claudeProjectsDir, encoded), { withFileTypes: true })
+      .some((entry) => entry.isFile() && entry.name.endsWith(".jsonl"));
+  } catch {
+    return false;
+  }
+}
+
 export function createApiRouter(options: ApiOptions): express.Router {
   const { store, config, log, bus, onMessage, nudger, launcher, startedAt, version } =
     options;
   const heartbeatMs = options.heartbeatMs ?? 25_000;
+  const claudeProjectsDir =
+    options.claudeProjectsDir ?? path.join(os.homedir(), ".claude", "projects");
   const router = express.Router();
 
   // GET /api/agents → PublicAgent[] with aggregated unreadCount. Redacted:
@@ -459,6 +498,102 @@ export function createApiRouter(options: ApiOptions): express.Router {
       log.error(`[api] unexpected error launching an agent:`, err);
       res.status(500).json({ ok: false, error: "Internal Hub error." });
     }
+  });
+
+  // GET /api/fs/dirs?path=<abs> — the dashboard's folder browser (backs the
+  // "Browse…" panel of the Launch agent form). Answers the SUBDIRECTORY NAMES
+  // of one absolute path: never files, never file contents; hidden
+  // (dot-prefixed) entries excluded; sorted case-insensitively; capped at
+  // FS_DIRS_CAP (truncated:true when the cap hits). `path` omitted → the
+  // hub's home directory. Windows Explorer paths (\\wsl$\..., C:\...) are
+  // translated exactly like the launch "dir" input. Localhost trust model:
+  // this exposes strictly less than POST /api/agents/launch above, which
+  // already spawns a process in any directory the operator names (PRD 15:
+  // the trust boundary is the machine — the hub binds 127.0.0.1 only).
+  router.get("/api/fs/dirs", (req, res) => {
+    const rawPath =
+      typeof req.query.path === "string" && req.query.path.trim() !== ""
+        ? req.query.path
+        : os.homedir();
+    let target = path.normalize(normalizeIncomingPath(rawPath));
+    // Drop trailing slashes (normalize keeps them) so `path`, `parent` and
+    // the entry paths stay canonical — except the filesystem root itself.
+    if (target.length > 1) target = target.replace(/\/+$/, "");
+    if (!path.isAbsolute(target)) {
+      res.status(400).json({
+        ok: false,
+        error:
+          `"path" must be an absolute path (got "${rawPath}"). Windows Explorer ` +
+          `WSL paths (\\\\wsl$\\<distro>\\...) and drive paths (C:\\...) are ` +
+          `accepted and translated automatically.`,
+      });
+      return;
+    }
+    let isDirectory = false;
+    try {
+      isDirectory = fs.statSync(target).isDirectory();
+    } catch {
+      isDirectory = false;
+    }
+    if (!isDirectory) {
+      res.status(400).json({
+        ok: false,
+        error: `Not a browsable directory: ${target} (it does not exist or is not a directory).`,
+      });
+      return;
+    }
+
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(target, { withFileTypes: true });
+    } catch (err) {
+      res.status(400).json({
+        ok: false,
+        error: `Cannot list ${target}: ${err instanceof Error ? err.message : String(err)}.`,
+      });
+      return;
+    }
+
+    // Directories only. Symlinks count when they resolve to one: the launch
+    // endpoint's own fs.statSync check follows symlinks, so a symlinked
+    // project folder IS launchable and must be navigable here too.
+    const names = entries
+      .filter((entry) => !entry.name.startsWith("."))
+      .filter((entry) => {
+        if (entry.isDirectory()) return true;
+        if (!entry.isSymbolicLink()) return false;
+        try {
+          return fs.statSync(path.join(target, entry.name)).isDirectory();
+        } catch {
+          return false; // broken symlink — not navigable
+        }
+      })
+      .map((entry) => entry.name)
+      .sort((a, b) => {
+        const la = a.toLowerCase();
+        const lb = b.toLowerCase();
+        if (la !== lb) return la < lb ? -1 : 1;
+        return a < b ? -1 : a > b ? 1 : 0; // deterministic tie-break
+      });
+
+    const truncated = names.length > FS_DIRS_CAP;
+    const dirs = (truncated ? names.slice(0, FS_DIRS_CAP) : names).map((name) => {
+      const dirPath = path.join(target, name);
+      return {
+        name,
+        path: dirPath,
+        hasConversation: hasClaudeConversation(claudeProjectsDir, dirPath),
+      };
+    });
+
+    res.json({
+      ok: true,
+      path: target,
+      parent: target === "/" ? null : path.dirname(target),
+      home: os.homedir(),
+      dirs,
+      ...(truncated ? { truncated: true } : {}),
+    });
   });
 
   // POST /api/agents/:name/mute — body {muted: boolean}. Messages keep being

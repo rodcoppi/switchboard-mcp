@@ -322,6 +322,81 @@
     .launch-btn:hover { filter: brightness(1.08); }
     .launch-btn:disabled { opacity: 0.55; cursor: default; }
 
+    /* ----------------------------- Dir picker ---------------------------- */
+    /* "Browse…" panel of the Launch agent form: navigates the hub machine's
+       directories via GET /api/fs/dirs (directory NAMES only) so the operator
+       can pick the working folder by click instead of typing a POSIX path. */
+    .launcher-dir-row { display: flex; gap: 6px; }
+    .launcher-dir-row .launch-input { flex: 1 1 auto; min-width: 0; }
+    .dirpicker-browse { flex: 0 0 auto; font-size: 11px; padding: 4px 9px; }
+    .dirpicker {
+      display: flex; flex-direction: column; gap: 6px;
+      margin-top: 6px;
+      padding: 8px;
+      background: var(--bg-inset);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+    }
+    .dirpicker[hidden] { display: none; }
+    .dirpicker-head { display: flex; align-items: center; gap: 8px; }
+    .dirpicker-path {
+      flex: 1 1 auto; min-width: 0;
+      font-family: var(--mono); font-size: 11px; color: var(--text-dim);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .dirpicker-close {
+      flex: 0 0 auto;
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--text-dim);
+      font-size: 11px;
+      padding: 1px 7px;
+      line-height: 1.4;
+    }
+    .dirpicker-close:hover { color: var(--text); border-color: var(--danger); }
+    .dirpicker-list {
+      display: flex; flex-direction: column;
+      max-height: 180px; overflow-y: auto;
+    }
+    .dirpicker-entry {
+      display: flex; align-items: center; gap: 8px;
+      padding: 4px 6px;
+      border-radius: 4px;
+      font-family: var(--mono); font-size: 12px;
+      color: var(--text);
+      cursor: pointer;
+      user-select: none;
+    }
+    .dirpicker-entry:hover { background: var(--bg-hover); }
+    .dirpicker-up { color: var(--text-dim); }
+    .dirpicker-name {
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .dirpicker-badge {
+      flex: 0 0 auto; margin-left: auto;
+      font-size: 9.5px; letter-spacing: 0.5px;
+      padding: 1px 5px;
+      border-radius: 4px;
+      border: 1px solid color-mix(in srgb, var(--ok) 45%, transparent);
+      color: var(--ok);
+    }
+    .dirpicker-hint {
+      padding: 4px 6px;
+      color: var(--text-faint);
+      font-family: var(--sans); font-size: 11px;
+    }
+    .dirpicker-foot { display: flex; justify-content: flex-end; }
+    .dirpicker-select {
+      background: var(--bg-elev);
+      color: var(--accent);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-size: 11px; font-weight: 600;
+      padding: 3px 10px;
+    }
+    .dirpicker-select:hover { border-color: var(--accent); }
+
     /* ------------------------------- Main -------------------------------- */
     .main { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 
@@ -508,8 +583,26 @@
         <div class="launcher-title">Launch agent</div>
         <div>
           <label class="launcher-label" for="launch-dir">directory (absolute path)</label>
-          <input class="launch-input" id="launch-dir" name="dir"
-            placeholder="/home/you/project" spellcheck="false" />
+          <div class="launcher-dir-row">
+            <input class="launch-input" id="launch-dir" name="dir"
+              placeholder="/home/you/project — \\wsl$\… and C:\… accepted too"
+              spellcheck="false" />
+            <button class="btn dirpicker-browse" id="dirpicker-browse" type="button"
+              title="Browse the WSL filesystem and pick a folder">Browse…</button>
+          </div>
+          <div class="dirpicker" id="dirpicker" hidden>
+            <div class="dirpicker-head">
+              <span class="dirpicker-path" id="dirpicker-path"></span>
+              <button class="dirpicker-close" id="dirpicker-close" type="button"
+                title="Close (Esc)">✕</button>
+            </div>
+            <div class="dirpicker-list" id="dirpicker-list"></div>
+            <div class="dirpicker-foot">
+              <button class="dirpicker-select" id="dirpicker-select" type="button">
+                Use this folder
+              </button>
+            </div>
+          </div>
         </div>
         <div class="launcher-grid">
           <div>
@@ -1166,6 +1259,83 @@
     }
 
     // =====================================================================
+    // Dir picker — the launcher form's "Browse…" panel
+    // =====================================================================
+    // Lists the hub machine's directories via GET /api/fs/dirs (directory
+    // NAMES only) so the operator picks the working folder by click instead
+    // of typing a POSIX path (Windows Explorer paths pasted into the input
+    // are translated server-side either way). Every server value rendered
+    // here (paths, folder names) goes through el()/textContent — never
+    // innerHTML (same XSS rule as the rest of this file).
+
+    const dirpickerState = { path: null };
+
+    async function dirpickerLoad(targetPath) {
+      const list = $("#dirpicker-list");
+      list.textContent = "";
+      list.appendChild(el("div", "dirpicker-hint", "loading…"));
+      try {
+        // No path → the hub answers with its home directory.
+        const url = targetPath
+          ? `/api/fs/dirs?path=${encodeURIComponent(targetPath)}`
+          : "/api/fs/dirs";
+        const res = await fetch(url);
+        const data = await res.json().catch(() => ({}));
+        list.textContent = "";
+        if (!res.ok || !data.ok) {
+          toast(data.error || `Failed to list folders (HTTP ${res.status}).`, "error");
+          list.appendChild(el("div", "dirpicker-hint", "Could not open this folder."));
+          return;
+        }
+        dirpickerState.path = data.path;
+        const pathEl = $("#dirpicker-path");
+        pathEl.textContent = data.path;
+        pathEl.title = data.path;
+        if (data.parent !== null) {
+          const up = el("div", "dirpicker-entry dirpicker-up", "..");
+          up.title = data.parent;
+          up.addEventListener("click", () => dirpickerLoad(data.parent));
+          list.appendChild(up);
+        }
+        for (const d of data.dirs) {
+          const row = el("div", "dirpicker-entry");
+          row.title = d.path;
+          row.appendChild(el("span", "dirpicker-name", d.name));
+          if (d.hasConversation) {
+            const badge = el("span", "dirpicker-badge", "conversation");
+            badge.title =
+              "This folder has a previous Claude Code conversation " +
+              "(resumable with “continue conversation”).";
+            row.appendChild(badge);
+          }
+          row.addEventListener("click", () => dirpickerLoad(d.path));
+          list.appendChild(row);
+        }
+        if (data.dirs.length === 0) {
+          list.appendChild(el("div", "dirpicker-hint", "No subfolders."));
+        }
+        if (data.truncated) {
+          list.appendChild(
+            el("div", "dirpicker-hint", "Listing truncated at 500 folders."),
+          );
+        }
+      } catch {
+        list.textContent = "";
+        list.appendChild(el("div", "dirpicker-hint", "Network failure while listing folders."));
+        toast("Network failure while listing folders.", "error");
+      }
+    }
+
+    function dirpickerOpen() {
+      $("#dirpicker").hidden = false;
+      dirpickerLoad(null); // always starts at the hub's home directory
+    }
+
+    function dirpickerClose() {
+      $("#dirpicker").hidden = true;
+    }
+
+    // =====================================================================
     // Bootstrap
     // =====================================================================
 
@@ -1249,6 +1419,17 @@
 
       // Launcher wiring.
       $("#launcher").addEventListener("submit", launchAgent);
+
+      // Dir picker wiring (the launcher form's "Browse…" panel).
+      $("#dirpicker-browse").addEventListener("click", dirpickerOpen);
+      $("#dirpicker-close").addEventListener("click", dirpickerClose);
+      $("#dirpicker-select").addEventListener("click", () => {
+        if (dirpickerState.path) $("#launch-dir").value = dirpickerState.path;
+        dirpickerClose();
+      });
+      document.addEventListener("keydown", (ev) => {
+        if (ev.key === "Escape" && !$("#dirpicker").hidden) dirpickerClose();
+      });
 
       // Bootstrap snapshot (agents + messages + health) BEFORE the live stream,
       // so the SSE only ever adds to a populated view (PRD Phase 6 behavior).

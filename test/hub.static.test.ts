@@ -57,6 +57,13 @@ describe("Phase 6 — static dashboard serving", () => {
       "unread-badge",
       "launcher",
       "launch-btn",
+      // Dir picker (the launcher form's "Browse…" WSL folder browser).
+      "dirpicker",
+      "dirpicker-path",
+      "dirpicker-up",
+      "dirpicker-entry",
+      "dirpicker-badge",
+      "dirpicker-select",
     ]) {
       expect(html, `missing semantic class .${cls}`).toContain(cls);
     }
@@ -66,6 +73,8 @@ describe("Phase 6 — static dashboard serving", () => {
     expect(html).toContain("/api/messages");
     // The "Launch agent" form posts to the server-side launcher.
     expect(html).toContain("/api/agents/launch");
+    // The Browse… panel lists folders through the fs endpoint.
+    expect(html).toContain("/api/fs/dirs");
   });
 
   it("GET /index.html serves the same dashboard file", async () => {

@@ -43,6 +43,12 @@ export interface HubOptions {
    * POST /api/agents/launch answers 501 (like the manual-nudge placeholder).
    */
   launcher?: LauncherTuning;
+  /**
+   * Claude Code projects dir for the folder browser's "conversation" badge
+   * (GET /api/fs/dirs). Default ~/.claude/projects; tests MUST inject a temp
+   * dir so they never read the operator's real conversation index.
+   */
+  claudeProjectsDir?: string;
   /** MCP session idle expiry / sweep cadence — injectable for tests. */
   sessionIdleTimeoutMs?: number;
   sessionSweepIntervalMs?: number;
@@ -163,6 +169,7 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
       onMessage,
       nudger: dispatcher,
       launcher,
+      claudeProjectsDir: options.claudeProjectsDir,
       startedAt,
       version,
       heartbeatMs: options.heartbeatMs,

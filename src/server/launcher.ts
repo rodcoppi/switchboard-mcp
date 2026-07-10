@@ -54,6 +54,49 @@ import {
 } from "../cli/start.js";
 
 /**
+ * Translates the path shapes a Windows-side operator realistically pastes
+ * into the dashboard (Windows Explorer shows WSL folders under \\wsl$\... and
+ * its "Copy as path" wraps paths in quotes) into the POSIX path the hub can
+ * actually use. Pure; exported for unit tests. Rules, in order:
+ *
+ * - trim, then strip ONE pair of surrounding single/double quotes;
+ * - `\\wsl$\<distro>\rest` or `\\wsl.localhost\<distro>\rest` (host
+ *   case-insensitive, any distro name) → `/rest` with every `\` → `/`.
+ *   The distro segment is DROPPED on purpose: the hub runs inside the only
+ *   distro it can launch into, so the segment carries no information here —
+ *   a path copied from ANOTHER distro simply won't exist and fails the
+ *   directory-exists validation downstream with a clear error;
+ * - `X:\rest` (drive letter, either separator after the colon) →
+ *   `/mnt/<x lowercase>/rest` with every `\` → `/` (the standard WSL
+ *   automount of Windows drives);
+ * - any other `\\server\share` UNC and everything else: returned unchanged —
+ *   the caller's absolute-path validation rejects what remains invalid.
+ */
+export function normalizeIncomingPath(raw: string): string {
+  let s = raw.trim();
+  if (
+    s.length >= 2 &&
+    ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'")))
+  ) {
+    s = s.slice(1, -1);
+  }
+  // \\wsl$\<distro>\rest  or  \\wsl.localhost\<distro>\rest → /rest
+  const wsl = /^\\\\(?:wsl\$|wsl\.localhost)\\[^\\/]+([\\/].*)?$/i.exec(s);
+  if (wsl) {
+    const rest = (wsl[1] ?? "").replace(/\\/g, "/");
+    return rest === "" ? "/" : rest;
+  }
+  // X:\rest → /mnt/<x>/rest (WSL automount of Windows drives).
+  const drive = /^([A-Za-z]):[\\/](.*)$/.exec(s);
+  if (drive) {
+    const mount = `/mnt/${drive[1].toLowerCase()}`;
+    const rest = drive[2].replace(/\\/g, "/");
+    return rest === "" ? mount : `${mount}/${rest}`;
+  }
+  return s;
+}
+
+/**
  * Launch failure with an actionable English message (written for the operator
  * reading the dashboard toast). `status` maps it to the HTTP layer: 400 for
  * input/validation problems (bad dir, invalid/reserved name), 500 for
@@ -174,11 +217,17 @@ export function createLauncher(options: LauncherOptions): Launcher {
         `Missing "dir": provide the absolute path of the directory the agent should work in.`,
       );
     }
-    const cwd = path.normalize(expandHome(rawDir));
+    // Windows Explorer shapes (\\wsl$\..., C:\..., quoted paths) are
+    // translated FIRST, so a path pasted straight from the Windows side just
+    // works (real user report: Explorer hands out \\wsl$\<distro>\... for WSL
+    // folders).
+    const cwd = path.normalize(expandHome(normalizeIncomingPath(rawDir)));
     if (!path.isAbsolute(cwd)) {
       throw new LaunchError(
         `"dir" must be an absolute path (got "${rawDir}"): the hub cannot resolve ` +
-          `relative paths against your shell. Use e.g. /home/you/project or ~/project.`,
+          `relative paths against your shell. Use e.g. /home/you/project or ~/project — ` +
+          `Windows Explorer WSL paths (\\\\wsl$\\<distro>\\...) and drive paths ` +
+          `(C:\\...) are also accepted and translated automatically.`,
       );
     }
     let isDirectory = false;
