@@ -27,7 +27,27 @@ content always travels over MCP.**
 
 ---
 
-## Setup in 5 steps
+## Setup — two commands
+
+```bash
+git clone <repo-url> switchboard-mcp && cd switchboard-mcp && npm install
+node bin/switchboard.mjs setup
+```
+
+The `setup` wizard does everything the manual steps below describe — checking prerequisites
+(and offering a **sudo-less tmux install** when tmux is missing), registering the MCP server
+in Claude Code, installing the agent-protocol snippet into your `~/.claude/CLAUDE.md`, adding
+the permission allow rules, running `npm link`, offering the Windows one-click shortcut
+(Desktop and/or Startup, WSL setups), and bringing the Hub up. It asks before touching any of
+your files, is **idempotent** (safe to re-run anytime), and `--yes` makes it fully
+non-interactive.
+
+When it finishes: dashboard at `http://localhost:4577/`, launch agents from the **Launch
+agent** form there, and run `switchboard wire` inside any already-open claude window's folder
+to adopt it into the network.
+
+<details>
+<summary><b>Manual setup</b> (what the wizard automates, step by step)</summary>
 
 ### 1. Install
 
@@ -153,6 +173,8 @@ What happens:
 
 `start` flags: `--role "<description>"`, `--dir <path>`, `--no-kickoff`,
 `--claude-args "<extra args for claude>"`.
+
+</details>
 
 ### Adopting an already-open agent (`wire`)
 

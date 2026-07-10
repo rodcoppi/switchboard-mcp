@@ -1,5 +1,5 @@
 // CLI entry point (PRD sections 6 and 11): dispatches the subcommands
-// serve | up | start <name> | wire | status | send <to> <msg...> |
+// serve | up | setup | start <name> | wire | status | send <to> <msg...> |
 // stop <name> | down | logs [-f], each implemented in src/cli/*.ts. Also
 // mounts the hidden kickoff-agent re-entry used by the detached kickoff of
 // `start`/`wire`.
@@ -14,6 +14,7 @@ import { Command } from "commander";
 import { registerServeCommand } from "./cli/serve.js";
 import { registerUpCommand } from "./cli/up.js";
 import { registerShortcutCommand } from "./cli/shortcut.js";
+import { registerSetupCommand } from "./cli/setup.js";
 import { registerKickoffAgentCommand, registerStartCommand } from "./cli/start.js";
 import { registerWireCommand } from "./cli/wire.js";
 import { registerStatusCommand } from "./cli/status.js";
@@ -34,6 +35,7 @@ program
 registerServeCommand(program);
 registerUpCommand(program);
 registerShortcutCommand(program);
+registerSetupCommand(program);
 registerStartCommand(program);
 registerWireCommand(program);
 registerKickoffAgentCommand(program);
