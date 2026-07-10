@@ -82,6 +82,21 @@ To inspect the auto-started Hub: `tmux attach -t sb-hub` (detach with `Ctrl-b d`
 `switchboard logs -f`. Useful flags of `serve`: `--port <port>` and
 `--log-level debug|info|warn|error`.
 
+#### One-click launch from Windows (no WSL terminal)
+
+On Windows + WSL you can skip the terminal entirely. Once, inside WSL:
+
+```bash
+switchboard shortcut            # creates Switchboard.bat on your Windows Desktop
+switchboard shortcut --startup  # or: installs it in the Startup folder (runs on every boot)
+```
+
+Double-clicking `Switchboard.bat` (or booting Windows, with `--startup`) brings the Hub up in
+the background and opens the dashboard at `http://localhost:4577/` in your Windows browser —
+WSL2's built-in localhost forwarding reaches the Hub, which still binds `127.0.0.1` inside WSL
+only (nothing is exposed to the network). From the dashboard, launch/wire agents with the
+**Launch agent** form. To undo, just delete the `.bat` file.
+
 ### 3. Register the MCP in Claude Code (`mcp add`)
 
 Once only, in the `user` scope (applies to every project):

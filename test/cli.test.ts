@@ -24,6 +24,8 @@ import { describeDelivery } from "../src/cli/send.js";
 import { runLogs, tailLines } from "../src/cli/logs.js";
 import { CliError, checkHubHealth, formatRelative } from "../src/cli/common.js";
 import { serveHeaderLines } from "../src/cli/serve.js";
+import { runUp } from "../src/cli/up.js";
+import { runShortcut, shortcutBatContent } from "../src/cli/shortcut.js";
 import { createTmux, quoteShellArg, type ExecFn } from "../src/server/tmux.js";
 import type { Delivery } from "../src/shared/types.js";
 
@@ -637,6 +639,105 @@ describe("runLogs", () => {
 
     controller.abort();
     await done; // resolves cleanly (same path as Ctrl-C)
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runUp — the one-click launcher core: ensure the hub, print the dashboard.
+// ---------------------------------------------------------------------------
+
+describe("runUp", () => {
+  it("runs the ensureHub strategy and prints where the dashboard lives", async () => {
+    const printed: string[] = [];
+    const ensured: string[] = [];
+    await runUp({
+      hubUrl: "http://127.0.0.1:4599",
+      out: (l) => printed.push(l),
+      ensureHub: async (url) => {
+        ensured.push(url);
+      },
+    });
+    expect(ensured).toEqual(["http://127.0.0.1:4599"]);
+    expect(printed.join("\n")).toContain("Dashboard: http://127.0.0.1:4599/");
+  });
+
+  it("propagates the auto-start failure as-is (clear CliError for the shortcut window)", async () => {
+    await expect(
+      runUp({
+        hubUrl: "http://127.0.0.1:9",
+        ensureHub: async () => {
+          throw new CliError("Could not auto-start the Hub at http://127.0.0.1:9.");
+        },
+      }),
+    ).rejects.toThrow(/Could not auto-start the Hub/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// shortcut — one-click Windows launcher for WSL setups.
+// ---------------------------------------------------------------------------
+
+describe("shortcut", () => {
+  it("shortcutBatContent: CRLF, wsl -d <distro>, login shell, absolute shim, up, dashboard port", () => {
+    const bat = shortcutBatContent({ distro: "Ubuntu", shimPath: "/home/u/sb/bin/switchboard.mjs", port: 4577 });
+    expect(bat).toContain("\r\n"); // cmd.exe-safe line endings
+    expect(bat).toContain(
+      `wsl.exe -d Ubuntu -- bash -lc "node '/home/u/sb/bin/switchboard.mjs' up"`,
+    );
+    expect(bat).toContain('start "" http://localhost:4577/');
+    expect(bat).toContain("if errorlevel 1"); // failure keeps the window open (pause)
+    expect(bat).toContain("pause");
+    // ASCII only — no codepage surprises in cmd.exe.
+    expect(/^[\x00-\x7F]*$/.test(bat)).toBe(true);
+  });
+
+  it("runShortcut writes Switchboard.bat into the resolved Windows folder (Desktop by default)", async () => {
+    const written: Array<{ p: string; c: string }> = [];
+    const printed: string[] = [];
+    await runShortcut({
+      distro: "Ubuntu",
+      shimPath: "/repo/bin/switchboard.mjs",
+      baseDir: path.join(os.tmpdir(), "sb-none-" + process.pid), // defaults: port 4577
+      out: (l) => printed.push(l),
+      resolveFolder: async (folder) => `/mnt/c/Users/u/${folder}`,
+      writeFile: (p, c) => written.push({ p, c }),
+    });
+    expect(written).toHaveLength(1);
+    expect(written[0].p).toBe("/mnt/c/Users/u/Desktop/Switchboard.bat");
+    expect(written[0].c).toContain("wsl.exe -d Ubuntu");
+    expect(printed.join("\n")).toContain("Shortcut created: /mnt/c/Users/u/Desktop/Switchboard.bat");
+  });
+
+  it("--startup targets the Startup folder and says it runs on boot", async () => {
+    const written: string[] = [];
+    const printed: string[] = [];
+    await runShortcut({
+      startup: true,
+      distro: "Ubuntu",
+      shimPath: "/repo/bin/switchboard.mjs",
+      baseDir: path.join(os.tmpdir(), "sb-none-" + process.pid),
+      out: (l) => printed.push(l),
+      resolveFolder: async (folder) => `/mnt/c/Users/u/${folder}`,
+      writeFile: (p) => {
+        written.push(p);
+      },
+    });
+    expect(written).toEqual(["/mnt/c/Users/u/Startup/Switchboard.bat"]);
+    expect(printed.join("\n")).toContain("on every boot");
+  });
+
+  it("outside WSL → clear error (no Windows side to install a shortcut on)", async () => {
+    // `distro` falls back to WSL_DISTRO_NAME, which IS set on this machine —
+    // clear it for the assertion and restore right after.
+    const prev = process.env.WSL_DISTRO_NAME;
+    delete process.env.WSL_DISTRO_NAME;
+    try {
+      await expect(
+        runShortcut({ resolveFolder: async () => "/x", writeFile: () => {} }),
+      ).rejects.toThrow(/Windows \+ WSL setups/);
+    } finally {
+      if (prev !== undefined) process.env.WSL_DISTRO_NAME = prev;
+    }
   });
 });
 
