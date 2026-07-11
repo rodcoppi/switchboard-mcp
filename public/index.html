@@ -250,7 +250,30 @@
       border-color: var(--warn);
       color: var(--warn);
     }
-    .mute-toggle, .nudge-btn, .reopen-btn, .remove-btn {
+    /* Card actions: one primary button + a compact ⋯ menu (owner UX call). */
+    .agent-actions { display: flex; align-items: center; gap: 6px; }
+    .open-btn, .reopen-btn {
+      border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+      color: var(--accent);
+    }
+    .agent-menu-wrap { position: relative; }
+    .agent-menu {
+      position: absolute;
+      right: 0;
+      top: calc(100% + 4px);
+      z-index: 30;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 6px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+      min-width: 96px;
+    }
+    .agent-menu-item { text-align: left; }
+    .mute-toggle, .nudge-btn, .open-btn, .reopen-btn, .remove-btn, .menu-btn {
       background: transparent;
       border: 1px solid var(--border);
       border-radius: 4px;
@@ -259,7 +282,7 @@
       padding: 2px 7px;
       line-height: 1.3;
     }
-    .mute-toggle:hover, .nudge-btn:hover, .reopen-btn:hover, .remove-btn:hover { color: var(--text); border-color: var(--accent); }
+    .mute-toggle:hover, .nudge-btn:hover, .open-btn:hover, .reopen-btn:hover, .remove-btn:hover, .menu-btn:hover { color: var(--text); border-color: var(--accent); }
     .mute-toggle.muted { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
     .nudge-btn.nudging { animation: pulse 0.6s ease-out; }
     @keyframes pulse {
@@ -822,71 +845,143 @@
         badges.appendChild(badge);
       }
 
-      // Actions: mute toggle + nudge button. Stop propagation so a control
-      // click never toggles the card's feed filter.
+      // Actions (owner UX feedback: one PRIMARY action per state, the rest in
+      // a compact ⋯ menu — four inline buttons crowded the card):
+      //   online  → [open]   + ⋯(nudge, mute)
+      //   offline → [reopen] + ⋯(mute, remove)
+      // Stop propagation everywhere so a control click never toggles the
+      // card's feed filter.
       const actions = el("div", "agent-actions");
-      const mute = el(
+      const online = agent.status === "online";
+
+      const primary = el(
         "button",
-        `mute-toggle${agent.muted ? " muted" : ""}`,
-        agent.muted ? "unmute" : "mute",
+        online ? "open-btn" : "reopen-btn",
+        online ? "open" : "reopen",
       );
-      mute.type = "button";
-      mute.title = agent.muted ? "Unmute nudges" : "Mute nudges (messages are still recorded)";
-      mute.addEventListener("click", (ev) => {
+      primary.type = "button";
+      primary.title = online
+        ? `Open a Windows terminal window attached to "${agent.name}"`
+        : `Relaunch "${agent.name}" in ${agent.cwd} (continues its conversation) and open its window`;
+      primary.addEventListener("click", (ev) => {
         ev.stopPropagation();
-        toggleMute(agent.name, !agent.muted);
+        if (online) openAgentTerminal(agent.name, primary);
+        else reopenAgent(agent, primary);
       });
 
-      const nudge = el("button", "nudge-btn", "nudge");
-      nudge.type = "button";
-      nudge.dataset.nudgeFor = agent.name;
-      nudge.title = "Force a manual nudge (respects the pane guard)";
-      nudge.addEventListener("click", (ev) => {
-        ev.stopPropagation();
-        forceNudge(agent.name);
-      });
+      const menuWrap = el("div", "agent-menu-wrap");
+      const kebab = el("button", "menu-btn", "⋯");
+      kebab.type = "button";
+      kebab.title = "More actions";
+      const menu = el("div", "agent-menu");
+      menu.hidden = true;
 
-      actions.append(mute, nudge);
-
-      // Offline-only history management: Reopen relaunches the agent in its
-      // registered folder continuing that folder's conversation (same
-      // launch+fallback path as the form); Remove deletes the REGISTRATION
-      // (messages stay in the JSONL) after an inline two-click confirmation
-      // (no blocking browser dialogs).
-      if (agent.status !== "online") {
-        const reopen = el("button", "reopen-btn", "reopen");
-        reopen.type = "button";
-        reopen.title = `Relaunch "${agent.name}" in ${agent.cwd} (continues its conversation)`;
-        reopen.addEventListener("click", (ev) => {
+      function menuItem(cls, label, title, onClick) {
+        const item = el("button", `agent-menu-item ${cls}`, label);
+        item.type = "button";
+        item.title = title;
+        item.addEventListener("click", (ev) => {
           ev.stopPropagation();
-          reopenAgent(agent, reopen);
+          onClick(item);
         });
-
-        const remove = el("button", "remove-btn", "remove");
-        remove.type = "button";
-        remove.title = "Remove this agent from the Hub registry (messages are kept)";
-        remove.addEventListener("click", (ev) => {
-          ev.stopPropagation();
-          if (remove.dataset.confirming === "1") {
-            removeAgent(agent.name);
-            return;
-          }
-          remove.dataset.confirming = "1";
-          remove.textContent = "sure?";
-          remove.classList.add("confirming");
-          setTimeout(() => {
-            remove.dataset.confirming = "";
-            remove.textContent = "remove";
-            remove.classList.remove("confirming");
-          }, 3000);
-        });
-
-        actions.append(reopen, remove);
+        return item;
       }
+
+      menu.appendChild(
+        menuItem(
+          "nudge-btn",
+          "nudge",
+          "Force a manual nudge (respects the pane guard)",
+          () => {
+            closeMenus();
+            forceNudge(agent.name);
+          },
+        ),
+      );
+      menu.appendChild(
+        menuItem(
+          `mute-toggle${agent.muted ? " muted" : ""}`,
+          agent.muted ? "unmute" : "mute",
+          agent.muted ? "Unmute nudges" : "Mute nudges (messages are still recorded)",
+          () => {
+            closeMenus();
+            toggleMute(agent.name, !agent.muted);
+          },
+        ),
+      );
+      if (!online) {
+        // Remove: two-click inline confirmation (no blocking browser dialogs).
+        menu.appendChild(
+          menuItem(
+            "remove-btn",
+            "remove",
+            "Remove this agent from the Hub registry (messages are kept)",
+            (item) => {
+              if (item.dataset.confirming === "1") {
+                closeMenus();
+                removeAgent(agent.name);
+                return;
+              }
+              item.dataset.confirming = "1";
+              item.textContent = "sure?";
+              item.classList.add("confirming");
+              setTimeout(() => {
+                item.dataset.confirming = "";
+                item.textContent = "remove";
+                item.classList.remove("confirming");
+              }, 3000);
+            },
+          ),
+        );
+      }
+
+      kebab.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        const wasHidden = menu.hidden;
+        closeMenus();
+        menu.hidden = !wasHidden;
+      });
+      menuWrap.append(kebab, menu);
+
+      actions.append(primary, menuWrap);
+
+      // dataset hook kept for the nudge pulse animation (SSE nudge_sent).
+      const pulseTarget = menu.querySelector(".nudge-btn");
+      if (pulseTarget) pulseTarget.dataset.nudgeFor = agent.name;
 
       card.append(dot, name, badges, role, actions);
       card.addEventListener("click", () => setFilter(agent.name));
       return card;
+    }
+
+    /** One menu open at a time; outside click / Esc closes (wired once below). */
+    function closeMenus() {
+      document.querySelectorAll(".agent-menu").forEach((m) => {
+        m.hidden = true;
+      });
+    }
+    document.addEventListener("click", closeMenus);
+    document.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape") closeMenus();
+    });
+
+    async function openAgentTerminal(name, btn) {
+      if (btn) btn.disabled = true;
+      try {
+        const res = await fetch(`/api/agents/${encodeURIComponent(name)}/terminal`, {
+          method: "POST",
+        });
+        const body = await res.json();
+        if (!res.ok || !body.ok) {
+          toast(body.error || `Could not open a window (HTTP ${res.status}).`, "warn");
+          return;
+        }
+        toast(`Windows terminal opened for "${name}".`);
+      } catch (err) {
+        toast(`Could not open a window: ${err && err.message ? err.message : err}`, "warn");
+      } finally {
+        if (btn) btn.disabled = false;
+      }
     }
 
     async function reopenAgent(agent, btn) {
@@ -900,6 +995,7 @@
             dir: agent.cwd,
             name: agent.name,
             continue: true,
+            openTerminal: true,
           }),
         });
         const body = await res.json();
@@ -907,10 +1003,15 @@
           toast(`Reopen failed: ${body.error || `HTTP ${res.status}`}`, "warn");
           return;
         }
+        const conv = body.fallback
+          ? "with a FRESH conversation (no resumable one found)"
+          : "continuing its conversation";
         toast(
-          body.fallback
-            ? `Agent "${agent.name}" reopened with a FRESH conversation (no resumable one found).`
-            : `Agent "${agent.name}" reopened, continuing its conversation.`,
+          body.terminalOpened
+            ? `Agent "${agent.name}" reopened ${conv} — its window is opening.`
+            : `Agent "${agent.name}" reopened ${conv}. No window could open — ` +
+                `use the card's "open" button or: tmux attach -t ${agent.tmuxSession}`,
+          body.terminalOpened ? "ok" : "warn",
         );
       } catch (err) {
         toast(`Reopen failed: ${err && err.message ? err.message : err}`, "warn");
@@ -1322,7 +1423,9 @@
       btn.disabled = true;
       btn.textContent = "launching…";
       try {
-        const payload = { dir, continue: $("#launch-continue").checked };
+        // openTerminal: a launched agent should be VISIBLE — a Windows window
+        // pops attached to its session (owner feedback; best-effort hub-side).
+        const payload = { dir, continue: $("#launch-continue").checked, openTerminal: true };
         if (name) payload.name = name;
         if (role) payload.role = role;
         const res = await fetch("/api/agents/launch", {
@@ -1345,7 +1448,8 @@
         }
         toast(
           `Agent ${agentName} launched` +
-            `${data.replaced ? " (replaced its previous session)" : ""}. ` +
+            `${data.replaced ? " (replaced its previous session)" : ""}` +
+            `${data.terminalOpened ? " — its window is opening" : ""}. ` +
             `The kickoff will instruct it to join.`,
           "ok",
         );

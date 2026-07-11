@@ -463,12 +463,14 @@ export function createApiRouter(options: ApiOptions): express.Router {
         return;
       }
     }
-    if (raw.continue !== undefined && typeof raw.continue !== "boolean") {
-      res.status(400).json({
-        ok: false,
-        error: `Invalid body: field "continue" must be a boolean when present.`,
-      });
-      return;
+    for (const key of ["continue", "openTerminal"] as const) {
+      if (raw[key] !== undefined && typeof raw[key] !== "boolean") {
+        res.status(400).json({
+          ok: false,
+          error: `Invalid body: field "${key}" must be a boolean when present.`,
+        });
+        return;
+      }
     }
 
     try {
@@ -477,6 +479,7 @@ export function createApiRouter(options: ApiOptions): express.Router {
         name: raw.name as string | undefined,
         role: raw.role as string | undefined,
         continueConversation: (raw.continue as boolean | undefined) ?? false,
+        openTerminal: (raw.openTerminal as boolean | undefined) ?? false,
       });
       log.info(
         `[api] launch: agent ${result.agent.name} launched from the dashboard ` +
@@ -487,6 +490,9 @@ export function createApiRouter(options: ApiOptions): express.Router {
         agent: result.agent,
         replaced: result.replaced,
         fallback: result.fallback,
+        ...(result.terminalOpened === undefined
+          ? {}
+          : { terminalOpened: result.terminalOpened }),
       });
     } catch (err) {
       if (err instanceof LaunchError) {
@@ -498,6 +504,35 @@ export function createApiRouter(options: ApiOptions): express.Router {
       log.error(`[api] unexpected error launching an agent:`, err);
       res.status(500).json({ ok: false, error: "Internal Hub error." });
     }
+  });
+
+  // POST /api/agents/:name/terminal — dashboard "open" button: pops a WINDOWS
+  // terminal window attached to the agent's live tmux session (WSL interop;
+  // wt.exe with a cmd.exe fallback). Owner feedback drove this: an agent
+  // running in a detached background session is invisible — "might as well
+  // not exist". 409 with the reason when a window cannot open (non-WSL hub,
+  // dead session); the reason always includes the manual `tmux attach` line.
+  router.post("/api/agents/:name/terminal", async (req, res) => {
+    const name = req.params.name;
+    if (!store.getAgent(name)) {
+      res.status(404).json({ ok: false, error: `Unknown agent: "${name}".` });
+      return;
+    }
+    if (!launcher) {
+      res.status(501).json({
+        ok: false,
+        error:
+          "Terminal windows unavailable: this hub was started without the tmux launcher " +
+          "(custom onMessage).",
+      });
+      return;
+    }
+    const result = await launcher.openTerminal(name);
+    if (result.opened) {
+      res.json({ ok: true, opened: true });
+      return;
+    }
+    res.status(409).json({ ok: false, error: result.reason ?? "Could not open a window." });
   });
 
   // GET /api/fs/dirs?path=<abs> — the dashboard's folder browser (backs the

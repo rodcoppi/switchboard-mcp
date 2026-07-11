@@ -133,6 +133,13 @@ export interface LaunchInput {
   role?: string;
   /** true → `claude -c` (resume the folder's conversation), with auto-fallback. */
   continueConversation?: boolean;
+  /**
+   * true → after a successful launch, pop a WINDOWS terminal window attached
+   * to the agent's tmux session (WSL interop; best-effort — a launch never
+   * fails because a window could not open). Owner feedback: an agent running
+   * invisibly in a detached session "might as well not exist".
+   */
+  openTerminal?: boolean;
 }
 
 export interface LaunchResult {
@@ -146,6 +153,63 @@ export interface LaunchResult {
    * "no resumable conversation — opened a fresh session".
    */
   fallback: boolean;
+  /** Present when openTerminal was requested: did a window actually open? */
+  terminalOpened?: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Windows terminal opener (WSL interop): pops a Windows Terminal window (or a
+// classic console via `cmd.exe /c start` when wt.exe is absent) already
+// attached to an agent's tmux session. Verified empirically: the interop
+// socket inherited by the hub's tmux session works, and `bash -lc` (login
+// shell) resolves the user-space tmux from ~/.local/bin.
+// ---------------------------------------------------------------------------
+
+export type TerminalExec = (
+  file: string,
+  args: string[],
+  opts?: { cwd?: string },
+) => Promise<unknown>;
+
+export interface TerminalOpener {
+  /** Opens a Windows window attached to `session`. Throws on failure. */
+  open(session: string): Promise<void>;
+}
+
+/**
+ * The command that runs INSIDE the new Windows window. Session names are
+ * store-validated ([a-z0-9-] + the sb- prefix), safe to single-quote. `exec`
+ * replaces the shell so closing claude/tmux closes the window cleanly.
+ */
+export function terminalAttachArgs(distro: string, session: string): string[] {
+  return ["wsl.exe", "-d", distro, "--", "bash", "-lc", `exec tmux attach -t '=${session}'`];
+}
+
+/**
+ * Builds the opener, or null when this hub is not running under WSL (no
+ * Windows side to open a window on — callers report that clearly).
+ */
+export function createWindowsTerminalOpener(deps: {
+  exec: TerminalExec;
+  distro?: string;
+}): TerminalOpener | null {
+  const distro = deps.distro ?? process.env.WSL_DISTRO_NAME;
+  if (!distro) return null;
+  return {
+    async open(session: string): Promise<void> {
+      const attach = terminalAttachArgs(distro, session);
+      // cwd /mnt/c: Windows executables warn (and cmd.exe falls back) when
+      // started from a \\wsl$ UNC working directory.
+      const opts = { cwd: "/mnt/c" };
+      try {
+        // Windows Terminal opens a proper new window/tab.
+        await deps.exec("wt.exe", attach, opts);
+      } catch {
+        // Classic console window fallback ("" = the start window title slot).
+        await deps.exec("cmd.exe", ["/c", "start", "", ...attach], opts);
+      }
+    },
+  };
 }
 
 /**
@@ -184,10 +248,20 @@ export interface LauncherOptions extends LauncherTuning {
   config: Config;
   log: Logger;
   bus: EventBus;
+  /**
+   * Windows-window opener (WSL interop); null/absent → openTerminal reports
+   * "unavailable" (non-WSL hub or tests). hub.ts injects the real one.
+   */
+  terminalOpener?: TerminalOpener | null;
 }
 
 export interface Launcher {
   launchAgent(input: LaunchInput): Promise<LaunchResult>;
+  /**
+   * Pops a Windows window attached to a REGISTERED agent's live tmux session
+   * (dashboard "open" button). Never throws: {opened:false, reason} instead.
+   */
+  openTerminal(name: string): Promise<{ opened: boolean; reason?: string }>;
   /** Cancels pending kickoffs; called by hub.close(). Idempotent. */
   stop(): void;
 }
@@ -401,7 +475,19 @@ export function createLauncher(options: LauncherOptions): Launcher {
         `kickoff scheduled in ~${Math.round(config.kickoffDelayMs / 1000)}s.`,
     );
 
-    return { agent: toPublicAgent(agent), replaced, fallback };
+    // 8. Optional Windows window (best-effort — the launch already succeeded;
+    // a window failure only shows up in the result/toast, never as an error).
+    let terminalOpened: boolean | undefined;
+    if (input.openTerminal === true) {
+      terminalOpened = (await openTerminal(name)).opened;
+    }
+
+    return {
+      agent: toPublicAgent(agent),
+      replaced,
+      fallback,
+      ...(terminalOpened === undefined ? {} : { terminalOpened }),
+    };
   }
 
   function scheduleKickoff(name: string, session: string): void {
@@ -463,11 +549,48 @@ export function createLauncher(options: LauncherOptions): Launcher {
     }
   }
 
+  /**
+   * Dashboard "open" button: pop a Windows window attached to the agent's
+   * live session. Best-effort by contract — reports WHY instead of throwing.
+   */
+  async function openTerminal(name: string): Promise<{ opened: boolean; reason?: string }> {
+    const agent = store.getAgent(name);
+    if (!agent) return { opened: false, reason: `Unknown agent: "${name}".` };
+    const opener = options.terminalOpener;
+    if (!opener) {
+      return {
+        opened: false,
+        reason:
+          "Terminal windows are only available when the hub runs under WSL " +
+          `(attach manually: tmux attach -t ${agent.tmuxSession}).`,
+      };
+    }
+    if (!(await tmux.hasSession(agent.tmuxSession))) {
+      return {
+        opened: false,
+        reason: `The agent "${name}" has no live tmux session — reopen/launch it first.`,
+      };
+    }
+    try {
+      await opener.open(agent.tmuxSession);
+      log.info(`[launcher] Windows terminal window opened for ${name} (${agent.tmuxSession}).`);
+      return { opened: true };
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      log.warn(`[launcher] could not open a terminal window for ${name}: ${reason}`);
+      return {
+        opened: false,
+        reason: `Could not open a Windows window (${reason}). ` +
+          `Attach manually: tmux attach -t ${agent.tmuxSession}.`,
+      };
+    }
+  }
+
   function stop(): void {
     closed = true;
     for (const timer of pendingKickoffs) clearTimeout(timer);
     pendingKickoffs.clear();
   }
 
-  return { launchAgent, stop };
+  return { launchAgent, openTerminal, stop };
 }

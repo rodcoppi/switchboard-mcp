@@ -15,9 +15,18 @@ import { Store } from "./store.js";
 import { PairRateLimiter } from "./ratelimit.js";
 import { EventBus, createApiRouter } from "./api.js";
 import { createMcpEndpoint } from "./mcp.js";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { createTmux } from "./tmux.js";
 import { Dispatcher } from "./dispatcher.js";
-import { createLauncher, type Launcher, type LauncherTuning } from "./launcher.js";
+import {
+  createLauncher,
+  createWindowsTerminalOpener,
+  type Launcher,
+  type LauncherTuning,
+} from "./launcher.js";
+
+const execFileAsync = promisify(execFile);
 
 export interface HubOptions {
   /** Data directory (default ~/.switchboard). Tests MUST inject a temp dir. */
@@ -130,8 +139,20 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
     dispatcher = new Dispatcher({ store, config, log, bus, tmux });
     onMessage = dispatcher.onNewMessage;
     // Dashboard "Launch agent": same real tmux layer as the dispatcher. Tests
-    // that stub onMessage get NO launcher (endpoint answers 501).
-    launcher = createLauncher({ store, tmux, config, log, bus, ...options.launcher });
+    // that stub onMessage get NO launcher (endpoint answers 501). The Windows
+    // terminal opener rides WSL interop and is null on non-WSL hosts.
+    const terminalOpener = createWindowsTerminalOpener({
+      exec: (file, args, opts) => execFileAsync(file, args, opts),
+    });
+    launcher = createLauncher({
+      store,
+      tmux,
+      config,
+      log,
+      bus,
+      terminalOpener,
+      ...options.launcher,
+    });
   }
 
   const version = readVersion();
