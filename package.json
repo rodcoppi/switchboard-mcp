@@ -3,6 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "description": "Local hub that connects independent Claude Code instances in tmux sessions, with asynchronous message exchange via MCP and a web dashboard for observation.",
+  "license": "MIT",
+  "author": "Rodrigo Coppi Bardauil",
   "type": "module",
   "bin": {
     "switchboard": "./bin/switchboard.mjs"

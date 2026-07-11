@@ -1,38 +1,38 @@
 #!/usr/bin/env node
-// Shim do bin "switchboard" (package.json). O shebang antigo
-// (`#!/usr/bin/env -S npx tsx`) resolvia o tsx a partir do CWD DE QUEM CHAMA:
-// rodar `switchboard …` de um projeto sem tsx fazia o npx perguntar/baixar um
-// tsx@latest (drift em relação ao pinado) ou falhar offline — e o uso normal
-// do start é exatamente de dentro do projeto do agente. Este shim resolve o
-// tsx do PRÓPRIO repositório (via import.meta.url → node_modules local) e
-// re-executa src/index.ts com o loader. Sem build step (D9): o entry continua
-// .ts. A re-entrada do kickoff via process.execArgv segue correta — o tsx CLI
-// re-executa o node com o loader (caminho absoluto) no execArgv.
+// Shim for the "switchboard" bin (package.json). The old shebang
+// (`#!/usr/bin/env -S npx tsx`) resolved tsx from the CALLER's CWD: running
+// `switchboard …` from a project without tsx made npx prompt/download a
+// tsx@latest (drift from the pinned one) or fail offline — and `start` is
+// normally run from inside the agent's project. This shim resolves tsx from
+// THIS repo (via import.meta.url → local node_modules) and re-executes
+// src/index.ts with the loader. No build step (D9): the entry stays .ts. The
+// kickoff re-entry via process.execArgv stays correct — the tsx CLI re-runs
+// node with the loader (absolute path) in execArgv.
 
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
-const tsxCli = require.resolve("tsx/cli"); // node_modules/tsx DESTE repo
+const tsxCli = require.resolve("tsx/cli"); // node_modules/tsx of THIS repo
 const entry = fileURLToPath(new URL("../src/index.ts", import.meta.url));
 
 const child = spawn(process.execPath, [tsxCli, entry, ...process.argv.slice(2)], {
   stdio: "inherit",
 });
 
-// Ctrl-C chega ao grupo de processos inteiro: o filho (serve/logs -f) é quem
-// trata o sinal e encerra limpo; o shim só espera e propaga o resultado.
+// Ctrl-C reaches the whole process group: the child (serve/logs -f) is the one
+// that handles the signal and exits cleanly; the shim just waits and forwards.
 process.on("SIGINT", () => {});
 process.on("SIGTERM", () => child.kill("SIGTERM"));
 
 child.on("error", (err) => {
-  console.error(`switchboard: falha ao executar o tsx do repositório: ${String(err)}`);
+  console.error(`switchboard: failed to run the repo's tsx: ${String(err)}`);
   process.exit(1);
 });
 child.on("exit", (code, signal) => {
   if (signal !== null) {
-    process.kill(process.pid, signal); // re-lança o sinal (exit status fiel)
+    process.kill(process.pid, signal); // re-raise the signal (faithful exit status)
   } else {
     process.exit(code ?? 1);
   }
