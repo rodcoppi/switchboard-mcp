@@ -285,10 +285,13 @@ export function createTmux(options: TmuxOptions = {}): Tmux {
     // etc.). Without this tmux swallows the app title and the WT tab shows the
     // launcher command ("wsl.exe") instead of Claude Code's chat name. #T is
     // the current pane title, which the Claude TUI sets to the session name.
-    // Best-effort: a titling failure must never fail session creation.
+    // NOTE: set-option's -t does NOT accept the "=NAME" exact-match prefix that
+    // send-keys/has-session use (it errors "no such session: =NAME"); the plain
+    // session name is unambiguous here (we just created it). Best-effort: a
+    // titling failure must never fail session creation.
     try {
-      await exec("tmux", ["set-option", "-t", `=${session}`, "set-titles", "on"]);
-      await exec("tmux", ["set-option", "-t", `=${session}`, "set-titles-string", "#T"]);
+      await exec("tmux", ["set-option", "-t", session, "set-titles", "on"]);
+      await exec("tmux", ["set-option", "-t", session, "set-titles-string", "#T"]);
     } catch {
       // older tmux / odd terminal — the session is up, only the tab title lags
     }

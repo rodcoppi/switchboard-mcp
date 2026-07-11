@@ -131,10 +131,11 @@ describe("exact targets per command (critical finding from NOTES.md, tmux 3.4)",
       "claude",
     ]);
     // The title pass-through is applied to the freshly created session.
+    // set-option's -t takes the PLAIN name (it rejects the "=NAME" prefix).
     const titleCalls = calls.filter((c) => c.args[0] === "set-option");
     expect(titleCalls).toHaveLength(2);
-    expect(titleCalls[0].args).toEqual(["set-option", "-t", "=sb-alpha", "set-titles", "on"]);
-    expect(titleCalls[1].args).toEqual(["set-option", "-t", "=sb-alpha", "set-titles-string", "#T"]);
+    expect(titleCalls[0].args).toEqual(["set-option", "-t", "sb-alpha", "set-titles", "on"]);
+    expect(titleCalls[1].args).toEqual(["set-option", "-t", "sb-alpha", "set-titles-string", "#T"]);
 
     await tmux.newSession("sb-beta", "/tmp/repo-b");
     expect(newSessions()[1].args).toEqual(["new-session", "-d", "-s", "sb-beta", "-c", "/tmp/repo-b"]);
