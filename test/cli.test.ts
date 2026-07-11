@@ -353,9 +353,12 @@ describe("quoteShellArg / newSession(array)", () => {
       "--append-system-prompt",
       "x y",
     ]);
-    expect(calls).toEqual([
+    // (newSession also runs best-effort set-option title calls after — assert
+    // on the new-session command only.)
+    const newSession = calls.find((a) => a[0] === "new-session");
+    expect(newSession).toEqual(
       ["new-session", "-d", "-s", "s1", "-c", "/tmp", "env 'A=b c' claude --append-system-prompt 'x y'"],
-    ]);
+    );
   });
 
   it("newSession(string) keeps the legacy behavior (raw command)", async () => {
@@ -366,7 +369,8 @@ describe("quoteShellArg / newSession(array)", () => {
     };
     const tmux = createTmux({ exec });
     await tmux.newSession("s1", "/tmp", "cat");
-    expect(calls).toEqual([["new-session", "-d", "-s", "s1", "-c", "/tmp", "cat"]]);
+    const newSession = calls.find((a) => a[0] === "new-session");
+    expect(newSession).toEqual(["new-session", "-d", "-s", "s1", "-c", "/tmp", "cat"]);
   });
 });
 

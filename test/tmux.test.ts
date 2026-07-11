@@ -117,8 +117,11 @@ describe("exact targets per command (critical finding from NOTES.md, tmux 3.4)",
   it("new-session uses -d -s <name> -c <cwd> [<cmd>]", async () => {
     const { exec, calls } = fakeExec();
     const tmux = createTmux({ exec });
+    // newSession also runs two best-effort set-option calls (pass the pane
+    // title through to the outer terminal) — assert on the new-session calls.
     await tmux.newSession("sb-alpha", "/tmp/repo-a", "claude");
-    expect(calls[0].args).toEqual([
+    const newSessions = () => calls.filter((c) => c.args[0] === "new-session");
+    expect(newSessions()[0].args).toEqual([
       "new-session",
       "-d",
       "-s",
@@ -127,9 +130,14 @@ describe("exact targets per command (critical finding from NOTES.md, tmux 3.4)",
       "/tmp/repo-a",
       "claude",
     ]);
+    // The title pass-through is applied to the freshly created session.
+    const titleCalls = calls.filter((c) => c.args[0] === "set-option");
+    expect(titleCalls).toHaveLength(2);
+    expect(titleCalls[0].args).toEqual(["set-option", "-t", "=sb-alpha", "set-titles", "on"]);
+    expect(titleCalls[1].args).toEqual(["set-option", "-t", "=sb-alpha", "set-titles-string", "#T"]);
 
     await tmux.newSession("sb-beta", "/tmp/repo-b");
-    expect(calls[1].args).toEqual(["new-session", "-d", "-s", "sb-beta", "-c", "/tmp/repo-b"]);
+    expect(newSessions()[1].args).toEqual(["new-session", "-d", "-s", "sb-beta", "-c", "/tmp/repo-b"]);
   });
 
   it("listSessions filters by prefix and returns [] when the tmux server is dead", async () => {
