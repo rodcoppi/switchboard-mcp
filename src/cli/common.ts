@@ -109,6 +109,12 @@ export interface EnsureHubOptions {
   /** How long to wait for /api/health after booting (default 15s). */
   bootTimeoutMs?: number;
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * Suppress the "Hub is up at …" success line — for callers that print their
+   * own summary (e.g. `switchboard up`'s banner). The "starting…" line still
+   * shows, so the user knows a boot is happening.
+   */
+  quietSuccess?: boolean;
 }
 
 /**
@@ -131,7 +137,9 @@ export async function ensureHubUp(
   while (Date.now() < deadline) {
     await sleep(500);
     if (await hubIsUp(hubUrl)) {
-      out(`Hub is up at ${hubUrl} (dashboard: ${hubUrl}/ — logs: "switchboard logs").`);
+      if (!options.quietSuccess) {
+        out(`Hub is up at ${hubUrl} (dashboard: ${hubUrl}/ — logs: "switchboard logs").`);
+      }
       return;
     }
   }

@@ -24,7 +24,7 @@ import { describeDelivery } from "../src/cli/send.js";
 import { runLogs, tailLines } from "../src/cli/logs.js";
 import { CliError, checkHubHealth, formatRelative } from "../src/cli/common.js";
 import { serveHeaderLines } from "../src/cli/serve.js";
-import { runUp } from "../src/cli/up.js";
+import { runUp, formatUpBanner, displayUrl } from "../src/cli/up.js";
 import { runShortcut, shortcutBatContent } from "../src/cli/shortcut.js";
 import { createTmux, quoteShellArg, type ExecFn } from "../src/server/tmux.js";
 import type { Delivery } from "../src/shared/types.js";
@@ -651,29 +651,77 @@ describe("runLogs", () => {
 // ---------------------------------------------------------------------------
 
 describe("runUp", () => {
-  it("runs the ensureHub strategy and prints where the dashboard lives", async () => {
+  it("ensures the hub then prints the status banner with the dashboard URL + agent counts", async () => {
     const printed: string[] = [];
     const ensured: string[] = [];
     await runUp({
       hubUrl: "http://127.0.0.1:4599",
       out: (l) => printed.push(l),
+      color: false,
       ensureHub: async (url) => {
         ensured.push(url);
       },
+      probeStatus: async () => ({ online: 2, total: 5, version: "0.1.0" }),
     });
     expect(ensured).toEqual(["http://127.0.0.1:4599"]);
-    expect(printed.join("\n")).toContain("Dashboard: http://127.0.0.1:4599/");
+    const text = printed.join("\n");
+    expect(text).toContain("Switchboard");
+    // 127.0.0.1 shown as localhost (WSL forwards it) with a trailing slash.
+    expect(text).toContain("http://localhost:4599/");
+    expect(text).toContain("2 online");
+    expect(text).toContain("5 registered");
   });
 
   it("propagates the auto-start failure as-is (clear CliError for the shortcut window)", async () => {
     await expect(
       runUp({
         hubUrl: "http://127.0.0.1:9",
+        color: false,
+        probeStatus: async () => ({ online: null, total: null, version: null }),
         ensureHub: async () => {
           throw new CliError("Could not auto-start the Hub at http://127.0.0.1:9.");
         },
       }),
     ).rejects.toThrow(/Could not auto-start the Hub/);
+  });
+});
+
+describe("formatUpBanner / displayUrl", () => {
+  it("displayUrl swaps 127.0.0.1 for localhost and enforces a single trailing slash", () => {
+    expect(displayUrl("http://127.0.0.1:4577")).toBe("http://localhost:4577/");
+    expect(displayUrl("http://127.0.0.1:4577/")).toBe("http://localhost:4577/");
+    expect(displayUrl("http://localhost:9000")).toBe("http://localhost:9000/");
+  });
+
+  it("plain (color:false) banner is ASCII-only and shows the counts", () => {
+    const banner = formatUpBanner(
+      { url: "http://localhost:4577/", online: 3, total: 7, version: "0.1.0" },
+      false,
+    );
+    // No ANSI escape bytes when color is off (safe to pipe/log).
+    expect(banner.includes("\x1b")).toBe(false);
+    expect(banner).toContain("Hub online");
+    expect(banner).toContain("v0.1.0");
+    expect(banner).toContain("3 online");
+    expect(banner).toContain("7 registered");
+    expect(banner).toContain("http://localhost:4577/");
+  });
+
+  it("color:true wraps text in ANSI codes", () => {
+    const banner = formatUpBanner(
+      { url: "http://localhost:4577/", online: 0, total: 0, version: null },
+      true,
+    );
+    expect(banner.includes("\x1b[")).toBe(true);
+  });
+
+  it("missing counts degrade to a clear note (no fake zeros)", () => {
+    const banner = formatUpBanner(
+      { url: "http://localhost:4577/", online: null, total: null, version: null },
+      false,
+    );
+    expect(banner).toContain("could not read the agent list");
+    expect(banner).not.toContain("v"); // no version segment
   });
 });
 
