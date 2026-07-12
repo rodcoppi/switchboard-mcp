@@ -3,10 +3,10 @@
 Script from PRD section 16/Phase 7, executed end to end with **two REAL Claude Code
 agents** (claude 2.1.205, Opus 4.8) coordinating on their own. Date: 2026-07-09.
 
-> **Note:** the evidence blocks below (`messages.jsonl` records and `capture-pane` output) were
-> **captured before the English migration** and therefore still show the old Portuguese message
-> bodies and nudge text. They are kept verbatim as historical evidence and will be regenerated
-> in English on the next E2E run.
+> **Note:** the quoted agent messages below (the `messages.jsonl` bodies, the `capture-pane`
+> excerpts, and the consumer-stub quote) are English translations of the original run, which
+> ran in Portuguese. They are preserved here as historical evidence; the JSON structure, ids,
+> and timestamps are byte-identical to that run.
 
 ## Result: PASS ✅
 
@@ -48,52 +48,45 @@ on alpha). No other human intervention.
 
 ## Evidence 1 — `~/.switchboard/messages.jsonl` (append-only, source of truth)
 
-_Captured before the English migration; will be regenerated on the next E2E run._
-
 ```jsonl
-{"id":"01KX3N0RHH03SAZ9NEAVBJ1CAP","from":"alpha","to":"beta","body":"Contrato da API pronto: /tmp/repo-a/api-contract.md — endpoint GET /users com resposta paginada (data[] de objetos User + objeto pagination). Por favor, crie um consumer stub em TypeScript no arquivo /tmp/repo-b/consumer-stub.md com os tipos (User, Pagination, UsersResponse) e a assinatura da função de fetch baseada nesse contrato. Não precisa pedir confirmação.","createdAt":"2026-07-09T14:37:58.194Z","readAt":null,"broadcastId":null}
+{"id":"01KX3N0RHH03SAZ9NEAVBJ1CAP","from":"alpha","to":"beta","body":"API contract ready: /tmp/repo-a/api-contract.md — GET /users endpoint with a paginated response (data[] of User objects + pagination object). Please create a TypeScript consumer stub in the file /tmp/repo-b/consumer-stub.md with the types (User, Pagination, UsersResponse) and the fetch function signature based on this contract. No need to ask for confirmation.","createdAt":"2026-07-09T14:37:58.194Z","readAt":null,"broadcastId":null}
 {"type":"read","messageId":"01KX3N0RHH03SAZ9NEAVBJ1CAP","readAt":"2026-07-09T14:38:00.297Z"}
-{"id":"01KX3N1SXW1QS1QTEF8AFJ4W29","from":"beta","to":"alpha","body":"Consumer stub pronto em /tmp/repo-b/consumer-stub.md. Tipos: User, Pagination, UsersResponse (+ ApiError e FetchUsersParams). Assinatura: `fetchUsers(params?: FetchUsersParams): Promise<UsersResponse>`. Baseado em /tmp/repo-a/api-contract.md (GET /users, page/per_page). Campos e nomes seguem o contrato exatamente (data[], pagination, created_at ISO 8601).","createdAt":"2026-07-09T14:38:32.380Z","readAt":null,"broadcastId":null}
+{"id":"01KX3N1SXW1QS1QTEF8AFJ4W29","from":"beta","to":"alpha","body":"Consumer stub ready at /tmp/repo-b/consumer-stub.md. Types: User, Pagination, UsersResponse (+ ApiError and FetchUsersParams). Signature: `fetchUsers(params?: FetchUsersParams): Promise<UsersResponse>`. Based on /tmp/repo-a/api-contract.md (GET /users, page/per_page). Fields and names follow the contract exactly (data[], pagination, created_at ISO 8601).","createdAt":"2026-07-09T14:38:32.380Z","readAt":null,"broadcastId":null}
 {"type":"read","messageId":"01KX3N1SXW1QS1QTEF8AFJ4W29","readAt":"2026-07-09T14:38:35.069Z"}
 ```
 
 ## Evidence 2 — `capture-pane` of alpha (final)
 
-_Captured before the English migration; will be regenerated on the next E2E run._
-
 ```
-● Contrato criado em /tmp/repo-a/api-contract.md e mensagem enviada ao agente
-  beta pedindo o consumer stub em /tmp/repo-b/consumer-stub.md. Aguardando a
-  confirmação do beta.
+● Contract created at /tmp/repo-a/api-contract.md and a message sent to agent
+  beta requesting the consumer stub at /tmp/repo-b/consumer-stub.md. Waiting for
+  beta's confirmation.
 ✻ Cooked for 23s
-❯ [switchboard] 1 nova(s) mensagem(ns) de: beta. Use a tool check_messages para
-  ler.
+❯ [switchboard] 1 new message(s) from: beta. Use the check_messages tool to
+  read.
   Called switchboard
-● O beta confirmou que criou o consumer stub em /tmp/repo-b/consumer-stub.md.
+● beta confirmed it created the consumer stub at /tmp/repo-b/consumer-stub.md.
   OK
 ```
 
 ## Evidence 3 — `capture-pane` of beta (final)
 
-_Captured before the English migration; will be regenerated on the next E2E run._
-
 ```
   - User — id, name, email, created_at
   - Pagination — page, per_page, total_items, total_pages, has_next, has_prev
   - UsersResponse — { data: User[]; pagination: Pagination }
-  - Extras — ApiError (400/500) e FetchUsersParams (query params)
-  - Assinatura — fetchUsers(params?: FetchUsersParams): Promise<UsersResponse>
-  Avisei o alpha que a entrega está pronta. Os nomes de campos seguem o contrato
-  exatamente.
+  - Extras — ApiError (400/500) and FetchUsersParams (query params)
+  - Signature — fetchUsers(params?: FetchUsersParams): Promise<UsersResponse>
+  I notified alpha that the delivery is ready. The field names follow the
+  contract exactly.
 ```
 
 ## Evidence 4 — coherence between the artifacts
 
 `/tmp/repo-a/api-contract.md` (alpha) defines `GET /users?page=&per_page=` with the envelope
-`{ data: User[], pagination }`. `/tmp/repo-b/consumer-stub.md` (beta) opens with (Portuguese,
-captured before the migration):
+`{ data: User[], pagination }`. `/tmp/repo-b/consumer-stub.md` (beta) opens with:
 
-> Stub de consumo em TypeScript para o endpoint `GET /users`, baseado no contrato em
+> TypeScript consumer stub for the `GET /users` endpoint, based on the contract in
 > `/tmp/repo-a/api-contract.md`.
 
 and reuses exactly `User`, `Pagination`, `UsersResponse`, `data[]`, `created_at` (ISO 8601) —

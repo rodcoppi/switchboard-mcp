@@ -1,76 +1,76 @@
 # Spike 0.4 — MCP Streamable HTTP (stateful)
 
-Mini servidor MCP do PRD (seção 16, item 0.4): 1 tool `ping` que retorna `pong`, servida via
-`StreamableHTTPServerTransport` em `http://127.0.0.1:4578/mcp`, modo stateful (uma sessão MCP
-por instância de Claude Code). Prova o risco R2: múltiplas sessões Claude Code no mesmo servidor.
+Mini MCP server from the PRD (section 16, item 0.4): 1 tool `ping` that returns `pong`, served via
+`StreamableHTTPServerTransport` at `http://127.0.0.1:4578/mcp`, stateful mode (one MCP session
+per Claude Code instance). Proves risk R2: multiple Claude Code sessions on the same server.
 
-## Subir o servidor
+## Start the server
 
 ```bash
 cd spikes/03-mcp-http
-npm install        # primeira vez
-npx tsx server.ts  # loga cada sessão iniciada/encerrada e cada ping
+npm install        # first time
+npx tsx server.ts  # logs each session started/ended and each ping
 ```
 
-## Roteiro de teste (PRD 0.4)
+## Test script (PRD 0.4)
 
-1. Com o servidor rodando, registrar o MCP no escopo local:
+1. With the server running, register the MCP in local scope:
 
    ```bash
    claude mcp add --transport http --scope local spike http://127.0.0.1:4578/mcp
    ```
 
-2. Primeira instância:
+2. First instance:
 
    ```bash
    claude -p "Use the ping tool from the spike MCP server and report its output."
    ```
 
-3. Repetir o passo 2 numa SEGUNDA instância SIMULTÂNEA (outro terminal) — duas sessões MCP
-   no mesmo servidor. As duas devem receber `pong`; o log do servidor deve mostrar dois
-   `session initialized` distintos.
+3. Repeat step 2 in a SECOND SIMULTANEOUS instance (another terminal) — two MCP sessions
+   on the same server. Both must receive `pong`; the server log must show two distinct
+   `session initialized`.
 
-4. Teste de restart: com um `claude` interativo conectado, matar o servidor (Ctrl+C), subir
-   de novo (`npx tsx server.ts`) e pedir o ping outra vez. Observar a recuperação: o session
-   id antigo leva 404 `Session not found` e o cliente deve re-inicializar. Documentar o
-   comportamento observado em `spikes/NOTES.md` (pitfall P6 do PRD).
+4. Restart test: with an interactive `claude` connected, kill the server (Ctrl+C), start it
+   again (`npx tsx server.ts`) and request the ping once more. Observe the recovery: the old
+   session id gets a 404 `Session not found` and the client must re-initialize. Document the
+   observed behavior in `spikes/NOTES.md` (PRD pitfall P6).
 
-5. Limpeza:
+5. Cleanup:
 
    ```bash
    claude mcp remove spike
    ```
 
-**Done When:** as duas instâncias recebem `pong`; comportamento pós-restart documentado em NOTES.md.
+**Done When:** both instances receive `pong`; post-restart behavior documented in NOTES.md.
 
-## Status da execução — PASS (2026-07-08, roteiro real, não só curl)
+## Execution status — PASS (2026-07-08, real script, not just curl)
 
-Executado com claude 2.1.205 + SDK 1.29.0 (evidências e achados completos em
+Run with claude 2.1.205 + SDK 1.29.0 (full evidence and findings in
 [`../NOTES.md`](../NOTES.md)):
 
-- Passos 1–3 e 4: `claude mcp add` conectou (`✔ Connected`); **dois `claude -p` simultâneos
-  receberam `pong`**, com **dois `session initialized` distintos** no log do servidor
-  (pings a ~0,8 s de distância). Risco R2 provado.
-- Passo 4 do roteiro acima (restart, P6): executado com um cliente Claude Code real mantido
-  vivo durante o restart (aproximação headless do "claude interativo": turno segurado por um
-  comando Bash bloqueante de 30 s entre dois pings — mesma pilha de cliente MCP HTTP).
-  Observado: session id antigo → 404 `Session not found` → **o cliente re-inicializa sozinho
-  e re-executa a tool call, transparente para o modelo** (segundo ping retornou `pong`).
-- Passo 5: `claude mcp remove spike` executado.
+- Steps 1–3 and 4: `claude mcp add` connected (`✔ Connected`); **two simultaneous `claude -p`
+  received `pong`**, with **two distinct `session initialized`** in the server log
+  (pings ~0.8 s apart). Risk R2 proven.
+- Step 4 of the script above (restart, P6): run with a real Claude Code client kept alive
+  during the restart (a headless approximation of "interactive claude": the turn held by a
+  blocking 30 s Bash command between two pings — the same MCP HTTP client stack).
+  Observed: old session id → 404 `Session not found` → **the client re-initializes on its own
+  and re-runs the tool call, transparent to the model** (the second ping returned `pong`).
+- Step 5: `claude mcp remove spike` run.
 
-Este PASS fecha apenas o spike 0.4. O **gate da Phase 0 segue ABERTO**: os spikes 0.2 e 0.3
-(`01-sendkeys-basic.sh`, `02-sendkeys-claude.sh`) dependem de tmux, ausente no ambiente atual
-— status rastreado em `../NOTES.md`.
+This PASS closes only spike 0.4. The **Phase 0 gate remains OPEN**: spikes 0.2 and 0.3
+(`01-sendkeys-basic.sh`, `02-sendkeys-claude.sh`) depend on tmux, absent in the current
+environment — status tracked in `../NOTES.md`.
 
-## Smoke test sem Claude Code (curl)
+## Smoke test without Claude Code (curl)
 
 ```bash
-# initialize (a resposta traz o header mcp-session-id)
+# initialize (the response carries the mcp-session-id header)
 curl -sS -D - -H "Accept: application/json, text/event-stream" -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"curl","version":"0"}}}' \
   http://127.0.0.1:4578/mcp
 
-# depois, com SID=<mcp-session-id retornado>:
+# then, with SID=<returned mcp-session-id>:
 #   notifications/initialized  -> HTTP 202
 #   tools/call ping            -> data: {"result":{"content":[{"type":"text","text":"pong"}]},...}
 curl -sS -H "Accept: application/json, text/event-stream" -H "Content-Type: application/json" -H "mcp-session-id: $SID" \
