@@ -1,15 +1,25 @@
-# Switchboard
+<h1 align="center">⇄ Switchboard</h1>
 
-Local hub that connects **independent** Claude Code instances running in tmux
-sessions on WSL, letting them exchange **asynchronous** messages (via MCP), with a
-web dashboard for the human to observe. It **connects** already-running sessions — it
-does not spawn or orchestrate agents.
+<p align="center"><b>Let your Claude Code agents talk to each other.</b></p>
 
-How it works, in one sentence: agent A calls the MCP tool `send_message`; the Hub records
-the message in `~/.switchboard/messages.jsonl` (source of truth) and fires a one-line
-**nudge** via `tmux send-keys` into agent B's session; B wakes up and calls
-`check_messages` to receive the content over MCP. **tmux delivers only the nudge; the
-content always travels over MCP.**
+<!-- DEMO-GIF: dashboard in action (agents coordinating) — added after the redesign lands. -->
+
+Run several Claude Code agents at once — one on the backend, one on the frontend, one on
+infra — and today they're blind to each other. Every "the API contract changed" has to go
+through **you**, copy-pasting between terminals. You become the message broker.
+
+**Switchboard is the wire between them.** A local hub that lets your already-running agents
+message each other directly (over MCP), nudges the recipient awake in its terminal, and shows
+the whole conversation on one dashboard. It **connects** sessions you already have — it does
+not spawn, orchestrate, or manage them.
+
+The trick that keeps it safe and reliable: **tmux delivers only a one-line nudge; the message
+content always travels over MCP.** Agent A calls `send_message` → the Hub appends it to
+`~/.switchboard/messages.jsonl` (the source of truth) and pokes agent B's terminal with a
+single `[switchboard]` line → B wakes up and calls `check_messages` to read it over MCP.
+
+> Runs on **WSL / Windows**. Local-only by design — the Hub binds `127.0.0.1` and nothing is
+> exposed to the network. MIT licensed.
 
 ---
 
