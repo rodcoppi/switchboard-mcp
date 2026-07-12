@@ -48,7 +48,7 @@ single `[switchboard]` line → B wakes up and calls `check_messages` to read it
 ## Setup — two commands
 
 ```bash
-git clone <repo-url> switchboard-mcp && cd switchboard-mcp && npm install
+git clone https://github.com/rodcoppi/switchboard-mcp.git && cd switchboard-mcp && npm install
 node bin/switchboard.mjs setup
 ```
 
@@ -70,7 +70,7 @@ to adopt it into the network.
 ### 1. Install
 
 ```bash
-git clone <repo-url> switchboard-mcp
+git clone https://github.com/rodcoppi/switchboard-mcp.git
 cd switchboard-mcp
 npm install
 ```
