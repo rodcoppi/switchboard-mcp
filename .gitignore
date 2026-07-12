@@ -2,3 +2,6 @@ node_modules/
 *.log
 *Zone.Identifier
 .env
+
+# Internal design doc — never publish (kept locally only).
+PRD-switchboard.md
