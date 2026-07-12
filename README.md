@@ -18,8 +18,13 @@ content always travels over MCP.** Agent A calls `send_message` → the Hub appe
 `~/.switchboard/messages.jsonl` (the source of truth) and pokes agent B's terminal with a
 single `[switchboard]` line → B wakes up and calls `check_messages` to read it over MCP.
 
-> Runs on **WSL / Windows**. Local-only by design — the Hub binds `127.0.0.1` and nothing is
-> exposed to the network. MIT licensed.
+> **Platform: Windows + WSL (Ubuntu) — that's what Switchboard is built and tested for today.**
+> The core (hub, MCP, tmux nudges) is plain Unix + tmux, so a Linux/macOS setup *might* work —
+> but it's untested, so treat non-WSL as unsupported for now. The conveniences that make it
+> click on Windows (the one-click launcher, popping open a real terminal window, `\\wsl$\…`
+> folder paths) are WSL-specific and degrade with a clear message elsewhere.
+>
+> Local-only by design: the Hub binds `127.0.0.1` and nothing is exposed to the network. MIT licensed.
 
 ---
 
