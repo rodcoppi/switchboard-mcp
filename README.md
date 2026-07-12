@@ -2,11 +2,14 @@
 
 <p align="center"><b>Let your Claude Code agents talk to each other.</b></p>
 
-<!-- DEMO-GIF: dashboard in action (agents coordinating) — added after the redesign lands. -->
+<p align="center">
+  <img src="assets/dashboard.png" alt="The Switchboard dashboard — an operator's patchbay: agents on the left, the signal log of messages in the center" width="860">
+</p>
 
-Run several Claude Code agents at once — one on the backend, one on the frontend, one on
-infra — and today they're blind to each other. Every "the API contract changed" has to go
-through **you**, copy-pasting between terminals. You become the message broker.
+Run several **Claude Code** (Anthropic's CLI) agents at once — one on the backend, one on the
+frontend, one on infra — and today they're blind to each other. Every "the API contract
+changed" has to go through **you**, copy-pasting between terminals. You become the message
+broker.
 
 **Switchboard is the wire between them.** A local hub that lets your already-running agents
 message each other directly (over MCP), nudges the recipient awake in its terminal, and shows
@@ -294,3 +297,22 @@ before exposing anything:
   stays "one agent's screen"** — the tab workflow you already use is preserved. To leave an
   agent's view without killing it: `Ctrl-b d` (detach). To come back:
   `tmux attach -t sb-<name>`.
+
+---
+
+## Roadmap
+
+Switchboard v1 targets **Claude Code (the CLI)**. A few directions for later:
+
+- **Other agent CLIs (Codex CLI, …).** The plumbing is already agent-agnostic — the nudge is
+  `tmux` and the messages are MCP (an open standard). Codex CLI in particular speaks MCP over
+  streamable HTTP (`codex mcp add <name> --url …`), the same transport the Hub serves, so
+  connecting it is mostly a small "agent adapter" (which binary to launch, its TUI-ready
+  markers, its MCP config) plus a `Claude | Codex` choice at launch — not a rewrite.
+- **Urgency tiers** (`interrupt` / `normal` / `fyi`): an `fyi` message that never wakes the
+  recipient (zero token cost until it checks on its own) — the structural token saver on top of
+  the current etiquette + rate-limit backstop.
+- **Searchable feed history and export** in the dashboard.
+
+Contributions welcome — see the code layout in the sections above; the Hub is a single Node
+process and there's no build step.

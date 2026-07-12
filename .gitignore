@@ -5,3 +5,6 @@ node_modules/
 
 # Internal design doc — never publish (kept locally only).
 PRD-switchboard.md
+
+# Loose screenshots in the repo root (keep only assets/).
+/*.png
