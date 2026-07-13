@@ -103,9 +103,19 @@ async function defaultBootHub(): Promise<void> {
     await tmux.killSession(HUB_SESSION).catch(() => {});
   }
   const nodeDir = path.dirname(process.execPath);
+  // A bare booting environment (the Windows shortcut's non-interactive login
+  // shell) may lack the /mnt/c/... interop entries — without them the hub
+  // cannot spawn wt.exe/cmd.exe to open agent windows. Append the fixed
+  // Windows dirs (harmless no-ops on non-WSL: the dirs just don't exist) and
+  // keep any WindowsApps entry the current PATH already has (wt.exe home).
+  const currentPath = process.env.PATH ?? "";
+  const windowsDirs = ["/mnt/c/Windows/System32", "/mnt/c/Windows"].filter(
+    (d) => !currentPath.includes(d),
+  );
+  const bootPath = [nodeDir, currentPath, ...windowsDirs].filter(Boolean).join(":");
   await tmux.newSession(HUB_SESSION, path.dirname(binShimPath()), [
     "env",
-    `PATH=${nodeDir}:${process.env.PATH ?? ""}`,
+    `PATH=${bootPath}`,
     process.execPath,
     binShimPath(),
     "serve",

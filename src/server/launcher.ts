@@ -204,9 +204,19 @@ export function createWindowsTerminalOpener(deps: {
       try {
         // Windows Terminal opens a proper new window/tab.
         await deps.exec("wt.exe", attach, opts);
+        return;
       } catch {
+        // fall through to the classic console window
+      }
+      try {
         // Classic console window fallback ("" = the start window title slot).
         await deps.exec("cmd.exe", ["/c", "start", "", ...attach], opts);
+      } catch {
+        // Real user report: a hub booted from a bare (non-interactive)
+        // environment has NO /mnt/c/... entries on PATH, so both lookups
+        // above die with ENOENT. cmd.exe's location is fixed on every
+        // standard Windows install — use it absolutely as the last resort.
+        await deps.exec("/mnt/c/Windows/System32/cmd.exe", ["/c", "start", "", ...attach], opts);
       }
     },
   };
