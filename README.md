@@ -222,6 +222,18 @@ dead window; worst case you get a brand-new conversation already wired to the ne
 `wire` flags: `--name <name>`, `--role "<description>"`, `--dir <path>` (default: current folder),
 `--no-kickoff`, `--claude-args "<extra args for claude>"`.
 
+### Mentions — delegate with `@name`
+
+Inside any agent's window, reference another agent as **`@<name>`** and it becomes a
+delegation. For example, telling your backend agent:
+
+> Fix the pagination bug, and ask @frontend to update the consumer types afterwards.
+
+makes it fix the bug **and** send `frontend` one factual, actionable message with the
+delegated task (paths, contracts, what to report back). The mentioning agent stays
+responsible for your request — the mention only routes the sub-task. This is part of the
+agent protocol (the `join` etiquette + the snippet), so it works in every connected agent.
+
 ### Launching agents from the dashboard
 
 The dashboard (`http://127.0.0.1:4577/`) has a **Launch agent** form (bottom of the sidebar):
