@@ -730,12 +730,20 @@ describe("formatUpBanner / displayUrl", () => {
 // ---------------------------------------------------------------------------
 
 describe("shortcut", () => {
-  it("shortcutBatContent: CRLF, wsl -d <distro>, login shell, absolute shim, up, dashboard port", () => {
-    const bat = shortcutBatContent({ distro: "Ubuntu", shimPath: "/home/u/sb/bin/switchboard.mjs", port: 4577 });
+  it("shortcutBatContent: CRLF, wsl -d <distro>, ABSOLUTE node + shim (no PATH reliance), up, dashboard port", () => {
+    const bat = shortcutBatContent({
+      distro: "Ubuntu",
+      shimPath: "/home/u/sb/bin/switchboard.mjs",
+      nodePath: "/home/u/.n/bin/node",
+      port: 4577,
+    });
     expect(bat).toContain("\r\n"); // cmd.exe-safe line endings
+    // Absolute node path: `bash -lc` from wsl.exe is NON-interactive — version
+    // managers (n/nvm) are not on that PATH, so a bare `node` fails there.
     expect(bat).toContain(
-      `wsl.exe -d Ubuntu -- bash -lc "node '/home/u/sb/bin/switchboard.mjs' up"`,
+      `wsl.exe -d Ubuntu -- bash -lc "'/home/u/.n/bin/node' '/home/u/sb/bin/switchboard.mjs' up"`,
     );
+    expect(bat).not.toMatch(/"node /); // never a bare PATH-dependent node
     expect(bat).toContain('start "" http://localhost:4577/');
     expect(bat).toContain("if errorlevel 1"); // failure keeps the window open (pause)
     expect(bat).toContain("pause");

@@ -34,19 +34,28 @@ function binShimPath(): string {
  * The .bat content (pure — unit-tested). ASCII-only and CRLF (cmd.exe is
  * unreliable with bare LF), closes by itself on success and pauses on failure
  * so the user can read the error.
+ *
+ * nodePath is ABSOLUTE and captured at generation time (process.execPath):
+ * `wsl.exe -- bash -lc` starts a NON-INTERACTIVE login shell whose PATH comes
+ * only from ~/.profile — version managers (n, nvm) usually add their bin dir
+ * in ~/.bashrc BELOW the interactivity guard, so a bare `node` is NOT found
+ * there (real user report: the Desktop shortcut failed with
+ * "node: command not found" while the same line worked from an interactive
+ * shell, which inherits the full PATH).
  */
 export function shortcutBatContent(input: {
   distro: string;
   shimPath: string;
+  nodePath: string;
   port: number;
 }): string {
   const lines = [
     "@echo off",
     "title Switchboard",
     "echo Starting the Switchboard hub (WSL)...",
-    // Single quotes around the shim path survive bash -lc; the path comes from
-    // this repo's location (no user input) but may contain spaces.
-    `wsl.exe -d ${input.distro} -- bash -lc "node '${input.shimPath}' up"`,
+    // Single quotes around the paths survive bash -lc; both come from this
+    // machine's own install (no user input) but may contain spaces.
+    `wsl.exe -d ${input.distro} -- bash -lc "'${input.nodePath}' '${input.shimPath}' up"`,
     "if errorlevel 1 (",
     "  echo.",
     "  echo The hub could not start. Read the message above.",
@@ -84,6 +93,8 @@ export interface ShortcutOptions {
   out?: OutFn;
   distro?: string;
   shimPath?: string;
+  /** Absolute node binary embedded in the .bat (default: process.execPath). */
+  nodePath?: string;
   resolveFolder?: (folder: "Desktop" | "Startup") => Promise<string>;
   writeFile?: (filePath: string, content: string) => void;
 }
@@ -108,6 +119,7 @@ export async function runShortcut(options: ShortcutOptions = {}): Promise<void> 
   const content = shortcutBatContent({
     distro,
     shimPath: options.shimPath ?? binShimPath(),
+    nodePath: options.nodePath ?? process.execPath,
     port: loadConfig(options.baseDir).port,
   });
   (options.writeFile ?? ((p: string, c: string) => fs.writeFileSync(p, c)))(filePath, content);

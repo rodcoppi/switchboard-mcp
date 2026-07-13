@@ -89,14 +89,24 @@ async function hubIsUp(hubUrl: string): Promise<boolean> {
  * terminal window stays open — the session is invisible until the user
  * `tmux attach -t sb-hub`s into it. A zombie sb-hub (session alive, health
  * dead — e.g. the serve crashed) is killed first so the recreate is clean.
+ *
+ * PATH-independence (real user report: the Desktop shortcut boots this from a
+ * NON-INTERACTIVE login shell where version managers like `n` never join the
+ * PATH): node is invoked by its ABSOLUTE path (process.execPath), and that
+ * node's bin dir is PREPENDED to the session PATH so everything the hub later
+ * spawns — `claude` for dashboard launches lives in the same bin dir — still
+ * resolves no matter how bare the booting environment was.
  */
 async function defaultBootHub(): Promise<void> {
   const tmux = createTmux();
   if (await tmux.hasSession(HUB_SESSION)) {
     await tmux.killSession(HUB_SESSION).catch(() => {});
   }
+  const nodeDir = path.dirname(process.execPath);
   await tmux.newSession(HUB_SESSION, path.dirname(binShimPath()), [
-    "node",
+    "env",
+    `PATH=${nodeDir}:${process.env.PATH ?? ""}`,
+    process.execPath,
     binShimPath(),
     "serve",
   ]);
