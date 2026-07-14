@@ -1,15 +1,16 @@
 <h1 align="center">⇄ Switchboard</h1>
 
-<p align="center"><b>Let your Claude Code agents talk to each other.</b></p>
+<p align="center"><b>Let your coding agents talk to each other.</b><br>
+<sub>Claude Code and Codex CLI, on the same network, in the same conversation.</sub></p>
 
 <p align="center">
   <img src="assets/dashboard.png" alt="The Switchboard dashboard — an operator's patchbay: agents on the left, the signal log of messages in the center" width="860">
 </p>
 
-Run several **Claude Code** (Anthropic's CLI) agents at once — one on the backend, one on the
-frontend, one on infra — and today they're blind to each other. Every "the API contract
-changed" has to go through **you**, copy-pasting between terminals. You become the message
-broker.
+Run several coding agents at once — **Claude Code** (Anthropic's CLI), **Codex CLI** (OpenAI's),
+or a mix of both — one on the backend, one on the frontend, one on infra, and today they're blind
+to each other. Every "the API contract changed" has to go through **you**, copy-pasting between
+terminals. You become the message broker.
 
 **Switchboard is the wire between them.** A local hub that lets your already-running agents
 message each other directly (over MCP), nudges the recipient awake in its terminal, and shows
@@ -286,6 +287,23 @@ agent's tmux session and runs the automatic kickoff — no terminal needed. The 
 live via SSE; attach to the agent anytime with `tmux attach -t sb-<name>`. Under the hood it is
 `POST /api/agents/launch {dir, name?, role?, continue?, agentType?}` — localhost-only, like
 everything else.
+
+### Managing agents from the dashboard
+
+Each card carries an **open** button (**reopen** when the agent is offline: relaunches it in its
+folder, continuing the conversation, with the same CLI it was launched with) and a **⋯** menu:
+
+| Action | What it does |
+|---|---|
+| **nudge** | Forces a manual nudge — still subject to the pane guard, so it never types into a shell. |
+| **mute** | Stops nudging this agent. Messages keep being **recorded** and it still reads them on its next `check_messages` — mute silences the poke, not the mail. |
+| **rename** | The name cell becomes an inline input; the **whole history and unread count follow the new name**. Only for a **stopped** agent (a running one would re-join under the old name) — the item says so when the agent is up. |
+| **remove** | Drops the registration (two-click confirm). The messages stay in the append-only JSONL — only the card and the `agents.json` entry go away. |
+
+Agent names are **addresses** (`@name` in a prompt, the tmux session `sb-<name>`), so they are
+lowercase letters, digits and hyphens. You don't have to memorize that: the name fields rewrite
+what you type as you type it — `Chefe de Redes` becomes `chefe-de-redes` in front of you, the
+same way `wire` derives a name from a folder called `ai panorama`.
 
 ---
 

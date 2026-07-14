@@ -41,6 +41,14 @@ describe("deriveAgentName", () => {
     expect(deriveAgentName("/x/Foo@Bar!!Baz")).toBe("foo-bar-baz");
   });
 
+  it("folds accents onto the base letter instead of eating the letter", () => {
+    // "são" must not become "s-o": the diacritic goes, the letter stays.
+    expect(deriveAgentName("/x/São Paulo")).toBe("sao-paulo");
+    expect(deriveAgentName("/x/João_Frontend")).toBe("joao-frontend");
+    expect(deriveAgentName("/x/Café")).toBe("cafe");
+    expect(deriveAgentName("/x/Ação")).toBe("acao");
+  });
+
   it("collapses repeated hyphens and trims leading/trailing junk", () => {
     expect(deriveAgentName("/x/--hidden--")).toBe("hidden");
     expect(deriveAgentName("/x/  spaced  ")).toBe("spaced");

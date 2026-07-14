@@ -71,6 +71,7 @@ export const WIRE_PERMISSION_MODE_FLAG = CLAUDE_PERMISSION_MODE_FLAG;
 
 /**
  * Sanitizes an arbitrary folder name into a candidate agent name: lowercase,
+ * accents folded onto their base letter ("São Paulo" → "sao-paulo"),
  * every run of characters outside [a-z0-9-] collapsed to a single hyphen,
  * repeated hyphens collapsed, leading/trailing hyphens trimmed, capped at 31
  * chars (the store's max) without leaving a trailing hyphen. The result is NOT
@@ -79,6 +80,11 @@ export const WIRE_PERMISSION_MODE_FLAG = CLAUDE_PERMISSION_MODE_FLAG;
  */
 function sanitizeAgentName(raw: string): string {
   let s = raw.toLowerCase();
+  // Fold accents FIRST, so a folder named "São Paulo" yields "sao-paulo" and
+  // not "s-o-paulo": stripping the diacritic keeps the letter the user typed,
+  // whereas the invalid-run rule below would eat it. NFD splits "ã" into
+  // "a" + combining tilde; the tilde is then dropped with the rest of U+0300–36F.
+  s = s.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
   s = s.replace(/[^a-z0-9-]+/g, "-"); // any invalid run → one hyphen
   s = s.replace(/-+/g, "-"); // collapse repeated hyphens
   s = s.replace(/^-+/, "").replace(/-+$/, ""); // trim edge hyphens

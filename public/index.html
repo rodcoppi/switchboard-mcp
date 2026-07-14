@@ -443,6 +443,10 @@
     .menu-btn { padding: 3px 7px; letter-spacing: 1px; }
     .mute-toggle.muted { color: var(--warn); border-color: var(--accent-line); }
     .remove-btn:hover { border-color: var(--danger); color: var(--danger); }
+    /* A menu action that exists but is not available right now (rename on an
+       online agent). Legible, not invisible: clicking it says what to do. */
+    .agent-menu-item.disabled { color: var(--text-faint); opacity: 0.55; }
+    .agent-menu-item.disabled:hover { color: var(--text-faint); border-color: var(--border); }
 
     /* NUDGE = a brief amber pulse. The nudge control lives in the (hidden)
        card menu, so :has() lifts the pulse onto the whole jack row — the
@@ -1250,20 +1254,32 @@
           },
         ),
       );
+      // Rename: the name cell becomes an inline input (no blocking dialogs).
+      // Only an OFFLINE agent can be renamed — a live one would re-join under
+      // its old name. The item stays VISIBLE while online (greyed, saying why)
+      // rather than vanishing: hiding it made the feature look nonexistent to
+      // anyone whose agents are all up.
+      menu.appendChild(
+        menuItem(
+          `rename-btn${online ? " disabled" : ""}`,
+          "rename",
+          online
+            ? `Stop "${agent.name}" first — a running agent would re-join under its old name`
+            : "Rename this agent — its message history follows the new name",
+          () => {
+            closeMenus();
+            if (online) {
+              toast(
+                `To rename "${agent.name}", stop it first: switchboard stop ${agent.name}`,
+                "warn",
+              );
+              return;
+            }
+            startRename(agent, name);
+          },
+        ),
+      );
       if (!online) {
-        // Rename: the name cell becomes an inline input (no blocking dialogs).
-        // Offline only — a live agent would re-join under its old name.
-        menu.appendChild(
-          menuItem(
-            "rename-btn",
-            "rename",
-            "Rename this agent — its message history follows the new name",
-            () => {
-              closeMenus();
-              startRename(agent, name);
-            },
-          ),
-        );
         // Remove: two-click inline confirmation (no blocking browser dialogs).
         menu.appendChild(
           menuItem(
@@ -1385,6 +1401,48 @@
      * The `done` latch makes the three exits idempotent (confirming detaches
      * the focused input, which fires blur right behind it).
      */
+    // An agent name is an ADDRESS (@name in a prompt, tmux "sb-<name>"), so the
+    // hub only takes ^[a-z0-9][a-z0-9-]{1,30}$. Typing "Chefe de Redes" and
+    // getting the regex back as an error makes the user guess the rule — so the
+    // name inputs rewrite as you type ("chefe-de-redes") and you confirm what
+    // you already see. Mirrors sanitizeAgentName in src/cli/wire.ts, which
+    // derives the same shape from a folder name.
+    //
+    // keepTrailingHyphen: WHILE TYPING the hyphen a just-pressed space produced
+    // must survive — trimming it on every keystroke makes "chefe-de"
+    // impossible to type. It is trimmed on confirm instead.
+    function sanitizeAgentNameInput(raw, keepTrailingHyphen) {
+      let s = raw
+        .toLowerCase()
+        // Fold accents first: "João" → "joao", not "jo-o" (the invalid-run rule
+        // below would otherwise eat the letter along with its diacritic).
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-z0-9-]+/g, "-") // any invalid run → one hyphen
+        .replace(/-+/g, "-") // collapse repeats
+        .replace(/^-+/, ""); // a name never starts with a hyphen
+      if (!keepTrailingHyphen) s = s.replace(/-+$/, "");
+      if (s.length > 31) s = s.slice(0, 31).replace(/-+$/, "");
+      return s;
+    }
+
+    /**
+     * Wires live sanitizing into a name input. Rewriting .value moves the caret
+     * to the end, which fights anyone editing mid-string, so the caret is put
+     * back where it was minus whatever the rewrite removed.
+     */
+    function bindAgentNameSanitizer(input) {
+      input.addEventListener("input", () => {
+        const before = input.value;
+        const after = sanitizeAgentNameInput(before, true);
+        if (after === before) return;
+        const caret = input.selectionStart;
+        input.value = after;
+        const next = Math.max(0, caret - (before.length - after.length));
+        input.setSelectionRange(next, next);
+      });
+    }
+
     function startRename(agent, nameEl) {
       const input = el("input", "agent-rename-input");
       input.type = "text";
@@ -1402,7 +1460,9 @@
         return false;
       }
       function confirm() {
-        const next = input.value.trim();
+        // Full sanitize (edge hyphens included): the input already shows the
+        // sanitized text, this only settles a trailing hyphen left mid-typing.
+        const next = sanitizeAgentNameInput(input.value, false);
         if (restore()) return;
         // Unchanged / emptied → the hub is not worth a round trip.
         if (next === "" || next === agent.name) return;
@@ -1417,6 +1477,7 @@
         else if (ev.key === "Escape") restore();
       });
       input.addEventListener("blur", restore);
+      bindAgentNameSanitizer(input);
 
       nameEl.replaceWith(input);
       input.focus();
@@ -2060,8 +2121,10 @@
       });
       $("#filter-clear").addEventListener("click", () => setFilter(state.filter));
 
-      // Launcher wiring.
+      // Launcher wiring. The name field sanitizes as you type for the same
+      // reason rename does — it feeds the same ^[a-z0-9][a-z0-9-]{1,30}$ hub rule.
       $("#launcher").addEventListener("submit", launchAgent);
+      bindAgentNameSanitizer($("#launch-name"));
 
       // Dir picker wiring (the launcher form's "Browse…" panel).
       $("#dirpicker-browse").addEventListener("click", dirpickerOpen);
