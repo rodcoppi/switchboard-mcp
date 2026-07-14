@@ -128,15 +128,20 @@ To inspect the auto-started Hub: `tmux attach -t sb-hub` (detach with `Ctrl-b d`
 On Windows + WSL you can skip the terminal entirely. Once, inside WSL:
 
 ```bash
-switchboard shortcut            # creates Switchboard.bat on your Windows Desktop
+switchboard shortcut            # creates Switchboard.lnk on your Windows Desktop
 switchboard shortcut --startup  # or: installs it in the Startup folder (runs on every boot)
 ```
 
-Double-clicking `Switchboard.bat` (or booting Windows, with `--startup`) brings the Hub up in
+Double-clicking `Switchboard` (or booting Windows, with `--startup`) brings the Hub up in
 the background and opens the dashboard at `http://localhost:4577/` in your Windows browser —
 WSL2's built-in localhost forwarding reaches the Hub, which still binds `127.0.0.1` inside WSL
 only (nothing is exposed to the network). From the dashboard, launch/wire agents with the
-**Launch agent** form. To undo, just delete the `.bat` file.
+**Launch agent** form. To undo, delete the shortcut.
+
+<sub>The shortcut is a `.lnk` carrying the Switchboard icon and opening minimized; the `.bat` it
+drives, and the icon, live in `%LOCALAPPDATA%\Switchboard` (a `.bat` cannot carry an icon, and an
+icon on the WSL filesystem renders blank at boot, when the distro is not running yet). Regenerate
+the icon with `node scripts/make-icon.mjs`.</sub>
 
 ### 3. Register the MCP in Claude Code (`mcp add`)
 

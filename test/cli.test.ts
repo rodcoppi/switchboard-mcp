@@ -25,7 +25,7 @@ import { runLogs, tailLines } from "../src/cli/logs.js";
 import { CliError, checkHubHealth, formatRelative } from "../src/cli/common.js";
 import { serveHeaderLines } from "../src/cli/serve.js";
 import { runUp, formatUpBanner, displayUrl } from "../src/cli/up.js";
-import { runShortcut, shortcutBatContent } from "../src/cli/shortcut.js";
+import { runShortcut, shortcutBatContent, shortcutLnkScript } from "../src/cli/shortcut.js";
 import { createTmux, quoteShellArg, type ExecFn } from "../src/server/tmux.js";
 import type { Delivery } from "../src/shared/types.js";
 
@@ -751,39 +751,139 @@ describe("shortcut", () => {
     expect(/^[\x00-\x7F]*$/.test(bat)).toBe(true);
   });
 
-  it("runShortcut writes Switchboard.bat into the resolved Windows folder (Desktop by default)", async () => {
+  it("shortcutLnkScript: points the .lnk at the .bat, carries the icon, opens minimized", () => {
+    const ps = shortcutLnkScript({
+      lnkPath: "C:\\Users\\u\\Desktop\\Switchboard.lnk",
+      targetPath: "C:\\Users\\u\\AppData\\Local\\Switchboard\\Switchboard.bat",
+      iconPath: "C:\\Users\\u\\AppData\\Local\\Switchboard\\switchboard.ico",
+    });
+    expect(ps).toContain("WScript.Shell"); // COM object every Windows ships
+    expect(ps).toContain("$s.TargetPath = 'C:\\Users\\u\\AppData\\Local\\Switchboard\\Switchboard.bat'");
+    // The whole point: a .bat cannot carry an icon, a .lnk can.
+    expect(ps).toContain("$s.IconLocation = 'C:\\Users\\u\\AppData\\Local\\Switchboard\\switchboard.ico'");
+    expect(ps).toContain("$s.WindowStyle = 7"); // minimized: no console flash
+    expect(ps).toContain("$s.Save()");
+  });
+
+  it("shortcutLnkScript: a quote in the path cannot end the PowerShell literal", () => {
+    // "C:\Users\Tim O'Brien\Desktop" is an ordinary Windows path.
+    const ps = shortcutLnkScript({
+      lnkPath: "C:\\Users\\Tim O'Brien\\Desktop\\Switchboard.lnk",
+      targetPath: "C:\\bat\\Switchboard.bat",
+      iconPath: "C:\\bat\\switchboard.ico",
+    });
+    expect(ps).toContain("'C:\\Users\\Tim O''Brien\\Desktop\\Switchboard.lnk'");
+  });
+
+  it("runShortcut: .bat + .ico into %LOCALAPPDATA%\\Switchboard, only the .lnk on the Desktop", async () => {
     const written: Array<{ p: string; c: string }> = [];
+    const copied: Array<{ from: string; to: string }> = [];
     const printed: string[] = [];
+    let ps = "";
     await runShortcut({
       distro: "Ubuntu",
       shimPath: "/repo/bin/switchboard.mjs",
+      iconPath: "/repo/assets/switchboard.ico",
       baseDir: path.join(os.tmpdir(), "sb-none-" + process.pid), // defaults: port 4577
       out: (l) => printed.push(l),
-      resolveFolder: async (folder) => `/mnt/c/Users/u/${folder}`,
+      resolveFolder: async (folder) =>
+        folder === "LocalApplicationData"
+          ? "/mnt/c/Users/u/AppData/Local"
+          : `/mnt/c/Users/u/${folder}`,
       writeFile: (p, c) => written.push({ p, c }),
+      mkdir: () => {},
+      copyFile: (from, to) => copied.push({ from, to }),
+      toWindowsPath: async (p) => p.replace("/mnt/c/", "C:\\").replace(/\//g, "\\"),
+      runPowerShell: async (script) => {
+        ps = script;
+      },
+      readFileIfExists: () => null,
+      removeFile: () => {},
     });
+
+    // The .bat is the engine and stays out of sight.
     expect(written).toHaveLength(1);
-    expect(written[0].p).toBe("/mnt/c/Users/u/Desktop/Switchboard.bat");
+    expect(written[0].p).toBe("/mnt/c/Users/u/AppData/Local/Switchboard/Switchboard.bat");
     expect(written[0].c).toContain("wsl.exe -d Ubuntu");
-    expect(printed.join("\n")).toContain("Shortcut created: /mnt/c/Users/u/Desktop/Switchboard.bat");
+    expect(copied).toEqual([
+      { from: "/repo/assets/switchboard.ico", to: "/mnt/c/Users/u/AppData/Local/Switchboard/switchboard.ico" },
+    ]);
+    // The icon must sit on NTFS: a \\wsl$\ IconLocation is blank at boot, when
+    // the distro is not running — exactly when the Startup shortcut is drawn.
+    expect(ps).not.toContain("\\\\wsl$");
+    expect(ps).toContain("Desktop\\Switchboard.lnk");
+    expect(printed.join("\n")).toContain(
+      "Shortcut created: /mnt/c/Users/u/Desktop/Switchboard.lnk",
+    );
   });
 
   it("--startup targets the Startup folder and says it runs on boot", async () => {
-    const written: string[] = [];
     const printed: string[] = [];
+    let ps = "";
     await runShortcut({
       startup: true,
       distro: "Ubuntu",
       shimPath: "/repo/bin/switchboard.mjs",
+      iconPath: "/repo/assets/switchboard.ico",
       baseDir: path.join(os.tmpdir(), "sb-none-" + process.pid),
       out: (l) => printed.push(l),
-      resolveFolder: async (folder) => `/mnt/c/Users/u/${folder}`,
-      writeFile: (p) => {
-        written.push(p);
+      resolveFolder: async (folder) =>
+        folder === "LocalApplicationData"
+          ? "/mnt/c/Users/u/AppData/Local"
+          : `/mnt/c/Users/u/${folder}`,
+      writeFile: () => {},
+      mkdir: () => {},
+      copyFile: () => {},
+      toWindowsPath: async (p) => p.replace("/mnt/c/", "C:\\").replace(/\//g, "\\"),
+      runPowerShell: async (script) => {
+        ps = script;
       },
+      readFileIfExists: () => null,
+      removeFile: () => {},
     });
-    expect(written).toEqual(["/mnt/c/Users/u/Startup/Switchboard.bat"]);
+    expect(ps).toContain("Startup\\Switchboard.lnk");
     expect(printed.join("\n")).toContain("on every boot");
+  });
+
+  it("replaces the old iconless Switchboard.bat — but only when it is ours", async () => {
+    const base = {
+      distro: "Ubuntu",
+      shimPath: "/repo/bin/switchboard.mjs",
+      iconPath: "/repo/assets/switchboard.ico",
+      baseDir: path.join(os.tmpdir(), "sb-none-" + process.pid),
+      resolveFolder: async (folder: string) =>
+        folder === "LocalApplicationData"
+          ? "/mnt/c/Users/u/AppData/Local"
+          : `/mnt/c/Users/u/${folder}`,
+      writeFile: () => {},
+      mkdir: () => {},
+      copyFile: () => {},
+      toWindowsPath: async (p: string) => p.replace("/mnt/c/", "C:\\").replace(/\//g, "\\"),
+      runPowerShell: async () => {},
+    };
+
+    // Ours (has both markers the generator writes) → removed.
+    const removed: string[] = [];
+    let printed: string[] = [];
+    await runShortcut({
+      ...base,
+      out: (l) => printed.push(l),
+      readFileIfExists: () => '@echo off\r\ntitle Switchboard\r\nwsl.exe -d Ubuntu -- bash -lc "x"',
+      removeFile: (p) => removed.push(p),
+    });
+    expect(removed).toEqual(["/mnt/c/Users/u/Desktop/Switchboard.bat"]);
+
+    // A stranger's file that merely shares the name → untouched, and said so.
+    const removed2: string[] = [];
+    printed = [];
+    await runShortcut({
+      ...base,
+      out: (l) => printed.push(l),
+      readFileIfExists: () => "@echo off\r\necho my own script\r\n",
+      removeFile: (p) => removed2.push(p),
+    });
+    expect(removed2).toEqual([]);
+    expect(printed.join("\n")).toContain("not a launcher this tool wrote");
   });
 
   it("outside WSL → clear error (no Windows side to install a shortcut on)", async () => {
