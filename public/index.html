@@ -320,6 +320,23 @@
       color: var(--text);
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
+    /* Inline rename: the name cell itself becomes the input (same grid area,
+       so the card never reflows while editing). */
+    .agent-rename-input {
+      grid-area: name;
+      width: 100%;
+      min-width: 0;
+      background: var(--bg-inset);
+      color: var(--text);
+      border: 1px solid var(--accent);
+      border-radius: var(--radius-sm);
+      padding: 1px 5px;
+      font-family: var(--mono);
+      font-weight: 600;
+      font-size: var(--fs-name);
+    }
+    .agent-rename-input:focus { outline: none; box-shadow: 0 0 0 3px var(--accent-wash); }
+
     .agent-role {
       grid-area: role;
       color: var(--text-dim);
@@ -394,7 +411,7 @@
       min-width: 104px;
     }
     .agent-menu-item { text-align: left; }
-    .mute-toggle, .nudge-btn, .open-btn, .reopen-btn, .remove-btn, .menu-btn {
+    .mute-toggle, .nudge-btn, .open-btn, .reopen-btn, .rename-btn, .remove-btn, .menu-btn {
       background: transparent;
       border: 1px solid var(--border);
       border-radius: var(--radius-sm);
@@ -405,7 +422,7 @@
       line-height: 1.3;
       transition: border-color 0.12s var(--ease), color 0.12s var(--ease), background 0.12s var(--ease);
     }
-    .mute-toggle:hover, .nudge-btn:hover, .open-btn:hover, .reopen-btn:hover, .remove-btn:hover, .menu-btn:hover { color: var(--text); border-color: var(--accent); }
+    .mute-toggle:hover, .nudge-btn:hover, .open-btn:hover, .reopen-btn:hover, .rename-btn:hover, .remove-btn:hover, .menu-btn:hover { color: var(--text); border-color: var(--accent); }
     .menu-btn { padding: 3px 7px; letter-spacing: 1px; }
     .mute-toggle.muted { color: var(--warn); border-color: var(--accent-line); }
     .remove-btn:hover { border-color: var(--danger); color: var(--danger); }
@@ -1119,6 +1136,19 @@
         ),
       );
       if (!online) {
+        // Rename: the name cell becomes an inline input (no blocking dialogs).
+        // Offline only — a live agent would re-join under its old name.
+        menu.appendChild(
+          menuItem(
+            "rename-btn",
+            "rename",
+            "Rename this agent — its message history follows the new name",
+            () => {
+              closeMenus();
+              startRename(agent, name);
+            },
+          ),
+        );
         // Remove: two-click inline confirmation (no blocking browser dialogs).
         menu.appendChild(
           menuItem(
@@ -1230,6 +1260,74 @@
       }
     }
 
+    /**
+     * Swaps the card's name cell for an input prefilled with the current name:
+     * Enter confirms, Esc / blur cancels — never a blocking browser dialog.
+     * The `done` latch makes the three exits idempotent (confirming detaches
+     * the focused input, which fires blur right behind it).
+     */
+    function startRename(agent, nameEl) {
+      const input = el("input", "agent-rename-input");
+      input.type = "text";
+      input.value = agent.name;
+      input.spellcheck = false;
+      input.maxLength = 31; // the hub's rule: ^[a-z0-9][a-z0-9-]{1,30}$
+      input.title = "New name — Enter to confirm, Esc to cancel";
+      input.setAttribute("aria-label", `New name for agent ${agent.name}`);
+
+      let done = false;
+      function restore() {
+        if (done) return true;
+        done = true;
+        input.replaceWith(nameEl);
+        return false;
+      }
+      function confirm() {
+        const next = input.value.trim();
+        if (restore()) return;
+        // Unchanged / emptied → the hub is not worth a round trip.
+        if (next === "" || next === agent.name) return;
+        renameAgent(agent.name, next);
+      }
+
+      // The card itself toggles the feed filter on click — never let the
+      // editing interaction reach it.
+      input.addEventListener("click", (ev) => ev.stopPropagation());
+      input.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter") confirm();
+        else if (ev.key === "Escape") restore();
+      });
+      input.addEventListener("blur", restore);
+
+      nameEl.replaceWith(input);
+      input.focus();
+      input.select();
+    }
+
+    async function renameAgent(name, next) {
+      try {
+        const res = await fetch(`/api/agents/${encodeURIComponent(name)}/rename`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ name: next }),
+        });
+        const body = await res.json();
+        if (!res.ok || !body.ok) {
+          toast(`Rename failed: ${body.error || `HTTP ${res.status}`}`, "warn");
+          return;
+        }
+        // The SSE pair (agent_removed + agent_updated) also arrives; applying
+        // it locally keeps the UI snappy for the click's own tab.
+        dropAgent(name);
+        mergeAgent(body.agent);
+        renderAgents();
+        renderRecipients();
+        toast(`Agent "${name}" renamed to "${body.agent.name}" (history kept).`);
+      } catch (err) {
+        toast(`Rename failed: ${err && err.message ? err.message : err}`, "warn");
+      }
+    }
+
     async function removeAgent(name) {
       try {
         const res = await fetch(`/api/agents/${encodeURIComponent(name)}`, {
@@ -1250,9 +1348,8 @@
     }
 
     function dropAgent(name) {
-      const idx = state.agents.findIndex((a) => a.name === name);
-      if (idx === -1) return;
-      state.agents.splice(idx, 1);
+      // state.agents is a Map (name -> agent), not an array.
+      if (!state.agents.delete(name)) return;
       if (state.filter === name) state.filter = null;
       renderAgents();
       renderRecipients();

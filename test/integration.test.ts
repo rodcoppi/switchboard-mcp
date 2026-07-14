@@ -557,6 +557,111 @@ describe("REST as operator", () => {
     expect(hub.store.unreadCount("alpha")).toBe(1);
   }, 15_000);
 
+  it("POST /api/agents/:name/rename renames (offline only), keeps the history and re-addresses the agent", async () => {
+    await registerAgent("alpha");
+    await registerAgent("beta");
+    // a message TO alpha that must FOLLOW the rename (append-only JSONL)
+    await fetch(api("/api/messages"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ to: "alpha", body: "follows the rename" }),
+    });
+
+    const rename = (name: string, payload: unknown) =>
+      fetch(api(`/api/agents/${name}/rename`), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+    // unknown agent → 404
+    const ghost = await rename("ghost", { name: "zeta" });
+    expect(ghost.status).toBe(404);
+    expect(((await ghost.json()) as any).error).toContain("Unknown agent");
+
+    // online agent → 409 telling to stop it first (its env still holds the old name)
+    hub.store.updateAgent("alpha", { status: "online" });
+    const refused = await rename("alpha", { name: "payments-api" });
+    expect(refused.status).toBe(409);
+    expect(((await refused.json()) as any).error).toContain("switchboard stop alpha");
+    hub.store.updateAgent("alpha", { status: "offline" });
+
+    // taken / invalid / reserved / missing new name → 400 with the actionable text
+    const taken = await rename("alpha", { name: "beta" });
+    expect(taken.status).toBe(400);
+    expect(((await taken.json()) as any).error).toContain("already");
+    const invalid = await rename("alpha", { name: "Payments_API" });
+    expect(invalid.status).toBe(400);
+    expect(((await invalid.json()) as any).error).toContain("Invalid agent name");
+    const reserved = await rename("alpha", { name: "operator" });
+    expect(reserved.status).toBe(400);
+    expect(((await reserved.json()) as any).error).toContain("Reserved name");
+    const missing = await rename("alpha", {});
+    expect(missing.status).toBe(400);
+    expect(((await missing.json()) as any).error).toContain("Invalid body");
+    // every refusal left the agent exactly where it was
+    expect(hub.store.getAgent("alpha")).toBeDefined();
+
+    // the happy path: 200 + the redacted agent, and the SSE pair on the stream
+    let status = 0;
+    let body: any;
+    const sse = await collectSse(
+      (text) => text.includes('"agent_removed"') && text.includes('"payments-api"'),
+      async () => {
+        const res = await rename("alpha", { name: "payments-api" });
+        status = res.status;
+        body = await res.json();
+      },
+    );
+    expect(status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.agent.name).toBe("payments-api");
+    expect(body.agent.tmuxSession).toBe("sb-payments-api");
+    expect(body.agent).not.toHaveProperty("token"); // v1.1: never leaves the hub
+    // the old card vanishes, the new one appears — existing event types only
+    expect(sse).toContain('"type":"agent_removed"');
+    expect(sse).toContain('"name":"alpha"');
+    expect(sse).toContain('"type":"agent_updated"');
+    expect(sse).toContain('"name":"payments-api"');
+
+    // the old name is gone from the listing and 404s on every :name route
+    const agents = (await (await fetch(api("/api/agents"))).json()) as Array<{
+      name: string;
+      unreadCount: number;
+    }>;
+    expect(agents.map((a) => a.name).sort()).toEqual(["beta", "payments-api"]);
+    expect((await rename("alpha", { name: "zeta" })).status).toBe(404);
+    expect((await fetch(api("/api/agents/alpha"), { method: "DELETE" })).status).toBe(404);
+
+    // the history followed: the unread of "alpha" is the unread of "payments-api"
+    expect(agents.find((a) => a.name === "payments-api")?.unreadCount).toBe(1);
+
+    // and the new name is a working ADDRESS: a message to it is delivered…
+    const sent = await fetch(api("/api/messages"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ to: "payments-api", body: "addressed to the new name" }),
+    });
+    expect(sent.status).toBe(201);
+    // …while the old address is unknown to the network
+    const toOld = await fetch(api("/api/messages"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ to: "alpha", body: "nobody lives here" }),
+    });
+    expect(toOld.status).toBe(404);
+
+    // the agent joins under the new name and reads BOTH messages — the one
+    // written to "alpha" before the rename and the one written to the new name
+    tokens.set("payments-api", tokens.get("alpha")!); // rename keeps the token
+    const renamedAgent = await joinAs("payments-api");
+    const checked = await callTool(renamedAgent, "check_messages");
+    expect(checked.messages.map((m: Message) => m.body)).toEqual([
+      "follows the rename",
+      "addressed to the new name",
+    ]);
+  }, 15_000);
+
   it("GET /api/messages: most recent first, ?agent filter (from OR to) and ?limit truncation", async () => {
     await registerAgent("alpha");
     await registerAgent("beta");

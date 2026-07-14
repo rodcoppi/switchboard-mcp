@@ -212,6 +212,84 @@ describe("agents", () => {
     expect(rebooted.getAgent("alpha")?.status).toBe("offline");
   });
 
+  it("renameAgent re-keys the registry, recomputes tmuxSession and persists across reboot", () => {
+    const store = newStore();
+    registerAgent(store, "alpha");
+    registerAgent(store, "beta");
+    const renamed = store.renameAgent("alpha", "payments-api");
+
+    expect(renamed.name).toBe("payments-api");
+    // the session follows the address (default prefix "sb-", no config.json here)
+    expect(renamed.tmuxSession).toBe("sb-payments-api");
+    expect(store.getAgent("alpha")).toBeUndefined();
+    expect(store.getAgent("payments-api")).toBeDefined();
+    expect(store.listAgents().map((a) => a.name).sort()).toEqual(["beta", "payments-api"]);
+    // identity is preserved — this is the SAME agent, not a new registration
+    expect(renamed.createdAt).toBe(store.getAgent("payments-api")?.createdAt);
+    expect(store.listAgents()).toHaveLength(2);
+
+    const rebooted = newStore();
+    expect(rebooted.getAgent("alpha")).toBeUndefined();
+    expect(rebooted.getAgent("payments-api")?.tmuxSession).toBe("sb-payments-api");
+  });
+
+  it("renameAgent honours the configured tmuxSessionPrefix", () => {
+    fs.writeFileSync(
+      path.join(dir, "config.json"),
+      JSON.stringify({ tmuxSessionPrefix: "cc-" }),
+    );
+    const store = newStore();
+    registerAgent(store, "alpha");
+    expect(store.renameAgent("alpha", "beta").tmuxSession).toBe("cc-beta");
+  });
+
+  it("renameAgent keeps the capability token (the old session is dead by definition)", () => {
+    const store = newStore();
+    const token = registerAgent(store, "alpha").token;
+    expect(store.renameAgent("alpha", "beta").token).toBe(token);
+  });
+
+  it("renameAgent rejects unknown, invalid, reserved and taken names", () => {
+    const store = newStore();
+    registerAgent(store, "alpha");
+    registerAgent(store, "beta");
+
+    expect(() => store.renameAgent("ghost", "zeta")).toThrow(/Unknown agent/);
+    for (const bad of ["A", "a", "-zeta", "zeta_1", "Zeta", "a".repeat(32), ""]) {
+      expect(() => store.renameAgent("alpha", bad), `name: "${bad}"`).toThrow(
+        /Invalid agent name/,
+      );
+    }
+    for (const reserved of ["operator", "all"]) {
+      expect(() => store.renameAgent("alpha", reserved), `name: "${reserved}"`).toThrow(
+        /Reserved name/,
+      );
+    }
+    expect(() => store.renameAgent("alpha", "beta")).toThrow(/already/);
+
+    // every refusal was total: no re-key, and NOTHING was appended
+    expect(store.getAgent("alpha")).toBeDefined();
+    expect(store.getAgent("beta")).toBeDefined();
+    expect(fs.existsSync(path.join(dir, "messages.jsonl"))).toBe(false);
+  });
+
+  it("renameAgent to the same name is a no-op that appends nothing", () => {
+    const store = newStore();
+    const agent = registerAgent(store, "alpha");
+    expect(store.renameAgent("alpha", "alpha")).toBe(agent);
+    expect(store.getAgent("alpha")).toBeDefined();
+    expect(fs.existsSync(path.join(dir, "messages.jsonl"))).toBe(false);
+  });
+
+  it("renameAgent bypasses the 50-agent cap (the agent count is unchanged)", () => {
+    const store = newStore();
+    for (let i = 0; i < MAX_AGENTS; i++) {
+      registerAgent(store, `agent-${i}`);
+    }
+    expect(() => store.renameAgent("agent-0", "renamed-at-the-cap")).not.toThrow();
+    expect(store.listAgents()).toHaveLength(MAX_AGENTS);
+  });
+
   it("writes the agents.json snapshot atomically, leaving no temp file behind", () => {
     const store = newStore();
     registerAgent(store, "alpha");
@@ -357,6 +435,134 @@ describe("messages", () => {
     expect(b1.id).not.toBe(b2.id);
     expect(store.unreadCount("alpha")).toBe(1);
     expect(store.unreadCount("beta")).toBe(1);
+  });
+});
+
+describe("rename (the history follows the agent)", () => {
+  it("appends ONE rename event, leaves the message lines untouched, and moves the unread", () => {
+    const store = newStore();
+    registerAgent(store, "alpha");
+    const m1 = store.appendMessage({ from: "operator", to: "alpha", body: "before the rename" });
+    const m2 = store.appendMessage({ from: "beta", to: "alpha", body: "also before" });
+    store.markRead(m2.id);
+
+    store.renameAgent("alpha", "payments-api");
+
+    // The unread moved with the agent — under the new address, not the old one.
+    expect(store.unreadFor("payments-api").map((m) => m.id)).toEqual([m1.id]);
+    expect(store.unreadCount("payments-api")).toBe(1);
+    expect(store.unreadSenders("payments-api")).toEqual(["operator"]);
+    expect(store.unreadCount("alpha")).toBe(0);
+
+    const lines = rawLines();
+    expect(lines).toHaveLength(4); // m1, m2, read(m2), rename
+    // the original message lines are byte-for-byte what they always were:
+    // still addressed to "alpha", never rewritten
+    expect(JSON.parse(lines[0])).toEqual(m1);
+    expect(JSON.parse(lines[1])).toMatchObject({ id: m2.id, to: "alpha", readAt: null });
+    expect(JSON.parse(lines[2])).toMatchObject({ type: "read", messageId: m2.id });
+    // exactly one rename event, and it carries the full redirection
+    const renameLines = lines.map((l) => JSON.parse(l)).filter((r) => r.type === "rename");
+    expect(renameLines).toHaveLength(1);
+    expect(renameLines[0]).toMatchObject({
+      type: "rename",
+      from: "alpha",
+      to: "payments-api",
+    });
+    expect(typeof renameLines[0].at).toBe("string");
+  });
+
+  it("the moved unread SURVIVES a reboot (the replay rebuilds the rename map)", () => {
+    const store = newStore();
+    registerAgent(store, "alpha");
+    const m1 = store.appendMessage({ from: "operator", to: "alpha", body: "unread forever" });
+    store.renameAgent("alpha", "beta");
+
+    const rebooted = newStore(); // same dir, fresh instance — replay only
+    expect(rebooted.getAgent("beta")).toBeDefined();
+    expect(rebooted.getAgent("alpha")).toBeUndefined();
+    expect(rebooted.unreadFor("beta").map((m) => m.id)).toEqual([m1.id]);
+    expect(rebooted.unreadCount("beta")).toBe(1);
+    expect(rebooted.unreadCount("alpha")).toBe(0);
+    // and the redirected message is still readable through its own id
+    expect(rebooted.markRead(m1.id)).toBe(true);
+    expect(rebooted.unreadCount("beta")).toBe(0);
+    expect(newStore().unreadCount("beta")).toBe(0);
+  });
+
+  it("follows a rename CHAIN: a → b → c resolves a's mail to c", () => {
+    const store = newStore();
+    registerAgent(store, "aaa");
+    const m1 = store.appendMessage({ from: "operator", to: "aaa", body: "addressed to aaa" });
+    store.renameAgent("aaa", "bbb");
+    const m2 = store.appendMessage({ from: "operator", to: "bbb", body: "addressed to bbb" });
+    store.renameAgent("bbb", "ccc");
+    const m3 = store.appendMessage({ from: "operator", to: "ccc", body: "addressed to ccc" });
+
+    expect(store.unreadFor("ccc").map((m) => m.id)).toEqual([m1.id, m2.id, m3.id]);
+    expect(store.unreadCount("aaa")).toBe(0);
+    expect(store.unreadCount("bbb")).toBe(0);
+
+    // and the chain replays identically from the JSONL alone
+    const rebooted = newStore();
+    expect(rebooted.unreadCount("ccc")).toBe(3);
+  });
+
+  it("resolves the SENDER's name too, so unreadSenders is always replyable", () => {
+    const store = newStore();
+    registerAgent(store, "alpha");
+    registerAgent(store, "beta");
+    store.appendMessage({ from: "alpha", to: "beta", body: "hi from the old name" });
+    store.renameAgent("alpha", "payments-api");
+
+    // beta must be told who to answer TODAY — "alpha" no longer routes anywhere
+    expect(store.unreadSenders("beta")).toEqual(["payments-api"]);
+    expect(newStore().unreadSenders("beta")).toEqual(["payments-api"]);
+  });
+
+  it("a NEW agent registered under the freed old name keeps its own mail", () => {
+    const store = newStore();
+    registerAgent(store, "alpha");
+    const old = store.appendMessage({ from: "operator", to: "alpha", body: "the first alpha's" });
+    store.renameAgent("alpha", "beta");
+
+    // the operator frees the name and starts a brand-new, unrelated agent on it
+    registerAgent(store, "alpha");
+    const fresh = store.appendMessage({ from: "operator", to: "alpha", body: "the new alpha's" });
+
+    // mail written BEFORE the rename followed the renamed agent…
+    expect(store.unreadFor("beta").map((m) => m.id)).toEqual([old.id]);
+    // …and mail written AFTER it belongs to whoever holds the address now
+    expect(store.unreadFor("alpha").map((m) => m.id)).toEqual([fresh.id]);
+
+    const rebooted = newStore();
+    expect(rebooted.unreadFor("beta").map((m) => m.id)).toEqual([old.id]);
+    expect(rebooted.unreadFor("alpha").map((m) => m.id)).toEqual([fresh.id]);
+  });
+
+  it("skips corrupted and nonsensical rename events on replay without crashing", () => {
+    const store = newStore();
+    const m1 = store.appendMessage({ from: "operator", to: "alpha", body: "keep me routed" });
+
+    const file = path.join(dir, "messages.jsonl");
+    fs.writeFileSync(
+      file,
+      [
+        rawLines()[0],
+        '{"type":"rename","from":"alpha"}', // no "to" → unrecognized record
+        '{"type":"rename","from":"alpha","to":"","at":"2026-07-08T00:00:00.000Z"}', // empty target
+        '{"type":"rename","from":"alpha","to":"alpha","at":"2026-07-08T00:00:00.000Z"}', // no-op
+        '{"type":"rename","from":"alpha","to":"beta","at":"2026-07-08T00:00:00.000Z"}', // the good one
+      ].join("\n") + "\n",
+    );
+
+    warnings = [];
+    const rebooted = newStore();
+    expect(warnings).toHaveLength(3); // one per bad line, none fatal
+    expect(rebooted.listMessages().map((m) => m.id)).toEqual([m1.id]);
+    // the one valid event still applies
+    expect(rebooted.unreadCount("beta")).toBe(1);
+    expect(rebooted.unreadCount("alpha")).toBe(0);
   });
 });
 

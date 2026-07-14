@@ -1,11 +1,13 @@
 // Persistence layer (PRD sections 8 and 10.4).
 //
 // - messages.jsonl: append-only source of truth, one JSON record per line.
-//   Lines are either full Message objects or read events
-//   {"type":"read","messageId":"...","readAt":"..."}. The file is NEVER edited
-//   in place; marking a message as read appends a read event and the in-memory
-//   state consolidates on replay. Writes use fs.appendFileSync — single
-//   process, low volume, synchronous is acceptable and interleaving-proof.
+//   Lines are full Message objects, read events
+//   {"type":"read","messageId":"...","readAt":"..."} or rename events
+//   {"type":"rename","from":"...","to":"...","at":"..."}. The file is NEVER
+//   edited in place; marking a message as read appends a read event and
+//   renaming an agent appends a rename event — the in-memory state
+//   consolidates on replay. Writes use fs.appendFileSync — single process,
+//   low volume, synchronous is acceptable and interleaving-proof.
 // - agents.json: full snapshot rewritten on every change via temp file +
 //   fs.renameSync in the SAME directory (atomic on the same filesystem).
 // - Boot: loads agents.json (if present) and replays messages.jsonl line by
@@ -26,7 +28,7 @@ import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { ulid } from "ulid";
 import type { Agent, Message } from "../shared/types.js";
-import { defaultBaseDir } from "./config.js";
+import { defaultBaseDir, loadConfig } from "./config.js";
 
 /** Agent name rule (PRD section 8): lowercase alphanumeric + hyphens, 2..31 chars. */
 export const AGENT_NAME_RE = /^[a-z0-9][a-z0-9-]{1,30}$/;
@@ -65,6 +67,37 @@ interface ReadEvent {
   readAt: string;
 }
 
+/**
+ * Rename event record appended to messages.jsonl by renameAgent — same spirit
+ * as ReadEvent: the JSONL is append-only and NEVER rewritten, so the history
+ * of an agent that changed name is not migrated, it is REDIRECTED. Every
+ * message keeps the `from`/`to` it was written with; the replay of these
+ * events tells the store that the agent once addressed as `from` answers to
+ * `to` today (see canonicalName).
+ */
+interface RenameEvent {
+  type: "rename";
+  from: string;
+  to: string;
+  at: string; // ISO 8601 — the instant the name changed hands
+}
+
+/**
+ * A replayed rename, positioned in the append stream.
+ *
+ * `at` is NOT used to decide what a rename moves: two records written in the
+ * same millisecond would be indistinguishable, and a hand-edited or imported
+ * timestamp could silently misroute mail. The JSONL's own line ORDER is the
+ * exact, tamper-evident clock this file already trusts everywhere else — so a
+ * rename moves precisely the messages that were appended before it.
+ */
+interface RenameIndexEntry {
+  from: string;
+  to: string;
+  /** How many messages the stream held when this rename was appended. */
+  afterMessageCount: number;
+}
+
 /** Minimal logger surface the store needs; satisfied by log.ts Logger and by console. */
 export interface StoreLogger {
   info(message: string): void;
@@ -92,6 +125,15 @@ export class Store {
   private agents = new Map<string, Agent>();
   private messages: Message[] = []; // append/replay order (ULIDs are time-ordered)
   private messagesById = new Map<string, Message>();
+  /** Message id → its position in the append stream (see RenameIndexEntry). */
+  private messageSeq = new Map<string, number>();
+  /**
+   * The rename map: every rename event, in file (append) order. Filled
+   * identically by the boot replay and by renameAgent, so a fresh Store on the
+   * same directory resolves names exactly like the live one. Renames are rare
+   * — this array is normally empty and canonicalName short-circuits on it.
+   */
+  private renames: RenameIndexEntry[] = [];
   // Set when a previous append may have left the file without a trailing
   // newline (partial write on ENOSPC, or an unrepairable torn tail found at
   // boot). The next append then starts on a fresh line so a valid record is
@@ -198,6 +240,84 @@ export class Store {
     if (!this.agents.delete(name)) return false;
     this.saveAgentsSnapshot();
     return true;
+  }
+
+  /**
+   * Renames an agent, keeping its history (post-v1, dashboard/CLI "rename").
+   *
+   * The name is the ADDRESS, not a label: it keys this Map, derives the tmux
+   * session, and every message in the append-only JSONL references it as
+   * `from`/`to`. Rewriting those lines is forbidden (section 8), so instead we
+   * APPEND a rename event and let canonicalName redirect the old address to
+   * the new one — the unread of "<old>" becomes the unread of "<new>", on this
+   * instance and on every future boot (the replay rebuilds the same map).
+   *
+   * Callers MUST refuse this while the agent is online (REST does): a live
+   * Claude Code carries SWITCHBOARD_AGENT_NAME in its session env and would
+   * re-join under the OLD name.
+   *
+   * The capability token is deliberately KEPT as-is: it only ever lives in the
+   * env of the agent's tmux session, and that session is dead by definition
+   * here (offline) — the next start/reopen re-registers and regenerates it
+   * anyway. Rotating it now would buy nothing and break nothing.
+   */
+  renameAgent(oldName: string, newName: string): Agent {
+    const agent = this.agents.get(oldName);
+    if (!agent) {
+      throw new Error(`Unknown agent: "${oldName}".`);
+    }
+    // No-op: return the record untouched and append NOTHING — a rename event
+    // from a name to itself would be a permanent no-op line in the JSONL.
+    if (newName === oldName) return agent;
+
+    // Same rules as registerAgent — this is a registration under a new
+    // address. The MAX_AGENTS cap does not apply: the agent count is unchanged.
+    if (RESERVED_AGENT_NAMES.has(newName)) {
+      throw new Error(
+        `Reserved name: "${newName}". "operator" (the human who owns the system) and "all" ` +
+          `(broadcast pseudo-recipient) are system identities — choose another agent name.`,
+      );
+    }
+    if (!AGENT_NAME_RE.test(newName)) {
+      throw new Error(
+        `Invalid agent name: "${newName}". Use lowercase letters, digits and hyphens ` +
+          `(2 to 31 characters, starting with a letter or digit): ^[a-z0-9][a-z0-9-]{1,30}$`,
+      );
+    }
+    if (this.agents.has(newName)) {
+      throw new Error(
+        `Name already taken: "${newName}" is already registered. Agent names are unique ` +
+          `addresses — pick a free name, or remove the other agent first.`,
+      );
+    }
+
+    // JSONL FIRST: it is the source of truth. If the append throws (ENOSPC),
+    // nothing was mutated and the rename simply did not happen.
+    const event: RenameEvent = {
+      type: "rename",
+      from: oldName,
+      to: newName,
+      at: new Date().toISOString(),
+    };
+    this.appendJsonLine(event);
+    this.renames.push({
+      from: oldName,
+      to: newName,
+      afterMessageCount: this.messages.length,
+    });
+
+    this.agents.delete(oldName);
+    agent.name = newName;
+    // The registered session name must follow the address, otherwise `stop`
+    // (which trusts the registry, never a recomputation) would target the old
+    // agent's session forever. Recomputing prefix+newName is safe precisely
+    // because the agent is offline: its old session is dead, and the next
+    // `switchboard start <newName>` / dashboard reopen derives this very name
+    // from the same config key.
+    agent.tmuxSession = loadConfig(this.baseDir).tmuxSessionPrefix + newName;
+    this.agents.set(newName, agent);
+    this.saveAgentsSnapshot();
+    return agent;
   }
 
   /**
@@ -329,10 +449,31 @@ export class Store {
     return true;
   }
 
+  /**
+   * Resolves a name written on the message at position `seq` into the name
+   * that identity answers to TODAY, following the rename chain (a→b→c resolves
+   * a→c) — the single lens through which the unread queries read the `from`/
+   * `to` of the append-only records.
+   *
+   * Why the position matters: a rename FREES the old name, and the operator's
+   * very next move may be to register a brand-new agent under it. Only renames
+   * appended AFTER a message can move it, so old mail follows the agent that
+   * was renamed while new mail stays with whoever holds the address now.
+   */
+  private canonicalName(name: string, seq: number): string {
+    if (this.renames.length === 0) return name; // fast path: nothing renamed
+    let current = name;
+    for (const rename of this.renames) {
+      if (rename.afterMessageCount <= seq) continue; // the message came later
+      if (rename.from === current) current = rename.to;
+    }
+    return current;
+  }
+
   /** Unread messages addressed to an agent, in append (time) order. Shallow copies — see getMessage. */
   unreadFor(name: string): Message[] {
     return this.messages
-      .filter((m) => m.to === name && m.readAt === null)
+      .filter((m, seq) => m.readAt === null && this.canonicalName(m.to, seq) === name)
       .map((m) => ({ ...m }));
   }
 
@@ -340,11 +481,17 @@ export class Store {
     return this.unreadFor(name).length;
   }
 
-  /** Unique senders of unread messages for an agent, in first-appearance order. */
+  /**
+   * Unique senders of unread messages for an agent, in first-appearance order.
+   * Senders are resolved to their CURRENT names too: this list is what the
+   * nudge shows the recipient ("2 messages from alpha"), and a name the agent
+   * can no longer reply to would be worse than useless.
+   */
   unreadSenders(name: string): string[] {
     const senders: string[] = [];
     for (const message of this.unreadFor(name)) {
-      if (!senders.includes(message.from)) senders.push(message.from);
+      const from = this.canonicalName(message.from, this.messageSeq.get(message.id) ?? 0);
+      if (!senders.includes(from)) senders.push(from);
     }
     return senders;
   }
@@ -352,6 +499,7 @@ export class Store {
   // ------------------------------------------------------------- persistence
 
   private indexMessage(message: Message): void {
+    this.messageSeq.set(message.id, this.messages.length);
     this.messages.push(message);
     this.messagesById.set(message.id, message);
   }
@@ -415,9 +563,10 @@ export class Store {
   }
 
   /**
-   * Replays messages.jsonl line by line, rebuilding messages and unread state.
-   * Each line is either a Message or a ReadEvent. Corrupted or unrecognized
-   * lines: log a warn and SKIP — never crash (PRD 10.4).
+   * Replays messages.jsonl line by line, rebuilding messages, unread state and
+   * the rename map. Each line is a Message, a ReadEvent or a RenameEvent.
+   * Corrupted or unrecognized lines: log a warn and SKIP — never crash
+   * (PRD 10.4).
    */
   private replayMessages(): void {
     if (!fs.existsSync(this.messagesPath)) return;
@@ -467,6 +616,22 @@ export class Store {
             `[store] messages.jsonl line ${lineNo}: read event for unknown message "${record.messageId}" — skipping.`,
           );
         }
+      } else if (isRenameEvent(record)) {
+        if (record.from === record.to) {
+          // renameAgent never appends this (same-name is a no-op); a
+          // hand-edited or corrupted line could. It resolves to nothing —
+          // skip it rather than let it sit in the map forever.
+          this.log.warn(
+            `[store] messages.jsonl line ${lineNo}: rename event to the same name ` +
+              `("${record.from}") — skipping.`,
+          );
+        } else {
+          this.renames.push({
+            from: record.from,
+            to: record.to,
+            afterMessageCount: this.messages.length,
+          });
+        }
       } else if (isMessage(record)) {
         if (this.messagesById.has(record.id)) {
           // A duplicated line (concatenated backup restore, manual edit) must
@@ -497,6 +662,25 @@ function isReadEvent(value: unknown): value is ReadEvent {
     v.type === "read" &&
     typeof v.messageId === "string" &&
     typeof v.readAt === "string"
+  );
+}
+
+/**
+ * A structurally invalid rename event (missing/empty from|to|at) does NOT
+ * match here and therefore falls into the replay's "unrecognized record"
+ * warn+skip branch — exactly like any other corrupted line.
+ */
+function isRenameEvent(value: unknown): value is RenameEvent {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return (
+    v.type === "rename" &&
+    typeof v.from === "string" &&
+    v.from.length > 0 &&
+    typeof v.to === "string" &&
+    v.to.length > 0 &&
+    typeof v.at === "string" &&
+    v.at.length > 0
   );
 }
 

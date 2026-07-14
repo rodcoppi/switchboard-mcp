@@ -55,6 +55,10 @@ describe("Phase 6 — static dashboard serving", () => {
       "msg-body",
       "status-dot",
       "unread-badge",
+      // Offline card ⋯ menu: rename (inline input in the name cell) + remove.
+      "rename-btn",
+      "agent-rename-input",
+      "remove-btn",
       "launcher",
       "launch-btn",
       // Dir picker (the launcher form's "Browse…" WSL folder browser).

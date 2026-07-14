@@ -680,6 +680,61 @@ export function createApiRouter(options: ApiOptions): express.Router {
     res.json({ ok: true, removed: name });
   });
 
+  // POST /api/agents/:name/rename — body {name: "<newName>"}. Post-v1
+  // sibling of DELETE above (dashboard ⋯ menu / `switchboard rename`).
+  //
+  // Refused while the agent looks online, for a reason stronger than DELETE's:
+  // a live Claude Code holds SWITCHBOARD_AGENT_NAME in its session env and
+  // would re-join under the OLD name, resurrecting it as a second agent. The
+  // history follows the agent — the store appends a rename event instead of
+  // rewriting the append-only JSONL (see Store.renameAgent).
+  router.post("/api/agents/:name/rename", (req, res) => {
+    const name = req.params.name;
+    const agent = store.getAgent(name);
+    if (!agent) {
+      res.status(404).json({ ok: false, error: `Unknown agent: "${name}".` });
+      return;
+    }
+    if (agent.status === "online") {
+      res.status(409).json({
+        ok: false,
+        error:
+          `The agent "${name}" looks online (tmux session "${agent.tmuxSession}"). ` +
+          `Stop it first — "switchboard stop ${name}" — and then rename it.`,
+      });
+      return;
+    }
+    const newName = ((req.body ?? {}) as Record<string, unknown>).name;
+    if (typeof newName !== "string" || newName.length === 0) {
+      res.status(400).json({
+        ok: false,
+        error: `Invalid body: expected {"name": "<new agent name>"} with a non-empty name.`,
+      });
+      return;
+    }
+
+    let renamed: Agent;
+    try {
+      renamed = store.renameAgent(name, newName);
+    } catch (err) {
+      // Invalid/reserved/taken name — store errors are already in English and
+      // actionable, so they surface verbatim (the CLI reprints them as-is).
+      res.status(400).json({ ok: false, error: (err as Error).message });
+      return;
+    }
+
+    // Reuses the existing event types: the dashboard's agent_removed handler
+    // drops the old card and its agent_updated handler adds the new one — no
+    // new client plumbing, and any listener that only knows these two events
+    // still converges on the right state.
+    if (renamed.name !== name) {
+      bus.emit({ type: "agent_removed", payload: { name } });
+      log.info(`[api] agent renamed: ${name} → ${renamed.name}.`); // never the token
+    }
+    bus.emit({ type: "agent_updated", payload: toPublicAgent(renamed) });
+    res.json({ ok: true, agent: toPublicAgent(renamed) });
+  });
+
   // POST /api/agents/:name/nudge — manual nudge button (PRD 10.1: "force a
   // manual nudge"). "Force" = bypasses cooldown AND mute (politeness controls
   // the human operator may override), but NEVER the pane-command guard —
