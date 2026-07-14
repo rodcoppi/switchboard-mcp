@@ -1117,6 +1117,38 @@ describe("auxiliary endpoints", () => {
     expect(typeof body.version).toBe("string");
   });
 
+  it("GET /api/events heartbeats as a real EVENT, not only a comment", async () => {
+    // The dashboard cannot see `: heartbeat` — EventSource drops comments — so
+    // a stream killed by WSL2's localhost proxy (or a sleeping laptop) looks
+    // exactly like an idle network and the feed silently stops. The observable
+    // heartbeat is what lets the dashboard tell those apart, and nothing else
+    // in the product would fail if it regressed to a comment.
+    const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), "switchboard-int-hb-"));
+    const hub2 = await startHub({ baseDir: dir2, port: 0, quiet: true, heartbeatMs: 60 });
+    const controller = new AbortController();
+    try {
+      const res = await fetch(`http://127.0.0.1:${hub2.port}/api/events`, {
+        headers: { accept: "text/event-stream" },
+        signal: controller.signal,
+      });
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      const deadline = Date.now() + 4000;
+      while (Date.now() < deadline && !buffer.includes('"type":"heartbeat"')) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+      }
+      expect(buffer).toContain('data: {"type":"heartbeat"');
+      expect(buffer).toContain(": heartbeat"); // the comment stays, for dumb proxies
+    } finally {
+      controller.abort();
+      await hub2.close();
+      fs.rmSync(dir2, { recursive: true, force: true });
+    }
+  });
+
   it("POST /api/agents/:name/nudge (hub with dispatcher): 404 unknown; 409 guard aborted", async () => {
     // Phase 3: the endpoint fires a REAL manual nudge, so this test uses a
     // dedicated hub WITHOUT the onMessage stub (default dispatcher). A tmux

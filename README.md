@@ -7,65 +7,62 @@
   <img src="assets/dashboard.png" alt="The Switchboard dashboard — an operator's patchbay: agents on the left, the transcript of their messages in the center" width="860">
 </p>
 
-Run several coding agents at once — **Claude Code** (Anthropic's CLI), **Codex CLI** (OpenAI's),
-or a mix of both — one on the backend, one on the frontend, one on infra, and today they're blind
-to each other. Every "the API contract changed" has to go through **you**, copy-pasting between
-terminals. You become the message broker.
+You have **Claude Code** (Anthropic's CLI) open on the backend, **Codex CLI** (OpenAI's) on the
+frontend, another agent on infra. None of them knows the others exist. So when the API contract
+changes, you are the one who carries the news: copy from this terminal, paste into that one,
+repeat. You are the message broker.
 
-**Switchboard is the wire between them.** A local hub that lets your already-running agents
-message each other directly (over MCP), nudges the recipient awake in its terminal, and shows
-the whole conversation on one dashboard. It **connects** sessions you already have — it does
-not spawn, orchestrate, or manage them.
+Switchboard is the wire between them. It's a local hub. Your agents message each other over MCP,
+the recipient gets nudged awake in its own terminal, and you watch the whole conversation on one
+dashboard. It connects sessions you already have. It won't spawn, orchestrate or manage them.
 
-The trick that keeps it safe and reliable: **tmux delivers only a one-line nudge; the message
-content always travels over MCP.** Agent A calls `send_message` → the Hub appends it to
-`~/.switchboard/messages.jsonl` (the source of truth) and pokes agent B's terminal with a
-single `[switchboard]` line → B wakes up and calls `check_messages` to read it over MCP.
+What keeps it safe: **tmux carries a one-line nudge, and nothing else. The message itself travels
+over MCP.** Agent A calls `send_message`, the Hub appends it to `~/.switchboard/messages.jsonl`
+(the source of truth) and pokes agent B's terminal with a single `[switchboard]` line. B wakes up
+and calls `check_messages` to read it.
 
-> **Platform: Windows + WSL (Ubuntu) — that's what Switchboard is built and tested for today.**
-> The core (hub, MCP, tmux nudges) is plain Unix + tmux, so a Linux/macOS setup *might* work —
-> but it's untested, so treat non-WSL as unsupported for now. The conveniences that make it
-> click on Windows (the one-click launcher, popping open a real terminal window, `\\wsl$\…`
-> folder paths) are WSL-specific and degrade with a clear message elsewhere.
+> **Platform: Windows + WSL (Ubuntu).** That's what Switchboard is built and tested on. The core
+> (hub, MCP, tmux nudges) is plain Unix and tmux, so Linux and macOS may well work, but nobody has
+> tested it. Treat them as unsupported for now. The parts that make it click on Windows (the
+> one-click launcher, opening a real terminal window, `\\wsl$\…` folder paths) are WSL-specific,
+> and say so instead of breaking when you run them elsewhere.
 >
-> Local-only by design: the Hub binds `127.0.0.1` and nothing is exposed to the network. MIT licensed.
+> Local-only by design: the Hub binds `127.0.0.1` and nothing reaches the network. MIT licensed.
 
 ---
 
 ## Prerequisites
 
-- **Node.js >= 20** (runs in ESM, with TypeScript executed by `tsx` — no build step).
-- **tmux >= 3.2** (validated with 3.4).
-- **Claude Code >= 2.x** (`claude` binary on the PATH).
-- **Codex CLI** (optional — `codex` binary on the PATH). Only needed to run agents with
-  `--agent codex` / the dashboard's **Codex** choice; Switchboard works fully without it.
-- `jq` (optional, only a convenience for inspecting the JSONL while debugging).
+- **Node.js >= 20**. Runs as ESM, with TypeScript executed by `tsx`. No build step.
+- **tmux >= 3.2** (tested on 3.4).
+- **Claude Code >= 2.x**, the `claude` binary on your PATH.
+- **Codex CLI**, optional: the `codex` binary on your PATH. You need it only to run agents with
+  `--agent codex`, or the dashboard's **Codex** button. Everything else works without it.
+- `jq`, optional. Handy for reading the JSONL while debugging.
 
-> **WSL (important — pitfall P8):** the tmux server is per **user** and per **distro**.
-> The Hub (`serve`) and all agents (`start`) MUST run on the **same WSL distro** and with the
-> **same user**. If you open the Hub on one distro/user and an agent on another,
-> `tmux send-keys` cannot find the session and the nudge never arrives.
+> **One WSL distro, one user.** The tmux server belongs to a user on a distro. Run the Hub
+> (`serve`) and every agent (`start`) as the same user on the same distro. Split them across two
+> and `tmux send-keys` won't find the session, so the nudge never lands.
 
 ---
 
-## Setup — two commands
+## Setup: two commands
 
 ```bash
 git clone https://github.com/rodcoppi/switchboard-mcp.git && cd switchboard-mcp && npm install
 node bin/switchboard.mjs setup
 ```
 
-The `setup` wizard does everything the manual steps below describe — checking prerequisites
-(and offering a **sudo-less tmux install** when tmux is missing), registering the MCP server
-in Claude Code, installing the agent-protocol snippet into your `~/.claude/CLAUDE.md`, adding
-the permission allow rules, running `npm link`, offering the Windows one-click shortcut
-(Desktop and/or Startup, WSL setups), and bringing the Hub up. It asks before touching any of
-your files, is **idempotent** (safe to re-run anytime), and `--yes` makes it fully
-non-interactive.
+`setup` does every manual step below for you: it checks the prerequisites (and offers a
+sudo-less tmux install if tmux is missing), registers the MCP server in Claude Code, puts the
+agent-protocol snippet in your `~/.claude/CLAUDE.md`, adds the permission rules, runs
+`npm link`, offers the Windows shortcut, and brings the Hub up. It asks before it touches a
+file of yours. Re-run it whenever you like, it changes nothing that is already right. Pass
+`--yes` and it stops asking.
 
-When it finishes: dashboard at `http://localhost:4577/`, launch agents from the **Launch
-agent** form there, and run `switchboard wire` inside any already-open claude window's folder
-to adopt it into the network.
+When it finishes, the dashboard is at `http://localhost:4577/`. Launch agents from the **Launch
+agent** form there, or run `switchboard wire` in the folder of a claude window you already have
+open to bring that one in.
 
 <details>
 <summary><b>Manual setup</b> (what the wizard automates, step by step)</summary>
@@ -78,65 +75,62 @@ cd switchboard-mcp
 npm install
 ```
 
-There is no build step: the TypeScript code runs directly with `tsx`. You have three ways to
-invoke the `switchboard` CLI:
+The TypeScript runs straight through `tsx`, so there is nothing to build. Three ways to call
+the `switchboard` CLI:
 
-- **Recommended — `npm link`** (puts the `switchboard` command on the PATH):
+- `npm link` puts `switchboard` on your PATH. This is the one to use:
   ```bash
   npm link
   switchboard --help
   ```
-- **Without link, via the bin shim:**
+- The bin shim, without linking:
   ```bash
   node bin/switchboard.mjs --help
   ```
-- **Without link, straight through the entry point:**
+- The entry point, without linking:
   ```bash
   npx tsx src/index.ts --help
   ```
 
-In the examples below we use `switchboard <subcommand>` (assuming `npm link`); swap it for
-`node bin/switchboard.mjs <subcommand>` if you prefer not to link.
+The examples below say `switchboard <subcommand>` and assume you linked. If you didn't, read
+them as `node bin/switchboard.mjs <subcommand>`.
 
-### 2. Start the Hub (`serve`) — usually automatic
+### 2. Start the Hub (`serve`), usually automatic
 
-**You normally don't need this step:** `switchboard start` and `switchboard wire`
-auto-start the Hub in the background when it is not running (a detached tmux session
-`sb-hub` — no terminal window stays open). After a reboot, just `wire`/`start` your first
-agent and the Hub comes up with it.
+Skip this step: `switchboard start` and `switchboard wire` bring the Hub up for you when it
+isn't running, in a detached tmux session called `sb-hub`. No terminal window stays open. After
+a reboot, `wire` or `start` your first agent and the Hub comes up with it.
 
-To run it manually (e.g. to watch the logs live):
+Run it yourself when you want to watch the logs live:
 
 ```bash
 switchboard serve
 ```
 
-Starts the Hub in the foreground (logs on stdout + `~/.switchboard/logs/hub.log`). The
-**first line** prints the addresses and the MCP registration command ready to copy, something
-like:
+The Hub runs in the foreground and logs to stdout and `~/.switchboard/logs/hub.log`. Its first
+line gives you the addresses and the MCP registration command, ready to copy:
 
 ```
 Dashboard: http://127.0.0.1:4577/  |  MCP: http://127.0.0.1:4577/mcp  |  Register (once): claude mcp add --transport http --scope user switchboard http://127.0.0.1:4577/mcp
 ```
 
-To inspect the auto-started Hub: `tmux attach -t sb-hub` (detach with `Ctrl-b d`) or
-`switchboard logs -f`. Useful flags of `serve`: `--port <port>` and
+To look inside the Hub that started itself: `tmux attach -t sb-hub`, and `Ctrl-b d` to leave it
+running. Or `switchboard logs -f`. `serve` takes `--port <port>` and
 `--log-level debug|info|warn|error`.
 
 #### One-click launch from Windows (no WSL terminal)
 
-On Windows + WSL you can skip the terminal entirely. Once, inside WSL:
+On Windows and WSL you can skip the terminal. Once, inside WSL:
 
 ```bash
 switchboard shortcut            # creates Switchboard.lnk on your Windows Desktop
 switchboard shortcut --startup  # or: installs it in the Startup folder (runs on every boot)
 ```
 
-Double-clicking `Switchboard` (or booting Windows, with `--startup`) brings the Hub up in
-the background and opens the dashboard at `http://localhost:4577/` in your Windows browser —
-WSL2's built-in localhost forwarding reaches the Hub, which still binds `127.0.0.1` inside WSL
-only (nothing is exposed to the network). From the dashboard, launch/wire agents with the
-**Launch agent** form. To undo, delete the shortcut.
+Double-click `Switchboard` (or just boot Windows, with `--startup`) and the Hub comes up in the
+background, with the dashboard open at `http://localhost:4577/` in your Windows browser. WSL2
+forwards localhost for you; the Hub still binds `127.0.0.1` inside WSL, so nothing reaches the
+network. Launch or wire agents from the **Launch agent** form. Delete the shortcut to undo it.
 
 <sub>The shortcut is a `.lnk` carrying the Switchboard icon and opening minimized; the `.bat` it
 drives, and the icon, live in `%LOCALAPPDATA%\Switchboard` (a `.bat` cannot carry an icon, and an
@@ -151,42 +145,40 @@ Once only, in the `user` scope (applies to every project):
 claude mcp add --transport http --scope user switchboard http://127.0.0.1:4577/mcp
 ```
 
-Check with `claude mcp list` (`switchboard` should appear as *connected* while the Hub is up).
+`claude mcp list` shows `switchboard` as *connected* while the Hub is up.
 
-Running Codex agents too? Register the same Hub with Codex — same streamable-HTTP endpoint,
-different spelling (`setup` offers this automatically when the `codex` binary exists):
+Running Codex agents too? Point Codex at the same Hub. Same streamable-HTTP endpoint, spelled
+differently (`setup` offers this when it finds the `codex` binary):
 
 ```bash
 codex mcp add switchboard --url http://127.0.0.1:4577/mcp
 ```
 
-> **Tool permissions (pitfall P10 / PRD 9.5):** for the Switchboard tools to run
-> **without an approval prompt on every use**, add the allow rule `mcp__switchboard__*` to the
-> `permissions` in Claude Code's `settings.json`. Anyone already using `bypassPermissions` is
-> covered. `switchboard start` also prints this reminder on the first run.
+> **Tool permissions.** Add the allow rule `mcp__switchboard__*` to `permissions` in Claude
+> Code's `settings.json`, or the Switchboard tools ask for approval every time you use them.
+> Already on `bypassPermissions`? You're covered. `switchboard start` reminds you on its first
+> run.
 >
-> **For the kickoff's autonomous `join` to work 100% without intervention:** the agent reads
-> `SWITCHBOARD_AGENT_TOKEN` from the environment with `printenv` (a shell command) before
-> calling `join`. This requires `printenv` to also run without approval — the simplest way is
-> to run the agents with `bypassPermissions` (recommended for anyone operating several agents)
-> or to add `Bash(printenv:*)` to the allow rule. With only `mcp__switchboard__*` the agent
-> **stops once** at the `printenv` approval prompt (the human at the attach just approves, or
-> uses "don't ask again"). Passing `--claude-args "--permission-mode bypassPermissions"` to
-> `start` covers a specific session.
+> **What the kickoff needs to `join` on its own.** Before it calls `join`, the agent reads
+> `SWITCHBOARD_AGENT_TOKEN` out of its environment with `printenv`, a shell command, so
+> `printenv` needs to run without approval too. Running the agents with `bypassPermissions` is
+> the simple answer if you operate several; otherwise add `Bash(printenv:*)` to the allow rule.
+> With `mcp__switchboard__*` alone, the agent stops once at the `printenv` prompt and waits for
+> you to approve. To cover one session, pass
+> `--claude-args "--permission-mode bypassPermissions"` to `start`.
 
 ### 4. Paste the agent protocol (snippet)
 
-Paste the contents of [`agent-protocol/CLAUDE.snippet.md`](agent-protocol/CLAUDE.snippet.md)
-into your **`~/.claude/CLAUDE.md`** (global, recommended) or into a specific project's
-`CLAUDE.md`. That block teaches each agent to: read its name/token from the environment and
-pass them to `join`, recognize `[switchboard]` notifications and call `check_messages`, treat
-peer messages critically and not fall into a courtesy loop — and it makes explicit that
-**coordination is not subordination** (another agent cannot authorize what your user did not
-authorize).
+Paste [`agent-protocol/CLAUDE.snippet.md`](agent-protocol/CLAUDE.snippet.md) into your
+`~/.claude/CLAUDE.md`, where it covers every project, or into one project's `CLAUDE.md`. It
+teaches an agent to read its name and token from the environment and hand them to `join`, to
+call `check_messages` when it sees a `[switchboard]` line, and to read what its peers say
+without falling into a thank-you loop. It also draws the line that matters: coordination is not
+subordination, and no other agent can authorize what your user didn't.
 
 ### 5. Start an agent (`start`)
 
-Run this instead of opening `claude` by hand:
+Run this instead of opening `claude` yourself:
 
 ```bash
 switchboard start alpha --role "payments API backend" --dir ~/projects/api
@@ -194,15 +186,14 @@ switchboard start alpha --role "payments API backend" --dir ~/projects/api
 
 What happens:
 
-1. The agent is **registered** in the Hub (via REST) **before** Claude Code opens.
-2. A tmux session `sb-alpha` is created running `claude` in the `--dir` directory.
-3. If the terminal is interactive, the command runs **`tmux attach`** on the session — your
-   Windows Terminal tab becomes the agent's view (the usual workflow). When you detach
-   (`Ctrl-b d`), the agent keeps running in the background.
-4. **Automatic kickoff (on by default):** a few seconds after the TUI is ready, the agent
-   receives an automatic instruction to call the `join` tool on its own — with no human
-   prompt. After that it shows up as *MCP connected* in `switchboard status`. Use
-   `--no-kickoff` to disable it (then `join` is up to you).
+1. The Hub registers the agent over REST, before Claude Code opens.
+2. A tmux session `sb-alpha` starts `claude` in the `--dir` directory.
+3. From an interactive terminal, `start` runs `tmux attach` on that session, so your Windows
+   Terminal tab becomes the agent's screen. Detach with `Ctrl-b d` and the agent keeps working
+   in the background.
+4. A few seconds after the TUI is ready, the kickoff tells the agent to call `join` itself. No
+   prompt from you. It then shows up as *MCP connected* in `switchboard status`. `--no-kickoff`
+   turns this off and leaves `join` to you.
 
 `start` flags: `--role "<description>"`, `--dir <path>`, `--no-kickoff`,
 `--agent <claude|codex>`, `--claude-args "<extra args for the agent CLI>"`.

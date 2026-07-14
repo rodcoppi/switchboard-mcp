@@ -725,14 +725,14 @@
        a multi-day history read as shuffled — 10:37 sitting above 19:02 is
        today above yesterday, and nothing said so. Sticky, so the day you are
        reading is always on screen. */
-    /* The transcript is a COLUMN, centred, not a wall pinned to the left edge:
-       on a wide monitor the feed is ~1300px and bubbles cap out around half of
-       that, which reads as broken rather than as a chat. Shared by the rows and
-       the dividers so both share one spine. */
+    /* The transcript is a COLUMN pinned to the left, under the panel label and
+       against the patchbay, where the eye already is. It is still capped: the
+       two lanes (agents left, the operator right) only associate while they
+       stay within one eyeful, and a 2000px-wide line of mono text is unreadable
+       anyway. Rows and dividers share the cap so the column has one spine. */
     .day-divider, .msg-row {
       width: 100%;
-      max-width: 1040px;
-      margin-inline: auto;
+      max-width: 1200px;
     }
 
     .day-divider {
@@ -788,7 +788,7 @@
 
     .msg-bubble {
       position: relative;
-      max-width: min(78ch, 82%);
+      max-width: min(104ch, 88%);
       min-width: 0;
       padding: 8px 12px 6px;
       border: 1px solid var(--border);
@@ -888,7 +888,10 @@
       background: linear-gradient(180deg, var(--bg-elev), var(--bg-elev-2));
       padding: 13px 18px;
     }
-    .composer-row { display: flex; gap: 12px; align-items: stretch; }
+    /* Same left-pinned spine as the transcript above it: the panel is ONE
+       column. A capped transcript over an edge-to-edge composer looks like the
+       column landed there by accident. */
+    .composer-row { display: flex; gap: 12px; align-items: stretch; max-width: 1200px; }
     .composer-side { display: flex; flex-direction: column; gap: 9px; min-width: 158px; }
     .composer label {
       font-family: var(--mono);
@@ -2019,10 +2022,36 @@
     // stream once more only ever adds to a freshly reconciled view.
     let sseConnectedOnce = false;
 
+    // The hub heartbeats every 25s, so silence past ~70s (three missed beats)
+    // means the stream is dead rather than the network being quiet. EventSource
+    // will not tell us: it only raises onerror when a socket visibly breaks, and
+    // the way this one dies is invisible — the dashboard sits in a Windows
+    // browser, the hub in WSL2, and WSL2's localhost proxy can drop the tunnel
+    // (as can sleeping the laptop) with both ends still believing it is open.
+    // The pill stayed green and the feed silently stopped until a reload.
+    const SSE_SILENCE_LIMIT_MS = 70_000;
+    let lastSseAt = 0;
+    let sseWatchdog = null;
+
+    function startSseWatchdog() {
+      if (sseWatchdog) clearInterval(sseWatchdog);
+      sseWatchdog = setInterval(() => {
+        if (Date.now() - lastSseAt < SSE_SILENCE_LIMIT_MS) return;
+        // Reopening resyncs through the onopen path, so nothing missed in the
+        // gap stays missed.
+        setConnState("reconnecting", "reconnecting");
+        if (state.sse) state.sse.close();
+        connectSse();
+      }, 10_000);
+    }
+
     function connectSse() {
       const es = new EventSource("/api/events");
       state.sse = es;
+      lastSseAt = Date.now();
+      startSseWatchdog();
       es.onopen = () => {
+        lastSseAt = Date.now();
         if (!sseConnectedOnce) {
           // First connect: boot() already fetched the snapshot, so just go live
           // (re-fetching here would be a harmless duplicate, but we skip it).
@@ -2045,12 +2074,14 @@
           .finally(() => setConnState("live", "live"));
       };
       es.onmessage = (ev) => {
+        lastSseAt = Date.now(); // any frame, heartbeat included, proves it lives
         let parsed;
         try {
           parsed = JSON.parse(ev.data);
         } catch {
-          return; // ignore heartbeat comments / malformed frames
+          return; // malformed frame
         }
+        if (parsed.type === "heartbeat") return; // its only job is the timestamp above
         handleSse(parsed);
       };
       // EventSource reconnects on its own; we only surface the state so the

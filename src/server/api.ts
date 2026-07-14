@@ -791,9 +791,17 @@ export function createApiRouter(options: ApiOptions): express.Router {
     });
   });
 
-  // GET /api/events — SSE stream of {type, payload} + heartbeat comment
-  // every ~25s (keeps proxies/idle sockets alive; comments are ignored by
-  // EventSource parsers).
+  // GET /api/events — SSE stream of {type, payload} + a heartbeat every ~25s.
+  //
+  // The heartbeat is a real EVENT, not the usual `: comment`. A comment keeps
+  // proxies and idle sockets from timing out, but EventSource parsers drop it,
+  // so the browser can never see it — and a stream that died silently then looks
+  // exactly like a network where nobody is talking. That case is not exotic
+  // here: the dashboard runs in a Windows browser and the hub in WSL2, so every
+  // connection crosses WSL2's localhost proxy, which can drop the tunnel without
+  // either end raising an error (laptop sleep does the same). The dashboard
+  // watchdogs these to tell "quiet" from "dead". The comment goes out too, for
+  // the proxies that only need bytes.
   router.get("/api/events", (req, res) => {
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
@@ -807,6 +815,7 @@ export function createApiRouter(options: ApiOptions): express.Router {
     });
     const heartbeat = setInterval(() => {
       res.write(`: heartbeat\n\n`);
+      res.write(`data: ${JSON.stringify({ type: "heartbeat", payload: { at: new Date().toISOString() } })}\n\n`);
     }, heartbeatMs);
 
     req.on("close", () => {
