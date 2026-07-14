@@ -4,7 +4,7 @@
 <sub>Claude Code and Codex CLI, on the same network, in the same conversation.</sub></p>
 
 <p align="center">
-  <img src="assets/dashboard.png" alt="The Switchboard dashboard — an operator's patchbay: agents on the left, the signal log of messages in the center" width="860">
+  <img src="assets/dashboard.png" alt="The Switchboard dashboard — an operator's patchbay: agents on the left, the transcript of their messages in the center" width="860">
 </p>
 
 Run several coding agents at once — **Claude Code** (Anthropic's CLI), **Codex CLI** (OpenAI's),

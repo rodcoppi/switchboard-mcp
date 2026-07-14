@@ -23,8 +23,10 @@
        Identity: a telephone switchboard. Near-black cool slate panels, a
        single warm SIGNAL AMBER accent (telecom / CRT / brass jack), phosphor
        LEDs for presence. Mono-forward, because the subject is honest machine
-       traffic. The rail is a PATCHBAY of jack rows; the feed is a SIGNAL LOG
-       where from -> to reads like a patched cable.
+       traffic. The rail is a PATCHBAY of jack rows; the feed is a TRANSCRIPT —
+       chat bubbles, because that is what a human reads without being taught,
+       each one naming who it was for, because these calls are directed and a
+       chat room's "everyone hears everything" would be a lie here.
        ===================================================================== */
     :root {
       /* --- surfaces: cool near-black slate, raised panels, hairlines ------ */
@@ -660,7 +662,7 @@
     /* ------------------------------- Main -------------------------------- */
     .main { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg); }
 
-    /* SIGNAL LOG header — the console panel label for the traffic feed. */
+    /* Messages header — the console panel label for the transcript. */
     .feed-head {
       flex: 0 0 auto;
       display: flex; align-items: baseline; gap: 12px;
@@ -711,61 +713,173 @@
     }
     .feed .empty-hint { font-family: var(--sans); padding: 30px 20px; max-width: 46ch; }
 
-    /* --- a SIGNAL LOG row: from -> to reads as a patched cable ----------- */
+    /* --- the transcript: a chat, but of DIRECTED calls -------------------
+       Bubbles, because that is what a human reads without training. The one
+       thing an ordinary chat does not have to say is WHO a message was for —
+       in a group everyone hears everything. Here "a → b" is a private call c
+       never sees, so the recipient is printed in the bubble header rather than
+       implied by the room. The operator (the human) is the only party with a
+       side of its own: right, amber. Everything else is incoming traffic. */
+
+    /* Day divider: the fix for "the order makes no sense". Time-only stamps on
+       a multi-day history read as shuffled — 10:37 sitting above 19:02 is
+       today above yesterday, and nothing said so. Sticky, so the day you are
+       reading is always on screen. */
+    /* The transcript is a COLUMN, centred, not a wall pinned to the left edge:
+       on a wide monitor the feed is ~1300px and bubbles cap out around half of
+       that, which reads as broken rather than as a chat. Shared by the rows and
+       the dividers so both share one spine. */
+    .day-divider, .msg-row {
+      width: 100%;
+      max-width: 1040px;
+      margin-inline: auto;
+    }
+
+    .day-divider {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 18px 8px;
+      background: linear-gradient(180deg, var(--bg) 60%, transparent);
+      font-family: var(--mono);
+      font-size: var(--fs-eyebrow);
+      text-transform: uppercase;
+      letter-spacing: 1.4px;
+      color: var(--text-faint);
+    }
+    .day-divider::before, .day-divider::after {
+      content: "";
+      flex: 1;
+      height: 1px;
+      background: var(--border-soft);
+    }
+
     .msg-row {
-      display: block;
-      padding: 9px 18px 10px;
-      border-bottom: 1px solid var(--border-soft);
-      border-left: 2px solid transparent;
+      display: flex;
+      /* Top, not bottom: the disc labels the NAME in the bubble header, and a
+         tall bubble would strand it a screen away from the thing it names. */
+      align-items: flex-start;
+      gap: 9px;
+      padding: 3px 18px;
       transition: background 0.12s var(--ease);
     }
-    .msg-row:hover { background: var(--bg-elev); }
-    .msg-row.unread { border-left-color: var(--accent); }
-    .msg-row.read   { border-left-color: transparent; }
-    .msg-row.broadcast {
-      border-left-color: var(--accent);
-      background: linear-gradient(90deg, var(--accent-wash), transparent 60%);
+    .msg-row + .msg-row { margin-top: 5px; }
+    /* The operator is you: your line runs down the other side. */
+    .msg-row.from-operator { flex-direction: row-reverse; }
+
+    /* Stable identity mark. The hue is the ONLY per-agent colour on the page
+       and it lives here, on a 26px disc — the amber stays the interface's
+       accent (actions, the operator, unread), never an agent's identity. */
+    .msg-avatar {
+      flex: none;
+      width: 26px; height: 26px;
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-family: var(--mono);
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      color: var(--bg);
+      user-select: none;
     }
-    /* Newest row (feed is newest-first, so :first-child is the just-arrived
-       signal) fades/slides in. Only the top row animates on re-render. */
-    .feed > .msg-row:first-child { animation: rowin 0.22s var(--ease); }
+
+    .msg-bubble {
+      position: relative;
+      max-width: min(78ch, 82%);
+      min-width: 0;
+      padding: 8px 12px 6px;
+      border: 1px solid var(--border);
+      border-radius: 12px 12px 12px 3px;   /* the tail points at the sender */
+      background: var(--bg-elev);
+    }
+    .msg-row:hover .msg-bubble { border-color: var(--border); background: var(--bg-elev-2); }
+    .msg-row.from-operator .msg-bubble {
+      border-radius: 12px 12px 3px 12px;
+      border-color: var(--accent-line);
+      background: var(--accent-wash);
+    }
+    .msg-row.unread .msg-bubble { border-color: var(--accent-line); }
+    .msg-row.broadcast .msg-bubble {
+      max-width: none;
+      flex: 1;
+      border-radius: 12px;
+      border-style: dashed;
+      border-color: var(--accent-line);
+      background: linear-gradient(90deg, var(--accent-wash), transparent 70%);
+    }
+    /* Only the just-arrived bubble animates; the feed is chronological, so the
+       newest is the LAST child. */
+    .feed > .msg-row:last-child .msg-bubble { animation: rowin 0.22s var(--ease); }
     @keyframes rowin {
-      from { opacity: 0; transform: translateY(-5px); }
+      from { opacity: 0; transform: translateY(4px); }
       to   { opacity: 1; transform: translateY(0); }
     }
 
     .msg-meta {
       display: flex;
       align-items: baseline;
-      gap: 9px;
+      gap: 7px;
       flex-wrap: wrap;
-      color: var(--text-faint);
-    }
-    .msg-time {
-      color: var(--text-faint);
+      margin-bottom: 3px;
+      font-family: var(--mono);
       font-size: var(--fs-xs);
-      font-variant-numeric: tabular-nums;
+      color: var(--text-faint);
     }
     .msg-from { color: var(--text); font-weight: 600; }
     .msg-from.operator { color: var(--accent); }         /* the operator: amber */
-    .msg-arrow {
-      color: var(--accent);                              /* the patched cable */
-      font-weight: 700;
-      text-shadow: 0 0 8px rgba(245, 166, 35, 0.35);
-    }
-    .msg-to { color: var(--online); font-weight: 600; }  /* patched-in recipient */
+    /* "alpha to beta", not "alpha → beta": the arrow is a symbol you decode,
+       the word is a sentence you read. */
+    .msg-rel { color: var(--text-faint); }
+    .msg-to { color: var(--text-dim); font-weight: 600; }
     .msg-to.all { color: var(--accent); }
-    .msg-read-flag { margin-left: auto; font-size: var(--fs-xs); letter-spacing: 0.3px; }
-    .msg-read-flag.pending { color: var(--accent); }
-    .msg-read-flag.read { color: var(--text-faint); }
     .msg-body {
-      margin-top: 5px;
       color: var(--text);
+      font-family: var(--mono);
+      font-size: var(--fs-body);
       line-height: 1.55;
       white-space: pre-wrap;
       overflow-wrap: anywhere;
       word-break: break-word;
     }
+    /* Agents write essays at each other. Unclamped, one message fills the
+       viewport and the transcript stops being scannable. */
+    .msg-body.clamped {
+      max-height: 7.75em;
+      overflow: hidden;
+      -webkit-mask-image: linear-gradient(180deg, #000 60%, transparent);
+      mask-image: linear-gradient(180deg, #000 60%, transparent);
+    }
+    .msg-more {
+      margin-top: 2px;
+      padding: 0;
+      background: none;
+      border: none;
+      color: var(--accent);
+      font-family: var(--mono);
+      font-size: var(--fs-xs);
+      cursor: pointer;
+    }
+    .msg-more:hover { text-decoration: underline; }
+
+    .msg-foot {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      margin-top: 4px;
+      font-family: var(--mono);
+      font-size: var(--fs-xs);
+    }
+    .msg-row.from-operator .msg-foot { justify-content: flex-end; }
+    .msg-time {
+      color: var(--text-faint);
+      font-variant-numeric: tabular-nums;
+    }
+    .msg-read-flag { letter-spacing: 0.3px; }
+    .msg-read-flag.pending { color: var(--accent); }
+    .msg-read-flag.read { color: var(--text-faint); }
 
     /* ----------------------------- Composer ------------------------------ */
     .composer {
@@ -960,8 +1074,8 @@
 
     <main class="main">
       <div class="feed-head">
-        <span class="eyebrow">Signal log</span>
-        <span class="sub">agent traffic, newest first</span>
+        <span class="eyebrow">Messages</span>
+        <span class="sub">what your agents said to each other — newest at the bottom</span>
       </div>
       <div class="filter-bar" id="filter-bar">
         <span class="label">filtering by</span>
@@ -1029,10 +1143,62 @@
       return node;
     }
 
+    // Seconds are noise in a transcript — "10:37" is when it was said. The
+    // locale is the READER's (undefined), not a hardcoded one: this is the
+    // viewer's clock, and the rest of the product is en.
     function fmtTime(iso) {
       const d = new Date(iso);
       if (Number.isNaN(d.getTime())) return String(iso);
-      return d.toLocaleTimeString("pt-BR", { hour12: false });
+      return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+    }
+
+    /** Full stamp for a title= — the exact instant, when someone wants it. */
+    function fmtFull(iso) {
+      const d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return String(iso);
+      return d.toLocaleString(undefined, { dateStyle: "full", timeStyle: "medium" });
+    }
+
+    const DAY_MS = 86400000;
+
+    /** Local midnight of a date — the boundary a human means by "day". */
+    function startOfDay(d) {
+      return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    }
+
+    /**
+     * "Today" / "Yesterday" / "Mon, 14 Jul" — the label of a day divider.
+     * Named days beat dates for the two days anyone actually reads.
+     */
+    function fmtDayLabel(iso) {
+      const d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return String(iso);
+      const days = Math.round((startOfDay(new Date()) - startOfDay(d)) / DAY_MS);
+      if (days === 0) return "Today";
+      if (days === 1) return "Yesterday";
+      return d.toLocaleDateString(undefined, {
+        weekday: "short",
+        day: "numeric",
+        month: "short",
+        year: startOfDay(d) < startOfDay(new Date()) - 300 * DAY_MS ? "numeric" : undefined,
+      });
+    }
+
+    // Every agent gets one stable colour, hashed from its name so it survives
+    // restarts and never depends on arrival order. Muted on purpose: these sit
+    // beside the amber without competing with it for "this is actionable".
+    const AGENT_HUES = ["#c8873a", "#5f9ea0", "#7fa860", "#a97fa8", "#c47a5c", "#7d86c4"];
+
+    function agentHue(name) {
+      let h = 0;
+      for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+      return AGENT_HUES[h % AGENT_HUES.length];
+    }
+
+    /** Up to 2 characters — a name's first letters, digits included. */
+    function monogram(name) {
+      const letters = name.replace(/[^a-z0-9]/gi, "");
+      return (letters.slice(0, 2) || "?").toUpperCase();
     }
 
     function fmtUptime(totalSeconds) {
@@ -1539,28 +1705,46 @@
     }
 
     // Group broadcast records (same broadcastId) into one visual row; single
-    // messages stay one row. Iterating newest-first keeps chronological order.
+    // messages stay one row. state.messages is newest-first (the API's order,
+    // and unshift keeps it), but a transcript reads like a conversation —
+    // oldest at the top, the newest at the bottom where you are looking — so
+    // it is walked backwards here. Day dividers are inserted on the way.
     function feedRows() {
       const filter = state.filter;
       const seen = new Set();
       const rows = [];
-      for (const m of state.messages) {
+      let day = null;
+
+      for (let i = state.messages.length - 1; i >= 0; i--) {
+        const m = state.messages[i];
+        let row;
         if (m.broadcastId) {
           if (seen.has(m.broadcastId)) continue;
           seen.add(m.broadcastId);
           const group = state.messages.filter((x) => x.broadcastId === m.broadcastId);
           if (filter && !group.some((x) => x.from === filter || x.to === filter)) continue;
-          rows.push({ kind: "broadcast", group });
+          row = { kind: "broadcast", group };
         } else {
           if (filter && m.from !== filter && m.to !== filter) continue;
-          rows.push({ kind: "single", msg: m });
+          row = { kind: "single", msg: m };
         }
+        const stamp = startOfDay(new Date(m.createdAt));
+        if (stamp !== day) {
+          day = stamp;
+          rows.push({ kind: "day", label: fmtDayLabel(m.createdAt) });
+        }
+        rows.push(row);
       }
       return rows;
     }
 
     function renderFeed() {
       const feed = $("#feed");
+      // A transcript must not yank itself out from under someone reading back
+      // through history: follow the newest only when they are already at the
+      // bottom (or the feed is fresh and has no scroll yet).
+      const atBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 80;
+
       feed.textContent = "";
       const rows = feedRows();
       if (rows.length === 0) {
@@ -1570,35 +1754,97 @@
             "empty-hint",
             state.filter
               ? `No messages involving "${state.filter}".`
-              : "No messages yet. Agent exchanges appear here in real time.",
+              : "No messages yet. Anything your agents say to each other shows up here.",
           ),
         );
         return;
       }
       for (const row of rows) {
-        feed.appendChild(row.kind === "broadcast" ? buildBroadcastRow(row.group) : buildMsgRow(row.msg));
+        if (row.kind === "day") feed.appendChild(el("div", "day-divider", row.label));
+        else feed.appendChild(row.kind === "broadcast" ? buildBroadcastRow(row.group) : buildMsgRow(row.msg));
+      }
+
+      clampOverflowingBodies(feed);
+      if (atBottom) feed.scrollTop = feed.scrollHeight;
+    }
+
+    /**
+     * Hides the tail of any body taller than the clamp, behind a "Show more".
+     *
+     * Bodies are built already clamped, because overflow can only be measured
+     * against the clamp — then the ones that FIT have it taken back off. They
+     * must: the clamp carries a fade mask, and a mask on a body that never
+     * overflowed just dims its last line for no reason (a two-line message
+     * came out looking struck through).
+     *
+     * One read pass over the finished feed, one write pass after it —
+     * interleaving them would force a reflow per bubble.
+     */
+    function clampOverflowingBodies(feed) {
+      const bodies = feed.querySelectorAll(".msg-body");
+      const overflowing = [];
+      const fitting = [];
+      for (const body of bodies) {
+        // reads only
+        (body.scrollHeight > body.clientHeight + 4 ? overflowing : fitting).push(body);
+      }
+      for (const body of fitting) body.classList.remove("clamped");
+      for (const body of overflowing) {
+        const more = el("button", "msg-more", "Show more");
+        more.type = "button";
+        more.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          const collapsed = body.classList.toggle("clamped");
+          more.textContent = collapsed ? "Show more" : "Show less";
+        });
+        body.after(more);
       }
     }
 
+    /** "alpha to beta" — a sentence, not a diagram. */
     function buildMetaLine(from, to, opts) {
       const meta = el("div", "msg-meta");
-      const time = el("span", "msg-time", fmtTime(opts.createdAt));
-      const fromEl = el("span", `msg-from${from === "operator" ? " operator" : ""}`, from);
-      const arrow = el("span", "msg-arrow", "→");
-      const toEl = el("span", `msg-to${to === "all" ? " all" : ""}`, to);
-      meta.append(time, fromEl, arrow, toEl);
-      if (opts.readFlag) meta.appendChild(opts.readFlag);
+      meta.append(
+        el("span", `msg-from${from === "operator" ? " operator" : ""}`, from),
+        el("span", "msg-rel", "to"),
+        el("span", `msg-to${to === "everyone" ? " all" : ""}`, to),
+      );
+      if (opts && opts.extra) meta.appendChild(opts.extra);
       return meta;
+    }
+
+    function buildAvatar(name) {
+      const av = el("div", "msg-avatar", monogram(name));
+      av.style.background = name === "operator" ? "var(--accent)" : agentHue(name);
+      av.title = name;
+      return av;
+    }
+
+    function buildFoot(createdAt, flag) {
+      const foot = el("div", "msg-foot");
+      const time = el("span", "msg-time", fmtTime(createdAt));
+      time.title = fmtFull(createdAt);
+      foot.append(time, flag);
+      return foot;
+    }
+
+    function buildBubble(from, to, body, createdAt, flag, extra) {
+      const bubble = el("div", "msg-bubble");
+      bubble.appendChild(buildMetaLine(from, to, { extra }));
+      bubble.appendChild(el("div", "msg-body clamped", body));
+      bubble.appendChild(buildFoot(createdAt, flag));
+      return bubble;
     }
 
     function buildMsgRow(m) {
       const row = el("div", "msg-row");
       row.classList.add(m.readAt ? "read" : "unread");
+      if (m.from === "operator") row.classList.add("from-operator");
       const flag = m.readAt
-        ? Object.assign(el("span", "msg-read-flag read", "✓ read"), { title: fmtTime(m.readAt) })
+        ? Object.assign(el("span", "msg-read-flag read", "✓ read"), { title: fmtFull(m.readAt) })
         : el("span", "msg-read-flag pending", "• unread");
-      row.appendChild(buildMetaLine(m.from, m.to, { createdAt: m.createdAt, readFlag: flag }));
-      row.appendChild(el("div", "msg-body", m.body));
+      row.appendChild(buildAvatar(m.from));
+      row.appendChild(buildBubble(m.from, m.to, m.body, m.createdAt, flag));
       return row;
     }
 
@@ -1606,21 +1852,17 @@
       // All records of a broadcast share from + body; each has its own to/readAt.
       const first = group[0];
       const row = el("div", "msg-row broadcast");
+      if (first.from === "operator") row.classList.add("from-operator");
       const readCount = group.filter((x) => x.readAt).length;
       const flag = el(
         "span",
         `msg-read-flag ${readCount === group.length ? "read" : "pending"}`,
-        `${readCount}/${group.length} read`,
+        `read by ${readCount} of ${group.length}`,
       );
       flag.title = group.map((x) => `${x.to}: ${x.readAt ? "read" : "unread"}`).join(" · ");
-      const meta = buildMetaLine(first.from, "all", { createdAt: first.createdAt, readFlag: flag });
-      // Annotate the recipient count next to "all".
-      meta.insertBefore(
-        el("span", "msg-arrow", `(${group.length} recipients)`),
-        flag,
-      );
-      row.appendChild(meta);
-      row.appendChild(el("div", "msg-body", first.body));
+      const extra = el("span", "msg-rel", `(${group.length} agents)`);
+      row.appendChild(buildAvatar(first.from));
+      row.appendChild(buildBubble(first.from, "everyone", first.body, first.createdAt, flag, extra));
       return row;
     }
 
