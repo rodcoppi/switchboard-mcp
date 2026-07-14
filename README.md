@@ -265,17 +265,24 @@ one adapter (`src/shared/agent-types.ts`):
 Agents registered before this feature existed have no recorded type and are treated as Claude
 Code — which is what they are.
 
-### Mentions — delegate with `@name`
+### Mentions — delegate with `%name`
 
-Inside any agent's window, reference another agent as **`@<name>`** and it becomes a
+Inside any agent's window, reference another agent as **`%<name>`** and it becomes a
 delegation. For example, telling your backend agent:
 
-> Fix the pagination bug, and ask @frontend to update the consumer types afterwards.
+> Fix the pagination bug, and ask %frontend to update the consumer types afterwards.
 
 makes it fix the bug **and** send `frontend` one factual, actionable message with the
 delegated task (paths, contracts, what to report back). The mentioning agent stays
 responsible for your request — the mention only routes the sub-task. This is part of the
 agent protocol (the `join` etiquette + the snippet), so it works in every connected agent.
+
+> **Why `%` and not `@`:** `@` is already the **file-reference** sigil in Claude Code and in
+> Codex, and the TUI resolves it *before* the model ever sees your prompt. Agent names are
+> commonly folder names (`wire` derives one from the other), so `@frontend` typed next to a
+> `frontend/` folder quietly turns into a file reference and the delegation is lost with no
+> error. `%` collides with nothing in either CLI (`!` is bash, `#` is memory, `/` is commands).
+> `@<name>` is still understood — it just fails whenever a path happens to match.
 
 ### Launching agents from the dashboard
 
@@ -300,7 +307,7 @@ folder, continuing the conversation, with the same CLI it was launched with) and
 | **rename** | The name cell becomes an inline input; the **whole history and unread count follow the new name**. Only for a **stopped** agent (a running one would re-join under the old name) — the item says so when the agent is up. |
 | **remove** | Drops the registration (two-click confirm). The messages stay in the append-only JSONL — only the card and the `agents.json` entry go away. |
 
-Agent names are **addresses** (`@name` in a prompt, the tmux session `sb-<name>`), so they are
+Agent names are **addresses** (`%name` in a prompt, the tmux session `sb-<name>`), so they are
 lowercase letters, digits and hyphens. You don't have to memorize that: the name fields rewrite
 what you type as you type it — `Chefe de Redes` becomes `chefe-de-redes` in front of you, the
 same way `wire` derives a name from a folder called `ai panorama`.

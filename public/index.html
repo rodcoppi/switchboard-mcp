@@ -1401,7 +1401,7 @@
      * The `done` latch makes the three exits idempotent (confirming detaches
      * the focused input, which fires blur right behind it).
      */
-    // An agent name is an ADDRESS (@name in a prompt, tmux "sb-<name>"), so the
+    // An agent name is an ADDRESS (%name in a prompt, tmux "sb-<name>"), so the
     // hub only takes ^[a-z0-9][a-z0-9-]{1,30}$. Typing "Chefe de Redes" and
     // getting the regex back as an error makes the user guess the rule — so the
     // name inputs rewrite as you type ("chefe-de-redes") and you confirm what

@@ -209,6 +209,15 @@ describe("alpha → beta flow via MCP", () => {
     expect(typeof joined.etiquette).toBe("string");
     expect(joined.etiquette.length).toBeGreaterThan(50);
 
+    // The mention protocol is the ONLY way an agent learns that "%beta" in its
+    // user's prompt means "delegate to beta" — join is where it is delivered.
+    // Both sigils are load-bearing: "%" is the one we teach (the TUI resolves
+    // "@" as a file reference before the model sees the prompt, which silently
+    // ate the delegation), "@" stays understood for prompts that already use it.
+    expect(joined.etiquette).toContain('"%<name>"');
+    expect(joined.etiquette).toContain('"@<name>"');
+    expect(joined.etiquette).toContain("DELEGATION");
+
     // SSE must carry message_created for the send (reader opened BEFORE).
     const sse = await collectSse(
       (text) => text.includes("message_created"),
