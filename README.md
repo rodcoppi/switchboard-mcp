@@ -36,6 +36,8 @@ single `[switchboard]` line → B wakes up and calls `check_messages` to read it
 - **Node.js >= 20** (runs in ESM, with TypeScript executed by `tsx` — no build step).
 - **tmux >= 3.2** (validated with 3.4).
 - **Claude Code >= 2.x** (`claude` binary on the PATH).
+- **Codex CLI** (optional — `codex` binary on the PATH). Only needed to run agents with
+  `--agent codex` / the dashboard's **Codex** choice; Switchboard works fully without it.
 - `jq` (optional, only a convenience for inspecting the JSONL while debugging).
 
 > **WSL (important — pitfall P8):** the tmux server is per **user** and per **distro**.
@@ -145,6 +147,13 @@ claude mcp add --transport http --scope user switchboard http://127.0.0.1:4577/m
 
 Check with `claude mcp list` (`switchboard` should appear as *connected* while the Hub is up).
 
+Running Codex agents too? Register the same Hub with Codex — same streamable-HTTP endpoint,
+different spelling (`setup` offers this automatically when the `codex` binary exists):
+
+```bash
+codex mcp add switchboard --url http://127.0.0.1:4577/mcp
+```
+
 > **Tool permissions (pitfall P10 / PRD 9.5):** for the Switchboard tools to run
 > **without an approval prompt on every use**, add the allow rule `mcp__switchboard__*` to the
 > `permissions` in Claude Code's `settings.json`. Anyone already using `bypassPermissions` is
@@ -190,7 +199,7 @@ What happens:
    `--no-kickoff` to disable it (then `join` is up to you).
 
 `start` flags: `--role "<description>"`, `--dir <path>`, `--no-kickoff`,
-`--claude-args "<extra args for claude>"`.
+`--agent <claude|codex>`, `--claude-args "<extra args for the agent CLI>"`.
 
 </details>
 
@@ -220,7 +229,40 @@ automatically reopens a **fresh** session (without `-c`), telling you so. It nev
 dead window; worst case you get a brand-new conversation already wired to the network.
 
 `wire` flags: `--name <name>`, `--role "<description>"`, `--dir <path>` (default: current folder),
-`--no-kickoff`, `--claude-args "<extra args for claude>"`.
+`--no-kickoff`, `--agent <claude|codex>`, `--claude-args "<extra args for the agent CLI>"`.
+
+### Choosing the agent CLI (`--agent claude|codex`)
+
+Every way of opening an agent takes an **agent type**: `claude` (default, Claude Code) or
+`codex` (Codex CLI). It is one flow with a choice, not a separate mode — registration, the
+nudge, the kickoff, `status`, mentions and the dashboard all behave identically:
+
+```bash
+switchboard start alpha --dir ~/projects/api --agent codex
+switchboard wire --agent codex        # adopt the current folder with Codex
+```
+
+In the dashboard, the **Launch agent** form has a `Claude | Codex` switch, and each card shows
+its agent's type next to the MCP chip. The type is **recorded on the agent**, so `reopen`
+relaunches it with the same CLI it was launched with.
+
+Requirements: the `codex` binary on the PATH, and the Hub registered as an MCP server in Codex
+(`codex mcp add switchboard --url http://127.0.0.1:4577/mcp` — `switchboard setup` offers this
+automatically when it finds `codex`). Without that registration a Codex agent opens fine but has
+no Switchboard tools to join with.
+
+What differs under the hood is only the argv and the two strings read off the TUI — both live in
+one adapter (`src/shared/agent-types.ts`):
+
+| | Claude Code | Codex CLI |
+|---|---|---|
+| binary | `claude` | `codex` |
+| continue conversation | `-c` | `resume --last` (a subcommand) |
+| skip approvals | `--dangerously-skip-permissions` | `--dangerously-bypass-approvals-and-sandbox` |
+| trust dialog | accepted by you at the attach | accepted automatically by the kickoff |
+
+Agents registered before this feature existed have no recorded type and are treated as Claude
+Code — which is what they are.
 
 ### Mentions — delegate with `@name`
 
@@ -238,11 +280,12 @@ agent protocol (the `join` etiquette + the snippet), so it works in every connec
 
 The dashboard (`http://127.0.0.1:4577/`) has a **Launch agent** form (bottom of the sidebar):
 type the project **directory**, optionally a name (defaults to the folder name) and a role,
-tick **continue conversation** to resume the folder's last claude conversation (same
-auto-fallback as `wire`), and hit Launch. The Hub itself creates the agent's tmux session and
-runs the automatic kickoff — no terminal needed. The new card appears live via SSE; attach to
-the agent anytime with `tmux attach -t sb-<name>`. Under the hood it is
-`POST /api/agents/launch {dir, name?, role?, continue?}` — localhost-only, like everything else.
+pick the agent (**Claude** or **Codex**), tick **continue conversation** to resume the folder's
+last conversation (same auto-fallback as `wire`), and hit Launch. The Hub itself creates the
+agent's tmux session and runs the automatic kickoff — no terminal needed. The new card appears
+live via SSE; attach to the agent anytime with `tmux attach -t sb-<name>`. Under the hood it is
+`POST /api/agents/launch {dir, name?, role?, continue?, agentType?}` — localhost-only, like
+everything else.
 
 ---
 
@@ -314,13 +357,15 @@ before exposing anything:
 
 ## Roadmap
 
-Switchboard v1 targets **Claude Code (the CLI)**. A few directions for later:
+Switchboard runs **Claude Code** and **Codex CLI** agents today (see
+[Choosing the agent CLI](#choosing-the-agent-cli---agent-claudecodex)) — on the same network, in
+the same conversation. A few directions for later:
 
-- **Other agent CLIs (Codex CLI, …).** The plumbing is already agent-agnostic — the nudge is
-  `tmux` and the messages are MCP (an open standard). Codex CLI in particular speaks MCP over
-  streamable HTTP (`codex mcp add <name> --url …`), the same transport the Hub serves, so
-  connecting it is mostly a small "agent adapter" (which binary to launch, its TUI-ready
-  markers, its MCP config) plus a `Claude | Codex` choice at launch — not a rewrite.
+- **More agent CLIs.** The plumbing is agent-agnostic — the nudge is `tmux` and the messages are
+  MCP (an open standard) — and adding the second type turned that claim into a real adapter
+  (`src/shared/agent-types.ts`). A third one is now a descriptor: which binary to launch, how it
+  spells "continue" and "skip approvals", its TUI-ready markers, its `mcp add` spelling. The bar
+  is that the CLI speaks MCP and runs in a terminal.
 - **Urgency tiers** (`interrupt` / `normal` / `fyi`): an `fyi` message that never wakes the
   recipient (zero token cost until it checks on its own) — the structural token saver on top of
   the current etiquette + rate-limit backstop.

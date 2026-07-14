@@ -12,14 +12,20 @@
 // round-trip) and schedules the kickoff INSIDE the hub process (setTimeout,
 // unref) instead of a detached CLI re-entry.
 //
+// Which CLI it launches — Claude Code or Codex — is the operator's choice in
+// the dashboard form (LaunchInput.agentType), resolved through the single
+// agent-type adapter in src/shared/agent-types.ts. The type is RECORDED on the
+// agent so a later `reopen` relaunches the same one.
+//
 // Import policy: this module IMPORTS pure helpers from src/cli (deriveAgentName,
-// buildAgentCommand, isTuiReady, kickoffText, expandHome — all side-effect-free
-// exports) but never the CLI runners; the dependency direction stays
-// "server may read cli helpers", nothing under src/cli/ knows this file exists.
-// buildWireClaudeArgs was considered and NOT reused: it cannot express
-// continue=false (its whole contract is "prepend -c unless the user overrode
-// it") and the dashboard has no user --claude-args to merge, so the two-flag
-// argv is built locally from wire's exported flag constants.
+// buildAgentCommand, kickoffText, expandHome — all side-effect-free exports)
+// but never the CLI runners; the dependency direction stays "server may read
+// cli helpers", nothing under src/cli/ knows this file exists. The agent-type
+// adapter sits in src/shared/ precisely because BOTH sides need it.
+// buildWireClaudeArgs was considered and NOT reused: it hardcodes
+// continue=true (its whole contract is "wire always continues") and the
+// dashboard has no user --claude-args to merge — but its RULES are no longer
+// duplicated here either: both call the same descriptor.buildArgs.
 //
 // Security invariants (PRD 10.3 / 15, v1.1 addendum) preserved verbatim:
 // - the kickoff injection goes through tmux.nudgeSession — pane-command guard,
@@ -42,14 +48,14 @@ import type { Store } from "./store.js";
 import type { EventBus } from "./api.js";
 import type { NudgeResult } from "./tmux.js";
 import {
-  deriveAgentName,
-  WIRE_BYPASS_FLAG,
-  WIRE_CONTINUE_FLAG,
-} from "../cli/wire.js";
+  agentTypeDescriptor,
+  type AgentType,
+  type AgentTypeDescriptor,
+} from "../shared/agent-types.js";
+import { deriveAgentName } from "../cli/wire.js";
 import {
   buildAgentCommand,
   expandHome,
-  isTuiReady,
   kickoffText,
 } from "../cli/start.js";
 
@@ -122,6 +128,15 @@ export interface LauncherTmux {
   capturePane(session: string, lines?: number): Promise<string>;
   /** THE guarded nudge path (pane guard + separate Enter) — never bypassed. */
   nudgeSession(session: string, text: string, enterDelayMs: number): Promise<NudgeResult>;
+  /**
+   * Both OPTIONAL, used ONLY to accept the trust dialog of an agent type whose
+   * descriptor sets autoAcceptTrustDialog (codex; never claude). Optional so
+   * the existing in-memory test doubles — which implement exactly the five
+   * methods above — keep type-checking; a double without them just waits the
+   * dialog out, which is the pre-existing behavior.
+   */
+  isPaneSafeToNudge?(session: string): Promise<boolean>;
+  sendEnter?(session: string): Promise<void>;
 }
 
 export interface LaunchInput {
@@ -131,8 +146,14 @@ export interface LaunchInput {
   name?: string;
   /** Role description; omitted → the stored role is PRESERVED on re-attach. */
   role?: string;
-  /** true → `claude -c` (resume the folder's conversation), with auto-fallback. */
+  /** true → resume the folder's conversation, with auto-fallback (claude -c / codex resume --last). */
   continueConversation?: boolean;
+  /**
+   * Which coding agent CLI to open: claude (default) | codex. Recorded on the
+   * agent record so the dashboard's `reopen` relaunches the SAME CLI — a codex
+   * agent reopened as claude would resume the wrong conversation entirely.
+   */
+  agentType?: AgentType;
   /**
    * true → after a successful launch, pop a WINDOWS terminal window attached
    * to the agent's tmux session (WSL interop; best-effort — a launch never
@@ -248,7 +269,10 @@ export interface LauncherTuning {
   sleep?: (ms: number) => Promise<void>;
   /** Injectable clock (epoch ms) for the readiness deadline. */
   now?: () => number;
-  /** TEST-ONLY: binary in place of "claude" (never launch a real claude in tests). */
+  /**
+   * TEST-ONLY: binary in place of the agent type's own (never launch a real
+   * claude/codex in tests). Overrides the descriptor's bin for EVERY type.
+   */
   claudeBin?: string;
 }
 
@@ -292,6 +316,10 @@ export function createLauncher(options: LauncherOptions): Launcher {
   let closed = false;
 
   async function launchAgent(input: LaunchInput): Promise<LaunchResult> {
+    // 0. Which CLI. api.ts validates the incoming value, so anything unknown
+    // reaching here resolves to the default rather than throwing.
+    const descriptor = agentTypeDescriptor(input.agentType);
+
     // 1. Directory: required, "~" expanded, ABSOLUTE (the hub cannot resolve
     // a relative path against the operator's shell — its own cwd would be a
     // silent surprise) and an existing directory.
@@ -364,6 +392,7 @@ export function createLauncher(options: LauncherOptions): Launcher {
         role: input.role, // undefined → preserve the stored role (PRD 8)
         cwd,
         tmuxSession: session,
+        agentType: descriptor.type, // always stated → a relaunch can switch type
       });
     } catch (err) {
       throw new LaunchError((err as Error).message);
@@ -371,7 +400,8 @@ export function createLauncher(options: LauncherOptions): Launcher {
     bus.emit({ type: "agent_updated", payload: toPublicAgent(agent) });
     // The token itself is NEVER logged (v1.1, PRD 15).
     log.info(
-      `[launcher] agent registered from the dashboard: ${name} (tmux: ${session}, dir: ${cwd}).`,
+      `[launcher] agent registered from the dashboard: ${name} ` +
+        `(tmux: ${session}, dir: ${cwd}, agent: ${descriptor.type}).`,
     );
 
     const token = agent.token;
@@ -410,19 +440,26 @@ export function createLauncher(options: LauncherOptions): Launcher {
 
     // 5 + 6. Create the session (argv as ARRAY — exact argv semantics survive
     // tmux, see tmux.newSession/quoteShellArg) and give it a settle window:
-    // the command may die at birth (claude missing) or ~1-2s in (`-c` with
+    // the command may die at birth (the CLI missing) or ~1-2s in (a resume with
     // nothing resumable) — reporting success there would be a lie.
     const wantContinue = input.continueConversation === true;
 
     async function createSession(withContinue: boolean): Promise<void> {
-      const claudeArgs = withContinue
-        ? [WIRE_CONTINUE_FLAG, WIRE_BYPASS_FLAG]
-        : [WIRE_BYPASS_FLAG];
+      // The adapter owns the argv shape, so codex gets `resume --last` +
+      // bypass-after-the-subcommand while claude gets `-c` + its own bypass —
+      // no branching here, and the same rules `switchboard wire` applies.
+      const claudeArgs = descriptor.buildArgs({ continueConversation: withContinue });
       try {
         await tmux.newSession(
           session,
           cwd,
-          buildAgentCommand({ name, token: token!, claudeArgs, claudeBin: options.claudeBin }),
+          buildAgentCommand({
+            name,
+            token: token!,
+            claudeArgs,
+            claudeBin: options.claudeBin,
+            agentType: descriptor.type,
+          }),
         );
       } catch (err) {
         // Token redaction, defense in depth (tmux.ts already sanitizes).
@@ -450,14 +487,15 @@ export function createLauncher(options: LauncherOptions): Launcher {
         // conversation in this folder) → retry ONCE without -c.
         fallback = true;
         log.warn(
-          `[launcher] session "${session}" died resuming the previous conversation (-c): ` +
-            `no resumable conversation in ${cwd} — retrying with a fresh session.`,
+          `[launcher] session "${session}" died resuming the previous conversation ` +
+            `(${descriptor.continueArgHint}): no resumable conversation in ${cwd} — ` +
+            `retrying with a fresh session.`,
         );
         await createSession(false);
         if (!(await settled())) {
           throw new LaunchError(
             `The tmux session "${session}" died right after opening, even without ` +
-              `conversation resume (-c). Is the "claude" binary on the Hub's PATH? ` +
+              `conversation resume (${descriptor.continueArgHint}). Is the "${descriptor.bin}" binary on the Hub's PATH? ` +
               `The registration stays in the Hub; check ~/.switchboard/logs/hub.log, ` +
               `fix the environment and launch again.`,
             500,
@@ -465,8 +503,8 @@ export function createLauncher(options: LauncherOptions): Launcher {
         }
       } else {
         throw new LaunchError(
-          `The tmux session "${session}" died right after opening — the claude command ` +
-            `failed at birth. Is the "claude" binary on the Hub's PATH? The registration ` +
+          `The tmux session "${session}" died right after opening — the ${descriptor.bin} command ` +
+            `failed at birth. Is the "${descriptor.bin}" binary on the Hub's PATH? The registration ` +
             `stays in the Hub; fix the environment and launch again.`,
           500,
         );
@@ -476,7 +514,7 @@ export function createLauncher(options: LauncherOptions): Launcher {
     // 7. Kickoff, scheduled inside the hub process (the CLI uses a detached
     // re-entry because its terminal is blocked by the attach; the hub is a
     // long-lived daemon, a plain unref'd timer is simpler and debuggable).
-    scheduleKickoff(name, session);
+    scheduleKickoff(name, session, descriptor);
 
     log.info(
       `[launcher] agent "${name}" launched in tmux session "${session}"` +
@@ -500,10 +538,14 @@ export function createLauncher(options: LauncherOptions): Launcher {
     };
   }
 
-  function scheduleKickoff(name: string, session: string): void {
+  function scheduleKickoff(
+    name: string,
+    session: string,
+    descriptor: AgentTypeDescriptor,
+  ): void {
     const timer = setTimeout(() => {
       pendingKickoffs.delete(timer);
-      void runKickoff(name, session).catch((err) => {
+      void runKickoff(name, session, descriptor).catch((err) => {
         log.error(`[launcher] unexpected kickoff error for ${name}:`, err);
       });
     }, config.kickoffDelayMs);
@@ -516,10 +558,22 @@ export function createLauncher(options: LauncherOptions): Launcher {
    * delay, poll the pane for TUI READINESS and only then inject the kickoff
    * line via the guarded nudge path. A blind injection would type into the
    * trust dialog ("Quick safety check…"), a MENU where digits select options —
-   * the pane guard alone cannot catch that (the dialog runs inside claude).
+   * the pane guard alone cannot catch that (the dialog runs inside the agent
+   * CLI). The markers are the descriptor's, so a codex pane is polled for its
+   * own header instead of claude's footer.
    */
-  async function runKickoff(name: string, session: string): Promise<void> {
+  async function runKickoff(
+    name: string,
+    session: string,
+    descriptor: AgentTypeDescriptor,
+  ): Promise<void> {
     const deadline = now() + readinessTimeoutMs;
+    // At most ONE trust-dialog Enter per kickoff — see the CLI's runKickoffAgent
+    // for the full reasoning: between our Enter and the TUI's redraw the dialog
+    // is still on screen, and every extra Enter becomes an empty submit in the
+    // freshly-ready composer. Only a really sent Enter flips this, so an attempt
+    // refused by the pane guard is still retried next round.
+    let trustEnterSent = false;
     for (;;) {
       if (closed) return;
       if (!(await tmux.hasSession(session))) {
@@ -534,10 +588,17 @@ export function createLauncher(options: LauncherOptions): Launcher {
       } catch {
         pane = ""; // unreadable this round — treated as not ready
       }
-      if (isTuiReady(pane)) break;
+      if (descriptor.isTuiReady(pane)) break;
+      // Agent types that accept their own trust dialog (codex) get an Enter on
+      // its default option — nothing else would: the dashboard launches with
+      // no human attached. Guarded (pane allow-list) and best-effort; claude
+      // keeps waiting for the human, exactly as before.
+      if (!trustEnterSent) {
+        trustEnterSent = await acceptTrustDialog(name, session, descriptor, pane);
+      }
       if (now() >= deadline) {
         log.warn(
-          `[launcher] kickoff for ${name} NOT sent: the claude TUI did not become ready ` +
+          `[launcher] kickoff for ${name} NOT sent: the ${descriptor.bin} TUI did not become ready ` +
             `within ${readinessTimeoutMs}ms (trust dialog pending? attach with ` +
             `"tmux attach -t ${session}") — the agent can call the join tool manually.`,
         );
@@ -556,6 +617,47 @@ export function createLauncher(options: LauncherOptions): Launcher {
       log.warn(
         `[launcher] kickoff for ${name} NOT sent: ${result.reason ?? "unknown reason"}.`,
       );
+    }
+  }
+
+  /**
+   * Presses Enter on the trust dialog for agent types that ask for it — codex's
+   * "Do you trust the contents of this directory?" defaults to "1. Yes,
+   * continue", which Enter accepts. Claude is deliberately excluded
+   * (autoAcceptTrustDialog: false): its flow has always relied on the human
+   * accepting it in the attach, and preserving that is why this is a descriptor
+   * capability rather than a blanket "press Enter on any dialog".
+   *
+   * The pane guard is NOT bypassed (PRD 10.3): Enter is only ever sent to a
+   * pane on the allow-list, because an Enter into a SHELL executes whatever
+   * sits on the prompt — the exact scenario the guard exists for. Codex's
+   * pane_current_command is "node", already allow-listed, so this needed no
+   * widening of SAFE_PANE_COMMANDS. Best-effort: any failure just means the
+   * next poll round tries again.
+   *
+   * Returns whether an Enter was actually SENT (the caller presses at most once).
+   */
+  async function acceptTrustDialog(
+    name: string,
+    session: string,
+    descriptor: AgentTypeDescriptor,
+    pane: string,
+  ): Promise<boolean> {
+    if (!descriptor.autoAcceptTrustDialog) return false;
+    if (!descriptor.isTrustDialog(pane)) return false;
+    if (typeof tmux.sendEnter !== "function" || typeof tmux.isPaneSafeToNudge !== "function") {
+      return false; // double without the surface — wait the dialog out
+    }
+    try {
+      if (!(await tmux.isPaneSafeToNudge(session))) return false; // fail-closed
+      await tmux.sendEnter(session);
+      log.info(
+        `[launcher] accepted the ${descriptor.bin} trust dialog for ${name} ` +
+          `(Enter on its default option).`,
+      );
+      return true;
+    } catch {
+      return false; // transient tmux failure — the next poll round retries
     }
   }
 

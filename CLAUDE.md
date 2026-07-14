@@ -78,6 +78,16 @@ Components in `src/server/` (full structure in PRD section 6):
   `fs.rename`). Boot replays the JSONL; corrupted lines: log and skip, never crash. Marking as
   read = appending a `{"type":"read",...}` event, never an in-place edit.
 
+Agent types (`claude` | `codex`) live in **`src/shared/agent-types.ts`** — one descriptor per
+type (binary, argv shape, TUI-ready/trust-dialog markers, `mcp add` spelling). It sits in
+`src/shared/` because both `src/cli/*` and `src/server/launcher.ts` import it and the direction
+"server may read pure cli helpers, never the reverse" makes a neutral module the only legal
+home. Adding a type = adding a descriptor; nothing downstream branches on `if codex`. The claude
+descriptor's argv is asserted exactly in `test/agent-types.test.ts` — it is the regression lock
+for the default type. Codex's `resume` is a SUBCOMMAND and its bypass flag MUST follow it (a
+flag placed before the subcommand parses and is silently dropped); the file header records how
+that was verified.
+
 Identity: agents are addressed by **name** (never session id — names survive restarts). The
 registration happens on `switchboard start` via REST, BEFORE Claude Code opens; the `join` via
 MCP only confirms the connection.

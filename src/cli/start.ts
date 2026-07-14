@@ -31,6 +31,16 @@ import { AGENT_NAME_RE } from "../server/store.js";
 import { createTmux, type NudgeResult, type Tmux } from "../server/tmux.js";
 import type { PublicAgent } from "../shared/types.js";
 import {
+  agentTypeDescriptor,
+  claudeAgentType,
+  isAgentType,
+  invalidAgentTypeMessage,
+  AGENT_TYPES,
+  DEFAULT_AGENT_TYPE,
+  type AgentType,
+  type AgentTypeDescriptor,
+} from "../shared/agent-types.js";
+import {
   CliError,
   ensureHubUp,
   defaultHubUrl,
@@ -96,21 +106,25 @@ export function parseClaudeArgs(raw: string | undefined): string[] {
 
 /**
  * argv (PRD 11 step 4): `env SWITCHBOARD_AGENT_NAME=<name>
- * SWITCHBOARD_AGENT_TOKEN=<token> claude <claude-args>`. Built as an ARRAY —
+ * SWITCHBOARD_AGENT_TOKEN=<token> <bin> <args>`. Built as an ARRAY —
  * tmux.newSession preserves each element as one argv of the final process.
  * The token rides ONLY here (env of the agent's session, per the v1.1
  * addendum); callers must never print/log this array. `claudeArgs` accepts
  * the raw --claude-args string OR a pre-parsed argv array — runStart
  * pre-parses in step 1a so bad quoting fails BEFORE the register mutates the
- * hub. `claudeBin` is a test-only injection point (integration tests run
- * `sh`/`cat` instead of a real claude — PRD: "never open a real claude in
- * tests").
+ * hub. `agentType` picks the binary (claude | codex — see
+ * src/shared/agent-types.ts); omitted → claude, so every pre-existing caller
+ * builds the identical argv it always did. `claudeBin` OVERRIDES that binary
+ * and is a test-only injection point (integration tests run `sh`/`cat`
+ * instead of a real claude/codex — PRD: "never open a real claude in tests");
+ * it keeps its name because it is threaded through half the suite.
  */
 export function buildAgentCommand(input: {
   name: string;
   token: string;
   claudeArgs?: string | string[];
   claudeBin?: string;
+  agentType?: AgentType;
 }): string[] {
   const extraArgs = Array.isArray(input.claudeArgs)
     ? input.claudeArgs
@@ -119,9 +133,19 @@ export function buildAgentCommand(input: {
     "env",
     `SWITCHBOARD_AGENT_NAME=${input.name}`,
     `SWITCHBOARD_AGENT_TOKEN=${input.token}`,
-    input.claudeBin ?? "claude",
+    input.claudeBin ?? agentTypeDescriptor(input.agentType).bin,
     ...extraArgs,
   ];
+}
+
+/**
+ * Validates a raw `--agent` value into an AgentType. Omitted → the default
+ * (claude), so `start`/`wire` without the flag behave exactly as before.
+ */
+export function parseAgentTypeFlag(raw: string | undefined): AgentType {
+  if (raw === undefined) return claudeAgentType.type;
+  if (!isAgentType(raw)) throw new CliError(invalidAgentTypeMessage(raw));
+  return raw;
 }
 
 /**
@@ -137,29 +161,14 @@ export function kickoffText(name: string): string {
 }
 
 /**
- * TUI readiness detection (spikes/NOTES.md, spike 0.3): a ready Claude Code
- * pane shows "? for shortcuts" under the input box, whose left border renders
- * as "│ >". While the trust dialog is up ("Quick safety check: Is this a
- * project you created or one you trust?") NONE of these markers are present —
- * and a blind kickoff there would type into a MENU where digits select options.
- *
- * IMPORTANT (observed with claude 2.1.205): a non-default permission mode
- * REPLACES "? for shortcuts" in the footer. Under `--permission-mode
- * bypassPermissions` the footer reads "⏵⏵ bypass permissions on (shift+tab to
- * cycle)" and "? for shortcuts" never appears — so we ALSO accept the
- * permission-mode footer markers, otherwise the kickoff of a bypass-mode agent
- * (the setup section 9.5 explicitly says is "already covered") would time out
- * and never fire. None of these strings appear in the trust dialog.
+ * Claude Code TUI readiness — kept as a named export because it is imported by
+ * launcher.ts and the suite. The markers themselves (and the rationale for
+ * each) now live in the claude descriptor, src/shared/agent-types.ts, next to
+ * codex's; this delegates so there is exactly ONE definition. For any other
+ * agent type use agentTypeDescriptor(type).isTuiReady.
  */
 export function isTuiReady(pane: string): boolean {
-  return (
-    pane.includes("? for shortcuts") || // default footer
-    pane.includes("│ >") || // legacy input-box left border
-    pane.includes("shift+tab to cycle") || // any non-default permission mode
-    pane.includes("bypass permissions on") ||
-    pane.includes("accept edits on") ||
-    pane.includes("plan mode on")
-  );
+  return claudeAgentType.isTuiReady(pane);
 }
 
 // ---------------------------------------------------------------------------
@@ -171,12 +180,59 @@ export interface KickoffTmux {
   hasSession(session: string): Promise<boolean>;
   capturePane(session: string, lines?: number): Promise<string>;
   nudgeSession(session: string, text: string, enterDelayMs: number): Promise<NudgeResult>;
+  /**
+   * Both OPTIONAL, and used ONLY to accept the trust dialog of an agent type
+   * whose descriptor sets autoAcceptTrustDialog (codex today; never claude).
+   * Optional so every pre-existing test double — which implements exactly the
+   * three methods above — keeps type-checking untouched; a double without them
+   * simply waits the dialog out, which is the old behavior.
+   */
+  isPaneSafeToNudge?(session: string): Promise<boolean>;
+  sendEnter?(session: string): Promise<void>;
+}
+
+/**
+ * Presses Enter on the trust dialog when (and only when) the agent type asks
+ * for it — codex's "Do you trust the contents of this directory?" defaults to
+ * "1. Yes, continue", which Enter accepts, and nothing else would ever accept
+ * it: the dashboard launches with no human attached.
+ *
+ * Claude is deliberately NOT auto-accepted (autoAcceptTrustDialog: false): its
+ * flow has always relied on the human accepting in the attach and the poll
+ * waiting it out. Preserving that is why this is a descriptor capability and
+ * not a blanket "press Enter on any dialog".
+ *
+ * The pane guard is NOT bypassed: Enter is only ever sent to a pane on the
+ * send-keys allow-list (PRD 10.3). Enter into a SHELL executes whatever sits
+ * on the prompt — the very thing the guard exists for. Best-effort: any
+ * failure just means the next poll round tries again.
+ */
+async function acceptTrustDialogIfNeeded(
+  tmux: KickoffTmux,
+  session: string,
+  descriptor: AgentTypeDescriptor,
+  pane: string,
+): Promise<boolean> {
+  if (!descriptor.autoAcceptTrustDialog) return false;
+  if (!descriptor.isTrustDialog(pane)) return false;
+  if (typeof tmux.sendEnter !== "function" || typeof tmux.isPaneSafeToNudge !== "function") {
+    return false; // double without the surface — wait the dialog out
+  }
+  try {
+    if (!(await tmux.isPaneSafeToNudge(session))) return false; // fail-closed
+    await tmux.sendEnter(session);
+    return true;
+  } catch {
+    return false; // transient tmux failure — the next poll round retries
+  }
 }
 
 export interface KickoffOptions {
   name: string;
   /** Session override (default: config.tmuxSessionPrefix + name). */
   session?: string;
+  /** Which agent CLI runs in the pane (default claude) — picks the markers. */
+  agentType?: AgentType;
   /** Config dir (default ~/.switchboard). */
   baseDir?: string;
   tmux?: KickoffTmux;
@@ -210,10 +266,16 @@ const realSleep = (ms: number): Promise<void> =>
  * a manual join) if they never appear. The pane guard is NOT a substitute for
  * this: the trust dialog runs inside the claude process, so the guard alone
  * would happily type into it.
+ *
+ * The markers are per agent type (agentTypeDescriptor(options.agentType)):
+ * codex's readiness is its `>_ OpenAI Codex` header instead, and codex's trust
+ * dialog gets an Enter (see acceptTrustDialogIfNeeded) rather than being waited
+ * out. Everything else — the delay, the poll, the guarded nudge — is shared.
  */
 export async function runKickoffAgent(options: KickoffOptions): Promise<NudgeResult> {
   const config = loadConfig(options.baseDir);
   const session = options.session ?? config.tmuxSessionPrefix + options.name;
+  const descriptor = agentTypeDescriptor(options.agentType);
   const tmux = options.tmux ?? createTmux();
   const sleep = options.sleep ?? realSleep;
   const now = options.now ?? Date.now;
@@ -225,6 +287,12 @@ export async function runKickoffAgent(options: KickoffOptions): Promise<NudgeRes
   await sleep(delayMs);
 
   const deadline = now() + readinessTimeoutMs;
+  // At most ONE trust-dialog Enter per kickoff. Between our Enter and the TUI's
+  // redraw the dialog is still on screen, so an unguarded poll would keep
+  // pressing — and every extra Enter lands in the freshly-ready composer as an
+  // empty submit (a wasted agent turn). Only a REALLY sent Enter flips this, so
+  // an attempt refused by the pane guard can still be retried next round.
+  let trustEnterSent = false;
   for (;;) {
     if (!(await tmux.hasSession(session))) {
       return {
@@ -238,12 +306,17 @@ export async function runKickoffAgent(options: KickoffOptions): Promise<NudgeRes
     } catch {
       pane = ""; // pane unreadable this round — treated as not ready
     }
-    if (isTuiReady(pane)) break;
+    if (descriptor.isTuiReady(pane)) break;
+    // Trust dialog up and this agent type accepts it itself (codex): press
+    // Enter, then fall through to the poll — the next round sees the ready TUI.
+    if (!trustEnterSent) {
+      trustEnterSent = await acceptTrustDialogIfNeeded(tmux, session, descriptor, pane);
+    }
     if (now() >= deadline) {
       return {
         sent: false,
         reason:
-          `the claude TUI did not become ready in ${readinessTimeoutMs}ms after the initial delay ` +
+          `the ${descriptor.bin} TUI did not become ready in ${readinessTimeoutMs}ms after the initial delay ` +
           `(trust dialog pending? accept it in the attach) — kickoff not sent; ` +
           `the agent can call the join tool manually`,
       };
@@ -280,6 +353,8 @@ export interface StartOptions {
   /** Kickoff on/off (default true; --no-kickoff sets false). */
   kickoff?: boolean;
   claudeArgs?: string;
+  /** Which agent CLI to open: claude (default) | codex. */
+  agentType?: AgentType;
   // -- injectables (index.ts uses the defaults; tests override) --------------
   hubUrl?: string;
   /** Config + permissions-reminder marker dir (default ~/.switchboard). */
@@ -296,8 +371,12 @@ export interface StartOptions {
    * the session, so runStart prints how to attach instead of "Detached".
    */
   attach?: (session: string) => Promise<number | void>;
-  /** Detached kickoff spawner (default: re-enters via `kickoff-agent`). */
-  spawnKickoff?: (name: string, session: string) => void;
+  /**
+   * Detached kickoff spawner (default: re-enters via `kickoff-agent`). The
+   * agent type rides along so the detached process polls for the RIGHT TUI
+   * markers — a codex kickoff waiting for "? for shortcuts" would time out.
+   */
+  spawnKickoff?: (name: string, session: string, agentType: AgentType) => void;
   /** Injectable sleep (default: real setTimeout). */
   sleep?: (ms: number) => Promise<void>;
   /** Post-create liveness settle window in ms (default START_SETTLE_MS). */
@@ -308,7 +387,10 @@ export interface StartOptions {
    * old fail-fast without booting anything.
    */
   ensureHub?: (hubUrl: string, opts: { out: OutFn }) => Promise<void>;
-  /** TEST-ONLY: binary in place of "claude" (never open a real claude in tests). */
+  /**
+   * TEST-ONLY: binary in place of the agent type's own (never open a real
+   * claude/codex in tests). Overrides agentType's bin when set.
+   */
   claudeBin?: string;
 }
 
@@ -371,11 +453,16 @@ function defaultAttach(session: string): Promise<number> {
  * (verified: tsx re-execs node with --require/--import in execArgv), so the
  * .ts entry resolves without a build step.
  */
-function defaultSpawnKickoff(name: string, session: string, out: OutFn = console.log): void {
+function defaultSpawnKickoff(
+  name: string,
+  session: string,
+  agentType: AgentType,
+  out: OutFn = console.log,
+): void {
   const entry = fileURLToPath(new URL("../index.ts", import.meta.url));
   const child = spawn(
     process.execPath,
-    [...process.execArgv, entry, "kickoff-agent", name, session],
+    [...process.execArgv, entry, "kickoff-agent", name, session, "--agent", agentType],
     { detached: true, stdio: "ignore" },
   );
   // spawn failures (EMFILE/ENOMEM/EAGAIN under pressure) are emitted
@@ -445,8 +532,9 @@ export interface AgentSessionOptions extends Omit<StartOptions, "claudeArgs"> {
   mode: "start" | "wire";
   /**
    * Raw --claude-args string (start parses it here) OR a pre-parsed argv array
-   * (wire pre-parses in runWire to prepend `-c --dangerously-skip-permissions`,
-   * deduped). Either way the fail-fast on bad quoting happens before any HTTP.
+   * (wire pre-parses in runWire to prepend the chosen agent type's continue +
+   * bypass defaults, deduped). Either way the fail-fast on bad quoting happens
+   * before any HTTP.
    */
   claudeArgs?: string | string[];
 }
@@ -511,6 +599,10 @@ export async function runAgentSession(options: AgentSessionOptions): Promise<Sta
   const out = options.out ?? console.log;
   const mode = options.mode;
   const name = options.name;
+  // Which CLI opens in the pane. Everything type-specific below reads this
+  // descriptor: the binary, the auto-fallback's notion of "continue", the
+  // wording of the die-at-birth errors, and the kickoff's TUI markers.
+  const descriptor = agentTypeDescriptor(options.agentType);
 
   // 1a. Name validation — same regex as the store (fail fast, before HTTP).
   if (!AGENT_NAME_RE.test(name)) {
@@ -584,6 +676,10 @@ export async function runAgentSession(options: AgentSessionOptions): Promise<Sta
     role: options.role,
     cwd,
     tmuxSession,
+    // Recorded so the dashboard can show WHICH CLI this agent is, and so a
+    // reopen relaunches the same one (start/wire always state it — the flag
+    // has a default — so this never silently preserves a stale type).
+    agentType: descriptor.type,
   });
   const token = registration.token;
 
@@ -625,6 +721,7 @@ export async function runAgentSession(options: AgentSessionOptions): Promise<Sta
           token,
           claudeArgs: argv,
           claudeBin: options.claudeBin,
+          agentType: descriptor.type,
         }),
       );
     } catch (err) {
@@ -653,26 +750,28 @@ export async function runAgentSession(options: AgentSessionOptions): Promise<Sta
   await sleep(settleMs);
   let fellBack = false;
   if (!(await tmux.hasSession(tmuxSession))) {
-    const CONTINUE_FLAGS = ["-c", "--continue"];
-    const hadContinue = mode === "wire" && claudeArgv.some((a) => CONTINUE_FLAGS.includes(a));
+    // "Did we ask it to continue?" is per agent type: claude says -c/--continue,
+    // codex says the `resume` SUBCOMMAND — a hardcoded flag list would never
+    // fire codex's fallback and would report a hard failure instead.
+    const hadContinue = mode === "wire" && descriptor.hasContinue(claudeArgv);
     if (!hadContinue) {
       const retry = mode === "wire" ? "switchboard wire" : `switchboard start ${name}`;
       throw new CliError(
         `The tmux session "${tmuxSession}" died right after opening — the agent command failed ` +
-          `at birth. Is the "claude" binary on the PATH? Are the --claude-args valid? ` +
+          `at birth. Is the "${descriptor.bin}" binary on the PATH? Are the --claude-args valid? ` +
           `The agent's registration stays in the Hub; fix it and run "${retry}" again.`,
       );
     }
     out(
-      `No resumable conversation in ${cwd} — "claude -c" exited right after opening. ` +
-        `Retrying with a FRESH session (no -c)...`,
+      `No resumable conversation in ${cwd} — "${descriptor.continueHint}" exited right after opening. ` +
+        `Retrying with a FRESH session (no ${descriptor.continueArgHint})...`,
     );
-    await createAgentSession(claudeArgv.filter((a) => !CONTINUE_FLAGS.includes(a)));
+    await createAgentSession(descriptor.withoutContinue(claudeArgv));
     await sleep(settleMs);
     if (!(await tmux.hasSession(tmuxSession))) {
       throw new CliError(
-        `The tmux session "${tmuxSession}" died even without -c — the claude command itself ` +
-          `failed at birth. Is the "claude" binary on the PATH? Are the --claude-args valid? ` +
+        `The tmux session "${tmuxSession}" died even without ${descriptor.continueArgHint} — the ${descriptor.bin} command itself ` +
+          `failed at birth. Is the "${descriptor.bin}" binary on the PATH? Are the --claude-args valid? ` +
           `The agent's registration stays in the Hub; fix it and run "switchboard wire" again.`,
       );
     }
@@ -684,8 +783,7 @@ export async function runAgentSession(options: AgentSessionOptions): Promise<Sta
     // the user may express continue as --continue, override it with -r/--resume
     // (buildWireClaudeArgs then omits -c), or the auto-fallback may have
     // recreated the session fresh. Hardcoding "claude -c" would misstate those.
-    const continuing =
-      !fellBack && (claudeArgv.includes("-c") || claudeArgv.includes("--continue"));
+    const continuing = !fellBack && descriptor.hasContinue(claudeArgv);
     out(
       `Agent "${name}" wired into the Hub and reopened in tmux session "${tmuxSession}"` +
         (fellBack
@@ -703,8 +801,9 @@ export async function runAgentSession(options: AgentSessionOptions): Promise<Sta
   const kickoff = options.kickoff ?? true;
   if (kickoff) {
     const spawnKickoff =
-      options.spawnKickoff ?? ((n: string, s: string) => defaultSpawnKickoff(n, s, out));
-    spawnKickoff(name, tmuxSession);
+      options.spawnKickoff ??
+      ((n: string, s: string, t: AgentType) => defaultSpawnKickoff(n, s, t, out));
+    spawnKickoff(name, tmuxSession, descriptor.type);
     out(
       `Kickoff scheduled: in ~${Math.round(config.kickoffDelayMs / 1000)}s (once the TUI is ready) ` +
         `the agent will be instructed to call the join tool. Use --no-kickoff to disable.`,
@@ -751,7 +850,8 @@ export function registerStartCommand(program: Command): void {
   program
     .command("start")
     .description(
-      "Registers an agent in the Hub and opens its Claude Code in a dedicated tmux session.",
+      "Registers an agent in the Hub and opens its coding agent (Claude Code by default, " +
+        "Codex CLI with --agent codex) in a dedicated tmux session.",
     )
     .argument("<name>", "agent name (lowercase letters, digits and hyphens)")
     // NO default value for --role: `role: undefined` means "flag omitted" and
@@ -761,13 +861,24 @@ export function registerStartCommand(program: Command): void {
     .option("--dir <dir>", "agent working directory (default: current directory)")
     .option("--no-kickoff", "do not inject the automatic join instruction after opening")
     .option(
+      "--agent <type>",
+      `which coding agent CLI to open: ${AGENT_TYPES.join(" | ")}`,
+      DEFAULT_AGENT_TYPE,
+    )
+    .option(
       "--claude-args <args>",
-      "extra arguments for claude (single/double quotes group)",
+      "extra arguments for the agent CLI (single/double quotes group)",
     )
     .action(
       async (
         name: string,
-        opts: { role?: string; dir?: string; kickoff: boolean; claudeArgs?: string },
+        opts: {
+          role?: string;
+          dir?: string;
+          kickoff: boolean;
+          claudeArgs?: string;
+          agent?: string;
+        },
       ) => {
         await runCliAction(() =>
           runStart({
@@ -776,6 +887,9 @@ export function registerStartCommand(program: Command): void {
             dir: opts.dir,
             kickoff: opts.kickoff,
             claudeArgs: opts.claudeArgs,
+            // Validated HERE (not deep in the core) so a typo fails before any
+            // HTTP, with a message naming both options.
+            agentType: parseAgentTypeFlag(opts.agent),
           }).then(() => undefined),
         );
       },
@@ -795,9 +909,16 @@ export function registerKickoffAgentCommand(program: Command): void {
     // changed between the spawn and this process reading it.
     .command("kickoff-agent <name> [session]", { hidden: true })
     .description("(internal) waits for the TUI to be ready and injects the join instruction")
-    .action(async (name: string, session?: string) => {
+    // The agent type must ride along: this detached process polls the pane for
+    // TYPE-SPECIFIC readiness markers, and a codex pane never shows claude's.
+    .option("--agent <type>", `agent CLI in the pane: ${AGENT_TYPES.join(" | ")}`, DEFAULT_AGENT_TYPE)
+    .action(async (name: string, session: string | undefined, opts: { agent?: string }) => {
       await runCliAction(async () => {
-        const result = await runKickoffAgent({ name, session });
+        const result = await runKickoffAgent({
+          name,
+          session,
+          agentType: parseAgentTypeFlag(opts.agent),
+        });
         if (!result.sent) {
           // Detached process: stdio is ignored in production, but log anyway
           // for the manual/debug invocation path.

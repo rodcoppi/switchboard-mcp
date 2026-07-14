@@ -2,13 +2,15 @@
 // Source of truth: PRD-switchboard.md — sections 7 (config), 8 (data models)
 // and 10.1 (SSE events). Keep these types in sync with the PRD.
 
+import type { AgentType } from "./agent-types.js";
+
 export type AgentStatus = "online" | "offline";
 
 export interface Agent {
   name: string; // ^[a-z0-9][a-z0-9-]{1,30}$ , unique
   role: string; // free-form description, e.g. "backend da API de pagamentos"
   tmuxSession: string; // e.g. "sb-alpha" (prefix + name)
-  cwd: string; // directory where claude was opened
+  cwd: string; // directory where the agent CLI was opened
   status: AgentStatus; // derived from tmux has-session during polling
   mcpConnected: boolean; // true after the first join via MCP
   muted: boolean; // dashboard can silence nudges (messages are still recorded)
@@ -24,6 +26,17 @@ export interface Agent {
    * token means "legacy record": the first join claims it and generates one.
    */
   token?: string;
+  /**
+   * WHICH coding-agent CLI this agent runs (see src/shared/agent-types.ts).
+   * Recorded at registration so a `reopen` from the dashboard relaunches the
+   * agent with the SAME CLI it was launched with — reopening a codex agent as
+   * claude would resume the wrong conversation with the wrong binary.
+   * Optional: absent = a LEGACY record written before this field existed, and
+   * every one of those was Claude Code — resolveAgentType(undefined) says so.
+   * Unlike `token` this one is PUBLIC (it rides PublicAgent): the dashboard
+   * shows it on the card and sends it back on reopen.
+   */
+  agentType?: AgentType;
 }
 
 /**

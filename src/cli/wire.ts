@@ -28,9 +28,22 @@
 import path from "node:path";
 import type { Command } from "commander";
 import { AGENT_NAME_RE } from "../server/store.js";
+import {
+  agentTypeDescriptor,
+  AGENT_TYPES,
+  CLAUDE_BYPASS_FLAG,
+  CLAUDE_CONTINUE_ALIAS,
+  CLAUDE_CONTINUE_FLAG,
+  CLAUDE_PERMISSION_MODE_FLAG,
+  CLAUDE_RESUME_ALIAS,
+  CLAUDE_RESUME_FLAG,
+  DEFAULT_AGENT_TYPE,
+  type AgentType,
+} from "../shared/agent-types.js";
 import { CliError, runCliAction, type OutFn } from "./common.js";
 import {
   expandHome,
+  parseAgentTypeFlag,
   parseClaudeArgs,
   runAgentSession,
   type StartResult,
@@ -41,25 +54,20 @@ import {
 // Pure helpers (unit-tested in test/wire.test.ts).
 // ---------------------------------------------------------------------------
 
-/** Continue-conversation flag prepended by default (and its long alias). */
-export const WIRE_CONTINUE_FLAG = "-c";
-export const WIRE_CONTINUE_ALIAS = "--continue";
 /**
- * Resume-a-specific-session flags. When the user picks one, wire must NOT also
- * force `-c`: `-c` and `-r` are two conflicting conversation selectors and
- * claude rejects the mix.
+ * The claude flag constants now live in the agent-type adapter
+ * (src/shared/agent-types.ts) alongside codex's, since the defaults wire wants
+ * — "continue this folder's conversation, skip approvals" — are a concept both
+ * CLIs have, spelled differently. These aliases keep the WIRE_* names working
+ * for their existing importers (launcher.ts, test/wire.test.ts); they are, and
+ * always were, Claude Code's flags.
  */
-export const WIRE_RESUME_FLAG = "-r";
-export const WIRE_RESUME_ALIAS = "--resume";
-/** Permission-bypass flag prepended by default. */
-export const WIRE_BYPASS_FLAG = "--dangerously-skip-permissions";
-/**
- * The canonical alternate way to express a permission mode. Forcing
- * `--dangerously-skip-permissions` alongside a `--permission-mode <value>` is
- * rejected by recent claude builds (the session would die at birth), so when
- * the user sets a permission mode we do NOT also prepend the bypass default.
- */
-export const WIRE_PERMISSION_MODE_FLAG = "--permission-mode";
+export const WIRE_CONTINUE_FLAG = CLAUDE_CONTINUE_FLAG;
+export const WIRE_CONTINUE_ALIAS = CLAUDE_CONTINUE_ALIAS;
+export const WIRE_RESUME_FLAG = CLAUDE_RESUME_FLAG;
+export const WIRE_RESUME_ALIAS = CLAUDE_RESUME_ALIAS;
+export const WIRE_BYPASS_FLAG = CLAUDE_BYPASS_FLAG;
+export const WIRE_PERMISSION_MODE_FLAG = CLAUDE_PERMISSION_MODE_FLAG;
 
 /**
  * Sanitizes an arbitrary folder name into a candidate agent name: lowercase,
@@ -98,35 +106,30 @@ export function deriveAgentName(dir: string): string {
 }
 
 /**
- * Builds the claude argv for wire: prepends `-c --dangerously-skip-permissions`
- * to the user's parsed --claude-args, but skips a default whenever prepending it
- * would DUPLICATE or CONFLICT with something the user already provided:
- *   - `-c` is skipped when the user passed `-c`/`--continue` (duplicate) OR
- *     `-r`/`--resume` (conflict: two conversation selectors);
- *   - `--dangerously-skip-permissions` is skipped when the user passed it
- *     (duplicate) OR any `--permission-mode <value>` (conflict: recent claude
- *     builds reject mixing the two — see WIRE_PERMISSION_MODE_FLAG).
+ * Builds the agent argv for wire: applies the "continue + skip approvals"
+ * defaults on top of the user's parsed --claude-args, skipping a default
+ * whenever it would DUPLICATE or CONFLICT with something the user provided.
+ * The rules are the descriptor's, because each CLI spells them differently:
+ *   - claude → prepends `-c --dangerously-skip-permissions`; `-c` is skipped
+ *     when the user passed `-c`/`--continue` (duplicate) or `-r`/`--resume`
+ *     (conflict: two conversation selectors); the bypass is skipped when the
+ *     user passed it or any `--permission-mode <value>` (recent claude builds
+ *     reject mixing the two);
+ *   - codex → `resume --last --dangerously-bypass-approvals-and-sandbox`, and
+ *     note the ORDER: `resume` is a subcommand and the bypass MUST follow it
+ *     (see the agent-types.ts header — a bypass placed before the subcommand
+ *     is silently dropped).
  * Parsing goes through parseClaudeArgs, so bad quoting throws a CliError here —
  * before wire touches the Hub (no ghost registration).
  */
-export function buildWireClaudeArgs(raw: string | undefined): string[] {
-  const userArgs = parseClaudeArgs(raw);
-  const prepend: string[] = [];
-
-  const userContinues =
-    userArgs.includes(WIRE_CONTINUE_FLAG) || userArgs.includes(WIRE_CONTINUE_ALIAS);
-  const userResumes =
-    userArgs.includes(WIRE_RESUME_FLAG) || userArgs.includes(WIRE_RESUME_ALIAS);
-  if (!userContinues && !userResumes) {
-    prepend.push(WIRE_CONTINUE_FLAG);
-  }
-
-  const userSetsPermissionMode = userArgs.includes(WIRE_PERMISSION_MODE_FLAG);
-  if (!userArgs.includes(WIRE_BYPASS_FLAG) && !userSetsPermissionMode) {
-    prepend.push(WIRE_BYPASS_FLAG);
-  }
-
-  return [...prepend, ...userArgs];
+export function buildWireClaudeArgs(
+  raw: string | undefined,
+  agentType?: AgentType,
+): string[] {
+  return agentTypeDescriptor(agentType).buildArgs({
+    continueConversation: true, // wire's whole premise: keep the context
+    extraArgs: parseClaudeArgs(raw),
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -149,8 +152,10 @@ export interface WireOptions {
   dir?: string;
   /** Kickoff on/off (default true; --no-kickoff sets false). */
   kickoff?: boolean;
-  /** Extra args for claude, appended after the default -c + bypass. */
+  /** Extra args for the agent CLI, appended after its continue + bypass defaults. */
   claudeArgs?: string;
+  /** Which agent CLI to reopen the folder with: claude (default) | codex. */
+  agentType?: AgentType;
   // -- injectables (index.ts uses the defaults; tests override) --------------
   hubUrl?: string;
   baseDir?: string;
@@ -159,12 +164,12 @@ export interface WireOptions {
   isTTY?: boolean;
   insideTmux?: boolean;
   attach?: (session: string) => Promise<number | void>;
-  spawnKickoff?: (name: string, session: string) => void;
+  spawnKickoff?: (name: string, session: string, agentType: AgentType) => void;
   sleep?: (ms: number) => Promise<void>;
   settleMs?: number;
   /** Hub liveness strategy (default: auto-start a background sb-hub; see start.ts). */
   ensureHub?: (hubUrl: string, opts: { out: OutFn }) => Promise<void>;
-  /** TEST-ONLY: binary in place of "claude" (never open a real claude in tests). */
+  /** TEST-ONLY: binary in place of the agent type's own (never open a real one in tests). */
   claudeBin?: string;
 }
 
@@ -178,10 +183,11 @@ export async function runWire(options: WireOptions): Promise<StartResult> {
   // re-validates whatever name we hand it against AGENT_NAME_RE.
   const name = options.name ?? deriveAgentName(dir);
 
-  // Prepend -c + bypass (deduped) and fail fast on bad --claude-args quoting,
-  // BEFORE the shared core touches the Hub. See buildWireClaudeArgs / the file
-  // header for why these two are the wire default.
-  const claudeArgs = buildWireClaudeArgs(options.claudeArgs);
+  // Apply the chosen CLI's continue + bypass defaults (deduped) and fail fast
+  // on bad --claude-args quoting, BEFORE the shared core touches the Hub. See
+  // buildWireClaudeArgs / the file header for why these two are the wire default.
+  const agentType = options.agentType ?? DEFAULT_AGENT_TYPE;
+  const claudeArgs = buildWireClaudeArgs(options.claudeArgs, agentType);
 
   return runAgentSession({
     mode: "wire",
@@ -190,6 +196,7 @@ export async function runWire(options: WireOptions): Promise<StartResult> {
     dir,
     kickoff: options.kickoff,
     claudeArgs,
+    agentType,
     hubUrl: options.hubUrl,
     baseDir: options.baseDir,
     tmux: options.tmux,
@@ -224,8 +231,13 @@ export function registerWireCommand(program: Command): void {
     .option("--dir <dir>", "folder whose conversation to continue (default: current directory)")
     .option("--no-kickoff", "do not inject the automatic join instruction after opening")
     .option(
+      "--agent <type>",
+      `which coding agent CLI to reopen the folder with: ${AGENT_TYPES.join(" | ")}`,
+      DEFAULT_AGENT_TYPE,
+    )
+    .option(
       "--claude-args <args>",
-      "extra arguments for claude, added after the default -c --dangerously-skip-permissions",
+      "extra arguments for the agent CLI, added after its continue + skip-approvals defaults",
     )
     .action(
       async (opts: {
@@ -234,6 +246,7 @@ export function registerWireCommand(program: Command): void {
         dir?: string;
         kickoff: boolean;
         claudeArgs?: string;
+        agent?: string;
       }) => {
         await runCliAction(() =>
           runWire({
@@ -242,6 +255,7 @@ export function registerWireCommand(program: Command): void {
             dir: opts.dir,
             kickoff: opts.kickoff,
             claudeArgs: opts.claudeArgs,
+            agentType: parseAgentTypeFlag(opts.agent),
           }).then(() => undefined),
         );
       },

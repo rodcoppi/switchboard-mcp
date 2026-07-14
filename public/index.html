@@ -367,6 +367,23 @@
       border-color: var(--accent-line);
       background: var(--accent-wash);
     }
+    /* Which agent CLI the card's agent runs — same chip metrics as .mcp-icon
+       so the two sit as one badge row. Deliberately NOT accent-colored: the
+       accent means "connected/active", and the type is neutral information. */
+    .agent-type-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-family: var(--mono);
+      font-size: 9px;
+      font-weight: 600;
+      letter-spacing: 1px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+      background: var(--bg-inset);
+    }
     .unread-badge {
       min-width: 19px;
       height: 19px;
@@ -504,6 +521,48 @@
       user-select: none;
     }
     .launcher-toggle input { accent-color: var(--accent); margin: 0; }
+    /* Agent-type choice: a 2-button segmented control. Radio inputs do the
+       state (keyboard + form semantics for free); the label is the visible
+       segment and :checked drives its look — no JS class juggling. */
+    .launcher-segmented {
+      display: inline-flex;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      overflow: hidden;
+      background: var(--bg-inset);
+    }
+    .launcher-segmented input {
+      position: absolute;
+      opacity: 0;
+      pointer-events: none;
+    }
+    .launcher-segment {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 12px;
+      font-family: var(--mono);
+      font-size: var(--fs-xs);
+      color: var(--text-faint);
+      cursor: pointer;
+      user-select: none;
+      transition: background 0.12s var(--ease), color 0.12s var(--ease);
+    }
+    /* Vendor marks (inline SVG — the dashboard loads no external asset). They
+       inherit currentColor, so a segment's dim/amber state carries the logo
+       with it instead of fighting the console palette. */
+    .agent-logo { width: 13px; height: 13px; flex: none; display: block; }
+    .agent-type-chip .agent-logo { width: 10px; height: 10px; }
+    .launcher-segment + .launcher-segment { border-left: 1px solid var(--border); }
+    .launcher-segment:hover { color: var(--text-dim); }
+    .launcher-segmented input:checked + .launcher-segment {
+      background: var(--accent-wash);
+      color: var(--accent);
+    }
+    .launcher-segmented input:focus-visible + .launcher-segment {
+      outline: none;
+      box-shadow: inset 0 0 0 2px var(--accent-line);
+    }
     .launch-btn {
       background: var(--accent);
       color: var(--accent-fg);
@@ -866,8 +925,25 @@
           </div>
         </div>
         <div class="launcher-row">
+          <label class="launcher-label" for="launch-agent-claude">agent</label>
+          <div class="launcher-segmented" id="launch-agent"
+            title="Which coding agent CLI the hub opens in the tmux session.">
+            <input type="radio" name="agentType" id="launch-agent-claude"
+              value="claude" checked />
+            <label class="launcher-segment" for="launch-agent-claude">
+              <svg class="agent-logo" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M17.3041 3.541h-3.6718l6.696 16.918H24Zm-10.6082 0L0 20.459h3.7442l1.3693-3.5527h7.0052l1.3693 3.5527h3.7442L10.5363 3.541Zm-.3712 10.2232 2.2914-5.9456 2.2914 5.9456Z"/></svg>
+              Claude
+            </label>
+            <input type="radio" name="agentType" id="launch-agent-codex" value="codex" />
+            <label class="launcher-segment" for="launch-agent-codex">
+              <svg class="agent-logo" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.4593a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z"/></svg>
+              Codex
+            </label>
+          </div>
+        </div>
+        <div class="launcher-row">
           <label class="launcher-toggle"
-            title="Resume the folder's previous Claude Code conversation (claude -c). Falls back to a fresh session when there is nothing to resume.">
+            title="Resume the folder's previous conversation (claude -c / codex resume --last). Falls back to a fresh session when there is nothing to resume.">
             <input type="checkbox" id="launch-continue" checked />
             continue conversation
           </label>
@@ -1023,6 +1099,39 @@
       $("#conn-label").textContent = label;
     }
 
+    // Agent types (mirrors src/shared/agent-types.ts). An agent record written
+    // before the field existed has no agentType — every one of those was Claude
+    // Code, so undefined resolves to "claude" rather than rendering blank.
+    const AGENT_TYPE_LABELS = { claude: "CLAUDE", codex: "CODEX" };
+    const AGENT_TYPE_TITLES = { claude: "Claude Code", codex: "Codex CLI" };
+
+    // Vendor marks, same paths as the launcher's segmented control (the file
+    // ships no external asset). Built with createElementNS — the "never
+    // innerHTML" rule of this file holds even for these static constants.
+    const AGENT_LOGO_PATHS = {
+      claude:
+        "M17.3041 3.541h-3.6718l6.696 16.918H24Zm-10.6082 0L0 20.459h3.7442l1.3693-3.5527h7.0052l1.3693 3.5527h3.7442L10.5363 3.541Zm-.3712 10.2232 2.2914-5.9456 2.2914 5.9456Z",
+      codex:
+        "M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.4593a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z",
+    };
+
+    function agentLogo(type) {
+      const ns = "http://www.w3.org/2000/svg";
+      const svg = document.createElementNS(ns, "svg");
+      svg.setAttribute("viewBox", "0 0 24 24");
+      svg.setAttribute("aria-hidden", "true");
+      svg.setAttribute("class", "agent-logo");
+      const p = document.createElementNS(ns, "path");
+      p.setAttribute("fill", "currentColor");
+      p.setAttribute("d", AGENT_LOGO_PATHS[type] || AGENT_LOGO_PATHS.claude);
+      svg.appendChild(p);
+      return svg;
+    }
+
+    function agentTypeOf(agent) {
+      return agent && agent.agentType === "codex" ? "codex" : "claude";
+    }
+
     function renderAgents() {
       const container = $("#agents");
       container.textContent = "";
@@ -1058,8 +1167,14 @@
       const role = el("div", "agent-role", agent.role || "—");
       role.title = agent.role || "";
 
-      // Badges: MCP chip + unread count.
+      // Badges: agent-type chip + MCP chip + unread count.
       const badges = el("div", "agent-badges");
+      const type = agentTypeOf(agent);
+      const typeChip = el("span", "agent-type-chip");
+      typeChip.appendChild(agentLogo(type));
+      typeChip.appendChild(document.createTextNode(AGENT_TYPE_LABELS[type]));
+      typeChip.title = `This agent runs ${AGENT_TYPE_TITLES[type]}`;
+      badges.appendChild(typeChip);
       const mcp = el("span", `mcp-icon${agent.mcpConnected ? " connected" : ""}`, "MCP");
       mcp.title = agent.mcpConnected
         ? "MCP connected (join confirmed)"
@@ -1235,6 +1350,10 @@
             name: agent.name,
             continue: true,
             openTerminal: true,
+            // Relaunch with the SAME CLI it was launched with: reopening a
+            // codex agent as claude would resume the wrong conversation with
+            // the wrong binary. Legacy records (no agentType) → claude.
+            agentType: agentTypeOf(agent),
           }),
         });
         const body = await res.json();
@@ -1715,6 +1834,12 @@
     // settles the session before answering (~2.5s, ~5s with the resume
     // fallback), so the button shows a busy state meanwhile. All feedback goes
     // through toast() → textContent (server data never touches innerHTML).
+    /** The Claude|Codex segmented control's value (radios — one is always on). */
+    function selectedAgentType() {
+      const checked = document.querySelector('#launch-agent input[name="agentType"]:checked');
+      return checked && checked.value === "codex" ? "codex" : "claude";
+    }
+
     async function launchAgent(ev) {
       ev.preventDefault();
       const dir = $("#launch-dir").value.trim();
@@ -1731,7 +1856,12 @@
       try {
         // openTerminal: a launched agent should be VISIBLE — a Windows window
         // pops attached to its session (owner feedback; best-effort hub-side).
-        const payload = { dir, continue: $("#launch-continue").checked, openTerminal: true };
+        const payload = {
+          dir,
+          continue: $("#launch-continue").checked,
+          openTerminal: true,
+          agentType: selectedAgentType(),
+        };
         if (name) payload.name = name;
         if (role) payload.role = role;
         const res = await fetch("/api/agents/launch", {

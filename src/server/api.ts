@@ -34,6 +34,12 @@ import type { Store } from "./store.js";
 // translation below. No runtime cycle: launcher.ts imports this module with
 // `import type` only (erased at compile time).
 import { LaunchError, normalizeIncomingPath, type Launcher } from "./launcher.js";
+import {
+  invalidAgentTypeMessage,
+  isAgentType,
+  resolveAgentType,
+  type AgentType,
+} from "../shared/agent-types.js";
 
 // ---------------------------------------------------------------------------
 // EventBus — SSE fan-out (PRD 10.1: GET /api/events).
@@ -398,14 +404,21 @@ export function createApiRouter(options: ApiOptions): express.Router {
         return;
       }
     }
+    // `switchboard start/wire --agent <type>` reports which CLI it is opening
+    // so the dashboard can label the agent and a reopen can reuse the type.
+    if (raw.agentType !== undefined && !isAgentType(raw.agentType)) {
+      res.status(400).json({ ok: false, error: invalidAgentTypeMessage(raw.agentType) });
+      return;
+    }
 
     try {
       const agent = store.registerAgent({
         // role stays undefined when the field is absent: the store then
         // PRESERVES the registered role on re-attach (PRD 8) instead of
-        // silently erasing it with "".
+        // silently erasing it with "". agentType follows the same rule.
         name: raw.name,
         role: raw.role as string | undefined,
+        agentType: raw.agentType as AgentType | undefined,
         cwd: (raw.cwd as string | undefined) ?? "",
         tmuxSession:
           (raw.tmuxSession as string | undefined) ?? config.tmuxSessionPrefix + raw.name,
@@ -450,7 +463,7 @@ export function createApiRouter(options: ApiOptions): express.Router {
         ok: false,
         error:
           `Invalid body: expected {"dir": "<absolute directory>", "name"?, "role"?, ` +
-          `"continue"?} with "dir" required.`,
+          `"continue"?, "agentType"?} with "dir" required.`,
       });
       return;
     }
@@ -472,6 +485,12 @@ export function createApiRouter(options: ApiOptions): express.Router {
         return;
       }
     }
+    // Which agent CLI to open. Rejected rather than silently defaulted: a typo
+    // ("codx") that quietly launched Claude Code would be a baffling surprise.
+    if (raw.agentType !== undefined && !isAgentType(raw.agentType)) {
+      res.status(400).json({ ok: false, error: invalidAgentTypeMessage(raw.agentType) });
+      return;
+    }
 
     try {
       const result = await launcher.launchAgent({
@@ -480,10 +499,12 @@ export function createApiRouter(options: ApiOptions): express.Router {
         role: raw.role as string | undefined,
         continueConversation: (raw.continue as boolean | undefined) ?? false,
         openTerminal: (raw.openTerminal as boolean | undefined) ?? false,
+        agentType: raw.agentType as AgentType | undefined,
       });
       log.info(
         `[api] launch: agent ${result.agent.name} launched from the dashboard ` +
-          `(replaced=${result.replaced}, fallback=${result.fallback}).`,
+          `(agent=${resolveAgentType(result.agent.agentType)}, ` +
+          `replaced=${result.replaced}, fallback=${result.fallback}).`,
       );
       res.status(201).json({
         ok: true,

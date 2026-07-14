@@ -28,6 +28,7 @@ import path from "node:path";
 import { randomBytes } from "node:crypto";
 import { ulid } from "ulid";
 import type { Agent, Message } from "../shared/types.js";
+import type { AgentType } from "../shared/agent-types.js";
 import { defaultBaseDir, loadConfig } from "./config.js";
 
 /** Agent name rule (PRD section 8): lowercase alphanumeric + hyphens, 2..31 chars. */
@@ -114,6 +115,14 @@ export interface RegisterAgentInput {
   role?: string;
   tmuxSession: string;
   cwd: string;
+  /**
+   * Which agent CLI this registration runs (claude | codex). undefined =
+   * "field omitted": a re-register PRESERVES the stored type (same rule as
+   * `role`) — a caller that does not know the type must never silently flip a
+   * codex agent back to claude. A first registration without it stays absent
+   * and reads back as the default (claude) — see Agent.agentType.
+   */
+  agentType?: AgentType;
 }
 
 export class Store {
@@ -177,6 +186,7 @@ export class Store {
 
     if (existing) {
       existing.role = input.role ?? existing.role; // omitted → preserve (PRD 8)
+      existing.agentType = input.agentType ?? existing.agentType; // omitted → preserve
       existing.tmuxSession = input.tmuxSession;
       existing.cwd = input.cwd;
       // Registration happens BEFORE the new Claude Code opens (D4), so at
@@ -216,6 +226,10 @@ export class Store {
       lastSeenAt: now,
       lastNudgeAt: null,
       token: generateAgentToken(),
+      // Only materialize the key when the caller stated a type: an absent
+      // field is the documented "legacy/unstated → claude" shape, so writing
+      // a default here would add noise to every snapshot for no information.
+      ...(input.agentType === undefined ? {} : { agentType: input.agentType }),
     };
     this.agents.set(agent.name, agent);
     this.saveAgentsSnapshot();

@@ -5,7 +5,8 @@
 //
 //   1. prerequisites (node, claude, tmux — offering the sudo-less user-space
 //      tmux install proven in spikes/NOTES.md when tmux is missing);
-//   2. MCP registration (`claude mcp add ... switchboard`);
+//   2. MCP registration (`claude mcp add ... switchboard`, plus the same for
+//      Codex when its binary exists — optional and never fatal);
 //   3. agent protocol snippet into ~/.claude/CLAUDE.md (between markers,
 //      replaced in place — user content around the block is never touched);
 //   4. permissions.allow rules in ~/.claude/settings.json (merge, no dupes,
@@ -28,6 +29,11 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import type { Command } from "commander";
+import {
+  claudeAgentType,
+  codexAgentType,
+  type AgentTypeDescriptor,
+} from "../shared/agent-types.js";
 import { runShortcut } from "./shortcut.js";
 import {
   CliError,
@@ -452,46 +458,76 @@ async function stepPrereqs(ctx: SetupCtx): Promise<void> {
 /** The MCP server id — changing it breaks the mcp__switchboard__* tools. */
 export const MCP_SERVER_NAME = "switchboard";
 
-async function stepMcpRegistration(ctx: SetupCtx): Promise<void> {
-  ctx.out("[2/7] MCP registration");
-
-  // Empirical finding (claude 2.1.205): `claude mcp get <name>` exits 0
-  // whenever the server is REGISTERED — even when it is unreachable (it
-  // prints "✘ Failed to connect" but still exits 0) — and exits 1 with
-  // 'No MCP server named "<name>"' when it is not configured. The exit code
-  // therefore cleanly means "registered or not", independent of hub health.
+/**
+ * Registers the Hub as an MCP server in ONE agent CLI, idempotently.
+ *
+ * Empirical finding (claude 2.1.205, codex-cli 0.144.3): `<bin> mcp get <name>`
+ * exits 0 whenever the server is REGISTERED — even when it is unreachable
+ * (claude prints "✘ Failed to connect" but still exits 0) — and exits non-zero
+ * when it is not configured. The exit code therefore cleanly means "registered
+ * or not", independent of hub health. Both CLIs speak the same streamable-HTTP
+ * transport the Hub already serves at /mcp; only the `mcp add` spelling
+ * differs, which is why the argv comes from the agent-type descriptor.
+ *
+ * `required: false` (codex) makes every failure non-fatal: Codex is an OPTIONAL
+ * prerequisite, so a hiccup there must never break a Claude-only install.
+ */
+async function registerMcpIn(
+  ctx: SetupCtx,
+  descriptor: AgentTypeDescriptor,
+  opts: { required: boolean },
+): Promise<void> {
   try {
-    await ctx.exec("claude", ["mcp", "get", MCP_SERVER_NAME]);
-    ctx.out(`✓ MCP server "${MCP_SERVER_NAME}" already registered in Claude Code`);
+    await ctx.exec(descriptor.bin, descriptor.mcpGetArgs(MCP_SERVER_NAME));
+    ctx.out(`✓ MCP server "${MCP_SERVER_NAME}" already registered in ${descriptor.label}`);
     return;
   } catch {
     // Not registered — offer to add it.
   }
 
   const mcpUrl = `${ctx.hubUrl}/mcp`;
-  const addArgs = [
-    "mcp",
-    "add",
-    "--transport",
-    "http",
-    "--scope",
-    "user",
-    MCP_SERVER_NAME,
-    mcpUrl,
-  ];
+  const addArgs = descriptor.mcpAddArgs(MCP_SERVER_NAME, mcpUrl);
+  const cmd = `${descriptor.bin} ${addArgs.join(" ")}`;
   const proceed = await askYesNo(
     ctx,
-    `Register the Switchboard MCP server in Claude Code (claude ${addArgs.join(" ")})? [y/N] `,
+    `Register the Switchboard MCP server in ${descriptor.label} (${cmd})? [y/N] `,
   );
   if (!proceed) {
     ctx.out(
-      `→ Skipped. Without the registration the agents have no Switchboard tools — ` +
-        `register it later with: claude ${addArgs.join(" ")}`,
+      `→ Skipped. Without the registration the ${descriptor.label} agents have no ` +
+        `Switchboard tools — register it later with: ${cmd}`,
     );
     return;
   }
-  await ctx.exec("claude", addArgs);
-  ctx.out(`✓ MCP server "${MCP_SERVER_NAME}" registered (user scope: ${mcpUrl})`);
+  try {
+    await ctx.exec(descriptor.bin, addArgs);
+    ctx.out(`✓ MCP server "${MCP_SERVER_NAME}" registered in ${descriptor.label} (${mcpUrl})`);
+  } catch (err) {
+    if (opts.required) throw err;
+    ctx.out(
+      `→ Could not register it in ${descriptor.label} ` +
+        `(${String(err instanceof Error ? err.message : err)}) — not fatal. ` +
+        `Retry later with: ${cmd}`,
+    );
+  }
+}
+
+async function stepMcpRegistration(ctx: SetupCtx): Promise<void> {
+  ctx.out("[2/7] MCP registration");
+
+  // Claude Code is the required prerequisite (step 1 already refused to
+  // continue without it), so its registration failing IS an error.
+  await registerMcpIn(ctx, claudeAgentType, { required: true });
+
+  // Codex is OPTIONAL: only offer it to someone who actually has the binary,
+  // and never let it fail the wizard. Without this an operator who picks
+  // "Codex" in the dashboard would launch an agent with no Switchboard tools.
+  try {
+    await ctx.exec(codexAgentType.bin, ["--version"]);
+  } catch {
+    return; // no codex on this machine — nothing to offer
+  }
+  await registerMcpIn(ctx, codexAgentType, { required: false });
 }
 
 // -- step 3: agent protocol snippet -------------------------------------------
