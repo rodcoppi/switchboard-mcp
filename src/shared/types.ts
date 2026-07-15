@@ -37,6 +37,22 @@ export interface Agent {
    * shows it on the card and sends it back on reopen.
    */
   agentType?: AgentType;
+  /**
+   * The group this agent belongs to — its project, its room. A group is a WALL,
+   * not a view: an agent may only message agents in its own group, `list_agents`
+   * shows it nothing else, and a broadcast reaches its group alone. That keeps
+   * one project's agents from waking another's, whether by a slip of the user's
+   * or an agent's own confusion.
+   *
+   * An agent belongs to exactly one group. Optional here for the same reason as
+   * `agentType`: records written before groups existed have no field, and they
+   * all belong together in DEFAULT_GROUP (see resolveGroup). Public — it rides
+   * PublicAgent to the dashboard, which groups the rail and the transcript by it.
+   *
+   * The operator is not in any group and reaches everyone: the human owns the
+   * whole board.
+   */
+  group?: string;
 }
 
 /**

@@ -35,6 +35,31 @@ import { defaultBaseDir, loadConfig } from "./config.js";
 export const AGENT_NAME_RE = /^[a-z0-9][a-z0-9-]{1,30}$/;
 
 /**
+ * Group names follow the agent-name rule. Same reason: a group name is typed by
+ * a human, shown on the dashboard and passed on a command line, so one shape for
+ * both is one thing to learn. They live in separate namespaces — a group and an
+ * agent may share a name without colliding.
+ */
+export const GROUP_NAME_RE = AGENT_NAME_RE;
+
+/**
+ * Where an agent lands when nobody said otherwise. Every record written before
+ * groups existed has no group field and resolves here, so an install that never
+ * asked for groups keeps behaving as one open room.
+ */
+export const DEFAULT_GROUP = "default";
+
+/**
+ * The group of an agent, as everything downstream must read it: an absent field
+ * is a legacy record, not a groupless agent. The single place that decides this,
+ * so the "undefined means default" rule cannot drift between the hub, the MCP
+ * tools and the dashboard.
+ */
+export function resolveGroup(group: string | undefined): string {
+  return group ?? DEFAULT_GROUP;
+}
+
+/**
  * Names with system-level meaning, never registrable as agents. PRD section 8
  * defines the namespaces as disjoint: `from` is "agent name | operator" (the
  * human) and `to` is "agent name | all" (broadcast pseudo-recipient).
@@ -123,6 +148,13 @@ export interface RegisterAgentInput {
    * and reads back as the default (claude) — see Agent.agentType.
    */
   agentType?: AgentType;
+  /**
+   * Which group this agent joins. undefined = "field omitted": a re-register
+   * PRESERVES the stored group (same rule as `role` and `agentType`) — an agent
+   * that comes back after a restart must not silently fall out of its project's
+   * room and into `default`, where it could then reach everyone.
+   */
+  group?: string;
 }
 
 export class Store {
@@ -180,6 +212,12 @@ export class Store {
           `(2 to 31 characters, starting with a letter or digit): ^[a-z0-9][a-z0-9-]{1,30}$`,
       );
     }
+    if (input.group !== undefined && !GROUP_NAME_RE.test(input.group)) {
+      throw new Error(
+        `Invalid group name: "${input.group}". Use lowercase letters, digits and hyphens ` +
+          `(2 to 31 characters, starting with a letter or digit): ^[a-z0-9][a-z0-9-]{1,30}$`,
+      );
+    }
 
     const existing = this.agents.get(input.name);
     const now = new Date().toISOString();
@@ -187,6 +225,7 @@ export class Store {
     if (existing) {
       existing.role = input.role ?? existing.role; // omitted → preserve (PRD 8)
       existing.agentType = input.agentType ?? existing.agentType; // omitted → preserve
+      existing.group = input.group ?? existing.group; // omitted → preserve
       existing.tmuxSession = input.tmuxSession;
       existing.cwd = input.cwd;
       // Registration happens BEFORE the new Claude Code opens (D4), so at
@@ -230,6 +269,8 @@ export class Store {
       // field is the documented "legacy/unstated → claude" shape, so writing
       // a default here would add noise to every snapshot for no information.
       ...(input.agentType === undefined ? {} : { agentType: input.agentType }),
+      // Same rule for the group: absent reads back as DEFAULT_GROUP.
+      ...(input.group === undefined ? {} : { group: input.group }),
     };
     this.agents.set(agent.name, agent);
     this.saveAgentsSnapshot();
@@ -340,6 +381,32 @@ export class Store {
    */
   listAgents(): Agent[] {
     return [...this.agents.values()];
+  }
+
+  /** The agents of one group. Legacy records (no group) count as DEFAULT_GROUP. */
+  listAgentsInGroup(group: string): Agent[] {
+    return this.listAgents().filter((a) => resolveGroup(a.group) === group);
+  }
+
+  /** Every group that currently has an agent in it, sorted for a stable UI. */
+  listGroups(): string[] {
+    return [...new Set(this.listAgents().map((a) => resolveGroup(a.group)))].sort();
+  }
+
+  /**
+   * The one place that answers "may `from` message `to`?" — the wall itself.
+   * Everything that can deliver a message asks this, so the rule cannot drift
+   * between the MCP tools and the REST endpoints.
+   *
+   * The operator is the human who owns the board and is in no group, so it
+   * reaches everyone. Between agents, a shared group is required.
+   */
+  canReach(from: string, to: string): boolean {
+    if (from === "operator") return true;
+    const sender = this.getAgent(from);
+    const recipient = this.getAgent(to);
+    if (!sender || !recipient) return false;
+    return resolveGroup(sender.group) === resolveGroup(recipient.group);
   }
 
   /**

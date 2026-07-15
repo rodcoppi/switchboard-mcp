@@ -162,6 +162,8 @@ export interface WireOptions {
   claudeArgs?: string;
   /** Which agent CLI to reopen the folder with: claude (default) | codex. */
   agentType?: AgentType;
+  /** The group this agent talks in (omitted preserves the stored one). */
+  group?: string;
   // -- injectables (index.ts uses the defaults; tests override) --------------
   hubUrl?: string;
   baseDir?: string;
@@ -203,6 +205,7 @@ export async function runWire(options: WireOptions): Promise<StartResult> {
     kickoff: options.kickoff,
     claudeArgs,
     agentType,
+    group: options.group,
     hubUrl: options.hubUrl,
     baseDir: options.baseDir,
     tmux: options.tmux,
@@ -242,6 +245,11 @@ export function registerWireCommand(program: Command): void {
       DEFAULT_AGENT_TYPE,
     )
     .option(
+      "--group <group>",
+      "the group this agent talks in — it can only message agents in the same group " +
+        "(default: keeps its current group, or \"default\" for a new agent)",
+    )
+    .option(
       "--claude-args <args>",
       "extra arguments for the agent CLI, added after its continue + skip-approvals defaults",
     )
@@ -253,6 +261,7 @@ export function registerWireCommand(program: Command): void {
         kickoff: boolean;
         claudeArgs?: string;
         agent?: string;
+        group?: string;
       }) => {
         await runCliAction(() =>
           runWire({
@@ -262,6 +271,7 @@ export function registerWireCommand(program: Command): void {
             kickoff: opts.kickoff,
             claudeArgs: opts.claudeArgs,
             agentType: parseAgentTypeFlag(opts.agent),
+            group: opts.group,
           }).then(() => undefined),
         );
       },

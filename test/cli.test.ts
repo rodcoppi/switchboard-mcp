@@ -426,6 +426,7 @@ describe("formatStatusTable", () => {
     },
     {
       name: "alpha",
+      group: "panorama",
       role: "API backend",
       status: "online",
       mcpConnected: true,
@@ -439,11 +440,13 @@ describe("formatStatusTable", () => {
     expect(formatStatusTable([], now)).toMatch(/No registered agents/);
   });
 
-  it("header NAME | ROLE | STATUS | MCP | UNREAD | LAST SEEN and rows sorted by name", () => {
+  it("header NAME | GROUP | ROLE | STATUS | MCP | UNREAD | LAST SEEN and rows sorted by name", () => {
     const lines = formatStatusTable(rows, now).split("\n");
-    expect(lines[0]).toMatch(/^NAME\s+ROLE\s+STATUS\s+MCP\s+UNREAD\s+LAST SEEN$/);
-    expect(lines[1]).toMatch(/^alpha\s+API backend\s+online\s+yes\s+2\s+2min ago$/);
-    expect(lines[2]).toMatch(/^beta\s+frontend\s+offline\s+no\s+0\s+3h ago$/);
+    expect(lines[0]).toMatch(/^NAME\s+GROUP\s+ROLE\s+STATUS\s+MCP\s+UNREAD\s+LAST SEEN$/);
+    expect(lines[1]).toMatch(/^alpha\s+panorama\s+API backend\s+online\s+yes\s+2\s+2min ago$/);
+    // beta has no group field — a record from before groups existed reads as
+    // "default" here rather than printing a blank column.
+    expect(lines[2]).toMatch(/^beta\s+default\s+frontend\s+offline\s+no\s+0\s+3h ago$/);
   });
 
   it("columns align (every row has cells at the same positions)", () => {
@@ -462,7 +465,7 @@ describe("formatStatusTable", () => {
       ],
       now,
     );
-    expect(table).toMatch(/a1\s+—/);
+    expect(table).toMatch(/a1\s+default\s+—/);
     expect(table).toContain("x".repeat(39) + "…");
     expect(table).not.toContain(longRole);
   });

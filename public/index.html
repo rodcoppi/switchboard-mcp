@@ -675,6 +675,55 @@
       color: var(--text-faint);
     }
 
+    /* Group tabs: one room at a time. A group is a wall — agents in different
+       groups cannot reach each other — so mixing their traffic in one scroll
+       would show a conversation that never happened. */
+    .group-tabs {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      flex-wrap: wrap;
+    }
+    .group-tab {
+      padding: 3px 10px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: transparent;
+      color: var(--text-faint);
+      font-family: var(--mono);
+      font-size: var(--fs-xs);
+      cursor: pointer;
+      transition: color 0.12s var(--ease), border-color 0.12s var(--ease);
+    }
+    .group-tab:hover { color: var(--text); border-color: var(--accent-line); }
+    .group-tab.active {
+      color: var(--accent);
+      border-color: var(--accent);
+      background: var(--accent-wash);
+    }
+    .group-tab .count { color: var(--text-faint); margin-left: 5px; }
+
+    /* Group header in the rail: the agents under it are the ones that can
+       actually talk to each other. */
+    .group-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 12px 4px;
+      font-family: var(--mono);
+      font-size: var(--fs-eyebrow);
+      text-transform: uppercase;
+      letter-spacing: 1.2px;
+      color: var(--text-faint);
+    }
+    .group-head::after {
+      content: "";
+      flex: 1;
+      height: 1px;
+      background: var(--border-soft);
+    }
+
     .filter-bar {
       flex: 0 0 auto;
       display: none;
@@ -1047,6 +1096,14 @@
               placeholder="e.g. API backend" />
           </div>
         </div>
+        <div>
+          <label class="launcher-label" for="launch-group">group</label>
+          <input class="launch-input" id="launch-group" name="group"
+            list="group-options" spellcheck="false"
+            placeholder="default — the agents it can talk to"
+            title="An agent can only message agents in the same group. Type a new name to start a group, or pick one you already have." />
+          <datalist id="group-options"></datalist>
+        </div>
         <div class="launcher-row">
           <label class="launcher-label" for="launch-agent-claude">agent</label>
           <div class="launcher-segmented" id="launch-agent"
@@ -1079,6 +1136,7 @@
       <div class="feed-head">
         <span class="eyebrow">Messages</span>
         <span class="sub">what your agents said to each other — newest at the bottom</span>
+        <div class="group-tabs" id="group-tabs"></div>
       </div>
       <div class="filter-bar" id="filter-bar">
         <span class="label">filtering by</span>
@@ -1134,6 +1192,7 @@
       messages: [],        // newest-first (matches GET /api/messages)
       msgIds: new Set(),   // dedup guard for message_created vs bootstrap
       filter: null,        // active agent-name filter, or null
+      group: null,         // active group tab, or null for "all groups"
       sse: null,
       uptimeBase: null,    // { seconds, at }  — server uptime + local anchor
     };
@@ -1307,6 +1366,34 @@
       return agent && agent.agentType === "codex" ? "codex" : "claude";
     }
 
+    // Groups (mirrors resolveGroup in src/server/store.ts). An agent registered
+    // before groups existed has no field and belongs with the rest of them.
+    const DEFAULT_GROUP = "default";
+
+    function groupOf(agent) {
+      return (agent && agent.group) || DEFAULT_GROUP;
+    }
+
+    /**
+     * Which room a message belongs to. Messages carry no group of their own —
+     * they do not need to: agents can only message inside their group, so the
+     * sender's group IS the conversation's. The operator is the exception, being
+     * in no group and able to reach anyone, so its messages belong to whoever it
+     * wrote to. Returns null when neither end is still registered (a removed
+     * agent's history), which no room should claim.
+     */
+    function messageGroup(m) {
+      const sender = state.agents.get(m.from);
+      if (sender) return groupOf(sender);
+      const recipient = state.agents.get(m.to);
+      return recipient ? groupOf(recipient) : null;
+    }
+
+    /** Every group that has an agent, sorted — the rooms that exist. */
+    function allGroups() {
+      return [...new Set([...state.agents.values()].map(groupOf))].sort();
+    }
+
     function renderAgents() {
       const container = $("#agents");
       container.textContent = "";
@@ -1322,10 +1409,57 @@
         renderHeader();
         return;
       }
-      for (const agent of agents) {
-        container.appendChild(buildAgentCard(agent));
+      // Grouped, under a header each: the rail then answers "who can talk to
+      // whom" by its shape, which is the question a group exists to settle. A
+      // single default group is not worth a header — it would just be a label
+      // over everything.
+      const groups = allGroups();
+      if (groups.length === 1) {
+        for (const agent of agents) container.appendChild(buildAgentCard(agent));
+      } else {
+        for (const group of groups) {
+          const inGroup = agents.filter((a) => groupOf(a) === group);
+          if (state.group && group !== state.group) continue;
+          container.appendChild(el("div", "group-head", group));
+          for (const agent of inGroup) container.appendChild(buildAgentCard(agent));
+        }
       }
       renderHeader();
+      // Both are derived from the agent set, so they belong to the one render
+      // that already runs whenever an agent appears, moves group or leaves.
+      renderGroupTabs();
+      renderGroupOptions();
+    }
+
+    function renderGroupTabs() {
+      const tabs = $("#group-tabs");
+      tabs.textContent = "";
+      const groups = allGroups();
+      // One room is not a choice.
+      if (groups.length < 2) return;
+
+      const mk = (label, value, count) => {
+        const btn = el("button", `group-tab${state.group === value ? " active" : ""}`);
+        btn.type = "button";
+        btn.appendChild(document.createTextNode(label));
+        if (count != null) btn.appendChild(el("span", "count", String(count)));
+        btn.title =
+          value === null
+            ? "Every group's traffic in one scroll"
+            : `Only what the ${value} group said — these agents can only talk to each other`;
+        btn.addEventListener("click", () => {
+          state.group = value;
+          renderAgents();
+          renderFeed();
+          renderRecipients();
+        });
+        return btn;
+      };
+
+      tabs.appendChild(mk("all", null));
+      for (const group of groups) {
+        tabs.appendChild(mk(group, group, [...state.agents.values()].filter((a) => groupOf(a) === group).length));
+      }
     }
 
     function buildAgentCard(agent) {
@@ -1720,6 +1854,7 @@
 
       for (let i = state.messages.length - 1; i >= 0; i--) {
         const m = state.messages[i];
+        if (state.group && messageGroup(m) !== state.group) continue;
         let row;
         if (m.broadcastId) {
           if (seen.has(m.broadcastId)) continue;
@@ -1873,10 +2008,19 @@
       const sel = $("#recipient");
       const prev = sel.value;
       sel.textContent = "";
-      const optAll = el("option", null, "all (broadcast)");
+      // You are the operator: you reach every agent, groups do not wall you off.
+      // But the list follows the room you are READING, and the broadcast says
+      // which room it will hit — from inside "panorama", "all" meaning every
+      // project on the machine would be a trap.
+      const optAll = el(
+        "option",
+        null,
+        state.group ? `everyone in ${state.group}` : "all (broadcast)",
+      );
       optAll.value = "all";
       sel.appendChild(optAll);
-      for (const agent of sortedAgents()) {
+      const agents = sortedAgents().filter((a) => !state.group || groupOf(a) === state.group);
+      for (const agent of agents) {
         const label = agent.role ? `${agent.name} — ${agent.role}` : agent.name;
         const opt = el("option", null, label);
         opt.value = agent.name;
@@ -1884,6 +2028,17 @@
       }
       const hasPrev = [...sel.options].some((o) => o.value === prev);
       sel.value = hasPrev ? prev : "all";
+    }
+
+    /** The datalist behind the launcher's group field: the rooms you have. */
+    function renderGroupOptions() {
+      const list = $("#group-options");
+      list.textContent = "";
+      for (const group of allGroups()) {
+        const opt = el("option");
+        opt.value = group;
+        list.appendChild(opt);
+      }
     }
 
     function renderFilterBar() {
@@ -2148,7 +2303,13 @@
         const res = await fetch("/api/messages", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ to, body }),
+          // A broadcast is scoped to the room on screen. Only then: a direct
+          // message needs no group, and "all groups" means all of them.
+          body: JSON.stringify({
+            to,
+            body,
+            ...(to === "all" && state.group ? { group: state.group } : {}),
+          }),
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok || !data.ok) {
@@ -2185,6 +2346,9 @@
       }
       const name = $("#launch-name").value.trim();
       const role = $("#launch-role").value.trim();
+      // Empty → the hub decides: it keeps the group of an agent coming back, and
+      // puts a brand new one in the default group. Sending "" would be a claim.
+      const group = $("#launch-group").value.trim();
       const btn = $("#launch-btn");
       const prevLabel = btn.textContent;
       btn.disabled = true;
@@ -2200,6 +2364,7 @@
         };
         if (name) payload.name = name;
         if (role) payload.role = role;
+        if (group) payload.group = group;
         const res = await fetch("/api/agents/launch", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -2400,6 +2565,10 @@
       // reason rename does — it feeds the same ^[a-z0-9][a-z0-9-]{1,30}$ hub rule.
       $("#launcher").addEventListener("submit", launchAgent);
       bindAgentNameSanitizer($("#launch-name"));
+      // A group name is an address too, under the same rule as an agent's, so
+      // it gets the same treatment: typing "Chefe de Redes" reads back as
+      // "chefe-de-redes" rather than bouncing off the hub.
+      bindAgentNameSanitizer($("#launch-group"));
 
       // Dir picker wiring (the launcher form's "Browse…" panel).
       $("#dirpicker-browse").addEventListener("click", dirpickerOpen);

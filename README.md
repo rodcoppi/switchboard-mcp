@@ -261,6 +261,29 @@ one adapter (`src/shared/agent-types.ts`):
 Agents registered before this feature existed have no recorded type and are treated as Claude
 Code — which is what they are.
 
+### Groups — keep one project's agents out of another's
+
+Every agent belongs to a group, and a group is a wall: an agent can only message
+agents in the same group, `list_agents` shows it nobody else, and its broadcast stops at the
+group's edge. Run one project's agents in `panorama` and another's in `site` and neither can
+wake the other, whether you slipped or an agent did.
+
+```bash
+switchboard start alpha --dir ~/projects/api --group panorama
+switchboard wire --group site        # adopt the current folder into another group
+switchboard status                   # the GROUP column tells you who talks to whom
+```
+
+In the dashboard, the **Launch agent** form has a group field, and the tabs above the
+transcript switch rooms: pick `panorama` and you read that group's conversation alone. A
+broadcast you send from there reaches that group and stops.
+
+Leave `--group` off and nothing changes: the agent keeps the group it already had, and a new
+one joins `default`, where every agent you have today already lives. Re-running `start` or
+`wire` without the flag never moves an agent out of its group.
+
+You are the operator, so no wall applies to you: you can message any agent from the dashboard.
+
 ### Mentions — delegate with `%name`
 
 Inside any agent's window, reference another agent as **`%<name>`** and it becomes a

@@ -155,6 +155,12 @@ export interface LaunchInput {
    */
   agentType?: AgentType;
   /**
+   * Which group the launched agent joins — the set of agents it is allowed to
+   * talk to. Omitted preserves the group of an agent being relaunched, and puts
+   * a brand new one in DEFAULT_GROUP.
+   */
+  group?: string;
+  /**
    * true → after a successful launch, pop a WINDOWS terminal window attached
    * to the agent's tmux session (WSL interop; best-effort — a launch never
    * fails because a window could not open). Owner feedback: an agent running
@@ -393,6 +399,7 @@ export function createLauncher(options: LauncherOptions): Launcher {
         cwd,
         tmuxSession: session,
         agentType: descriptor.type, // always stated → a relaunch can switch type
+        group: input.group, // undefined → preserve the stored group (same rule)
       });
     } catch (err) {
       throw new LaunchError((err as Error).message);

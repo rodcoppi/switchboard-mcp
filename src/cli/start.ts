@@ -355,6 +355,12 @@ export interface StartOptions {
   claudeArgs?: string;
   /** Which agent CLI to open: claude (default) | codex. */
   agentType?: AgentType;
+  /**
+   * The group this agent joins — who it is allowed to talk to. Omitted keeps
+   * the group an existing agent already has, and puts a new one in the default
+   * group.
+   */
+  group?: string;
   // -- injectables (index.ts uses the defaults; tests override) --------------
   hubUrl?: string;
   /** Config + permissions-reminder marker dir (default ~/.switchboard). */
@@ -680,6 +686,11 @@ export async function runAgentSession(options: AgentSessionOptions): Promise<Sta
     // reopen relaunches the same one (start/wire always state it — the flag
     // has a default — so this never silently preserves a stale type).
     agentType: descriptor.type,
+    // Unlike agentType, this is left undefined when the flag is absent, so the
+    // store PRESERVES the group: re-running `start`/`wire` on an agent must not
+    // drop it out of its project's room and back into `default`, where it could
+    // suddenly reach everyone.
+    group: options.group,
   });
   const token = registration.token;
 
@@ -865,6 +876,13 @@ export function registerStartCommand(program: Command): void {
       `which coding agent CLI to open: ${AGENT_TYPES.join(" | ")}`,
       DEFAULT_AGENT_TYPE,
     )
+    // NO default, same reason as --role: omitted must PRESERVE the group of an
+    // agent that is coming back, not move it to the default group.
+    .option(
+      "--group <group>",
+      "the group this agent talks in — it can only message agents in the same group " +
+        "(default: keeps its current group, or \"default\" for a new agent)",
+    )
     .option(
       "--claude-args <args>",
       "extra arguments for the agent CLI (single/double quotes group)",
@@ -878,6 +896,7 @@ export function registerStartCommand(program: Command): void {
           kickoff: boolean;
           claudeArgs?: string;
           agent?: string;
+          group?: string;
         },
       ) => {
         await runCliAction(() =>
@@ -890,6 +909,7 @@ export function registerStartCommand(program: Command): void {
             // Validated HERE (not deep in the core) so a typo fails before any
             // HTTP, with a message naming both options.
             agentType: parseAgentTypeFlag(opts.agent),
+            group: opts.group,
           }).then(() => undefined),
         );
       },

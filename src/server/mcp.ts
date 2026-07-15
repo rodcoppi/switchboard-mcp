@@ -33,7 +33,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { toPublicAgent, type Config, type OnMessage } from "../shared/types.js";
 import type { Logger } from "./log.js";
-import { generateAgentToken, type Store } from "./store.js";
+import { generateAgentToken, resolveGroup, type Store } from "./store.js";
 import type { PairRateLimiter } from "./ratelimit.js";
 import {
   EventBus,
@@ -279,10 +279,14 @@ export function createMcpEndpoint(options: McpOptions): McpEndpoint {
         bus.emit({ type: "agent_updated", payload: toPublicAgent(updated) });
         log.info(`[mcp] join: session ${sessionId} → agent ${name}.`);
 
+        // The agent meets its group here and nothing beyond it: these are the
+        // only names it can message, so they are the only ones worth naming.
+        const group = resolveGroup(updated.group);
         return jsonResult({
           ok: true,
+          group,
           agents: store
-            .listAgents()
+            .listAgentsInGroup(group)
             .map((a) => ({ name: a.name, role: a.role, status: a.status })),
           etiquette: ETIQUETTE,
           // Only on on-the-fly creation / legacy claim (PRD 9.1 v1.1); never
@@ -384,8 +388,11 @@ export function createMcpEndpoint(options: McpOptions): McpEndpoint {
             body: m.body,
             created_at: m.createdAt,
           })),
+          // Presence of your own group only — the rest of the board is none of
+          // this agent's business and it could not message them anyway. The
+          // caller itself stays in the list, as it always has (PRD 9.3).
           agents_online: store
-            .listAgents()
+            .listAgentsInGroup(resolveGroup(store.getAgent(name)?.group))
             .filter((a) => a.status === "online")
             .map((a) => a.name),
         });
@@ -404,9 +411,18 @@ export function createMcpEndpoint(options: McpOptions): McpEndpoint {
         const name = agentForSession(extra.sessionId);
         if (name) touchAgent(name);
 
+        // Joined → only your own group, the same names send_message will
+        // accept. Showing an agent you cannot message would just invite you to
+        // try. Not joined → the whole board, which is what it has always
+        // returned: such a session has no identity yet, so there is no group to
+        // filter by, and it cannot send anything until it joins anyway.
+        const self = name ? store.getAgent(name) : undefined;
+        const agents = self ? store.listAgentsInGroup(resolveGroup(self.group)) : store.listAgents();
+
         return jsonResult({
           ok: true,
-          agents: store.listAgents().map((a) => ({
+          ...(self ? { group: resolveGroup(self.group) } : {}),
+          agents: agents.map((a) => ({
             name: a.name,
             role: a.role,
             status: a.status,

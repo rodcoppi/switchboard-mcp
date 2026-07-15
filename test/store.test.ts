@@ -303,6 +303,104 @@ describe("agents", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Groups: a wall, not a view. An agent may only reach its own group, which is
+// what stops one project's agents from waking another's.
+// ---------------------------------------------------------------------------
+
+describe("groups", () => {
+  function registerIn(store: Store, name: string, group?: string) {
+    return store.registerAgent({
+      name,
+      tmuxSession: `sb-${name}`,
+      cwd: `/tmp/${name}`,
+      ...(group === undefined ? {} : { group }),
+    });
+  }
+
+  it("an agent with no group belongs to the default group", () => {
+    const store = newStore();
+    const agent = registerIn(store, "legacy");
+    // Absent, not "default": the snapshot stays free of a field that carries no
+    // information, exactly like agentType.
+    expect(agent.group).toBeUndefined();
+    expect(store.listAgentsInGroup("default").map((a) => a.name)).toEqual(["legacy"]);
+  });
+
+  it("agents in the same group reach each other; agents in different groups do not", () => {
+    const store = newStore();
+    registerIn(store, "alpha", "panorama");
+    registerIn(store, "beta", "panorama");
+    registerIn(store, "gamma", "site");
+
+    expect(store.canReach("alpha", "beta")).toBe(true);
+    expect(store.canReach("alpha", "gamma")).toBe(false);
+    expect(store.canReach("gamma", "alpha")).toBe(false);
+  });
+
+  it("the operator is in no group and reaches everyone", () => {
+    const store = newStore();
+    registerIn(store, "alpha", "panorama");
+    registerIn(store, "gamma", "site");
+    expect(store.canReach("operator", "alpha")).toBe(true);
+    expect(store.canReach("operator", "gamma")).toBe(true);
+  });
+
+  it("a legacy agent and an explicitly-default one are in the same room", () => {
+    const store = newStore();
+    registerIn(store, "legacy");
+    registerIn(store, "stated", "default");
+    expect(store.canReach("legacy", "stated")).toBe(true);
+  });
+
+  it("re-registering without a group PRESERVES it (a restart must not escape the room)", () => {
+    const store = newStore();
+    registerIn(store, "alpha", "panorama");
+    const again = store.registerAgent({ name: "alpha", tmuxSession: "sb-alpha", cwd: "/tmp/a" });
+    expect(again.group).toBe("panorama");
+    // Otherwise a plain `switchboard start alpha` would drop it into default,
+    // where it could suddenly message every agent on the machine.
+    registerIn(store, "gamma", "site");
+    expect(store.canReach("alpha", "gamma")).toBe(false);
+  });
+
+  it("re-registering WITH a group moves the agent", () => {
+    const store = newStore();
+    registerIn(store, "alpha", "panorama");
+    expect(registerIn(store, "alpha", "site").group).toBe("site");
+  });
+
+  it("a rename keeps the agent in its group", () => {
+    const store = newStore();
+    registerIn(store, "alpha", "panorama");
+    registerIn(store, "beta", "panorama");
+    store.renameAgent("alpha", "alpha2");
+    expect(store.canReach("alpha2", "beta")).toBe(true);
+  });
+
+  it("rejects a group name that is not a valid address", () => {
+    const store = newStore();
+    expect(() => registerIn(store, "alpha", "Chefe de Redes")).toThrow(/Invalid group name/);
+  });
+
+  it("listGroups reports every room that has an agent, legacy records included", () => {
+    const store = newStore();
+    registerIn(store, "alpha", "panorama");
+    registerIn(store, "gamma", "site");
+    registerIn(store, "legacy");
+    expect(store.listGroups()).toEqual(["default", "panorama", "site"]);
+  });
+
+  it("the group survives a reboot (snapshot round-trip)", () => {
+    const store = newStore();
+    registerIn(store, "alpha", "panorama");
+    registerIn(store, "gamma", "site");
+    const rebooted = newStore();
+    expect(rebooted.getAgent("alpha")?.group).toBe("panorama");
+    expect(rebooted.canReach("alpha", "gamma")).toBe(false);
+  });
+});
+
 describe("capability token (addendum v1.1)", () => {
   const TOKEN_RE = /^[0-9a-f]{64}$/; // crypto.randomBytes(32).toString("hex")
 

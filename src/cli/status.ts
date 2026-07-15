@@ -3,6 +3,7 @@
 // GET /api/agents. Clear error when the hub is down.
 
 import type { Command } from "commander";
+import { resolveGroup } from "../server/store.js";
 import {
   checkHubHealth,
   defaultHubUrl,
@@ -19,6 +20,8 @@ import {
  */
 export interface StatusRow {
   name: string;
+  /** Absent = a record written before groups existed; it reads as DEFAULT_GROUP. */
+  group?: string;
   role: string;
   status: string;
   mcpConnected: boolean;
@@ -27,7 +30,10 @@ export interface StatusRow {
   tmuxSession: string;
 }
 
-const HEADERS = ["NAME", "ROLE", "STATUS", "MCP", "UNREAD", "LAST SEEN"] as const;
+// GROUP sits right after NAME: it is the answer to "who does this one talk to",
+// which is the second thing you ask about an agent and, since groups are a wall,
+// the difference between "quiet" and "cannot reach anyone".
+const HEADERS = ["NAME", "GROUP", "ROLE", "STATUS", "MCP", "UNREAD", "LAST SEEN"] as const;
 const MAX_ROLE_WIDTH = 40;
 
 function truncate(text: string, max: number): string {
@@ -49,6 +55,7 @@ export function formatStatusTable(rows: StatusRow[], nowMs: number = Date.now())
     .sort((a, b) => a.name.localeCompare(b.name))
     .map((row) => [
       row.name,
+      resolveGroup(row.group),
       truncate(row.role === "" ? "—" : row.role, MAX_ROLE_WIDTH),
       row.status,
       row.mcpConnected ? "yes" : "no",

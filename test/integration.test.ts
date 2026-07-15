@@ -36,11 +36,21 @@ function api(pathname: string): string {
   return `http://127.0.0.1:${hub.port}${pathname}`;
 }
 
-async function registerAgent(name: string, role = `role of ${name}`): Promise<string> {
+async function registerAgent(
+  name: string,
+  role = `role of ${name}`,
+  group?: string,
+): Promise<string> {
   const res = await fetch(api("/api/agents/register"), {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ name, role, cwd: `/tmp/${name}`, tmuxSession: `sb-${name}` }),
+    body: JSON.stringify({
+      name,
+      role,
+      cwd: `/tmp/${name}`,
+      tmuxSession: `sb-${name}`,
+      ...(group === undefined ? {} : { group }),
+    }),
   });
   expect(res.status).toBe(201);
   const body = (await res.json()) as {
@@ -187,6 +197,111 @@ afterEach(async () => {
   }
   await hub.close();
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// ---------------------------------------------------------------------------
+// Groups over the real MCP tools. The wall has to hold HERE — the store knowing
+// the rule is worth nothing if send_message does not ask it.
+// ---------------------------------------------------------------------------
+
+describe("groups (the wall, over MCP)", () => {
+  it("an agent cannot message, see, or broadcast to another group", async () => {
+    await registerAgent("alpha", "backend", "panorama");
+    await registerAgent("beta", "frontend", "panorama");
+    await registerAgent("outsider", "other project", "site");
+
+    const alpha = await joinAs("alpha");
+
+    // join reports the room and only the room.
+    const joined = await callTool(alpha, "join", {
+      agent_name: "alpha",
+      token: tokens.get("alpha"),
+    });
+    expect(joined.group).toBe("panorama");
+    expect(joined.agents.map((a: any) => a.name).sort()).toEqual(["alpha", "beta"]);
+
+    // list_agents shows the room only. An agent it cannot message is an agent
+    // it should never be tempted to try.
+    const listed = await callTool(alpha, "list_agents", {});
+    expect(listed.agents.map((a: any) => a.name).sort()).toEqual(["alpha", "beta"]);
+
+    // Same group → delivered.
+    const inside = await callTool(alpha, "send_message", { to: "beta", message: "ok" });
+    expect(inside.ok).toBe(true);
+
+    // Different group → refused, and reported as UNKNOWN: from inside panorama
+    // that name does not exist. The error names who it CAN use, so the model's
+    // retry is a correct one instead of a workaround attempt.
+    const across = await callTool(alpha, "send_message", { to: "outsider", message: "hi" });
+    expect(across.ok).toBe(false);
+    expect(across.error).toContain('Unknown recipient: "outsider"');
+    expect(across.error).toContain("You can message: beta");
+    expect(across.error).not.toContain("forbidden");
+
+    // Nothing was written for the outsider.
+    const outsiderClient = await joinAs("outsider");
+    const outsiderInbox = await callTool(outsiderClient, "check_messages", {});
+    expect(outsiderInbox.messages).toEqual([]);
+  });
+
+  it('"all" stops at the group edge — the loudest hole there could be', async () => {
+    await registerAgent("alpha", "backend", "panorama");
+    await registerAgent("beta", "frontend", "panorama");
+    await registerAgent("outsider", "other project", "site");
+
+    const alpha = await joinAs("alpha");
+    const sent = await callTool(alpha, "send_message", { to: "all", message: "heads up" });
+    expect(sent.ok).toBe(true);
+
+    const beta = await joinAs("beta");
+    expect((await callTool(beta, "check_messages", {})).messages).toHaveLength(1);
+
+    const outsiderClient = await joinAs("outsider");
+    expect((await callTool(outsiderClient, "check_messages", {})).messages).toEqual([]);
+  });
+
+  it("agents_online reports the group's presence, not the machine's", async () => {
+    await registerAgent("alpha", "backend", "panorama");
+    await registerAgent("beta", "frontend", "panorama");
+    await registerAgent("outsider", "other", "site");
+    // Presence is normally derived by the tmux poller; set it directly here, as
+    // the poller would. Both rooms are lit, which is the whole point: an empty
+    // agents_online would make this assertion pass while proving nothing.
+    for (const name of ["alpha", "beta", "outsider"]) {
+      hub.store.updateAgent(name, { status: "online" });
+    }
+
+    const alpha = await joinAs("alpha");
+    const checked = await callTool(alpha, "check_messages", {});
+    expect(checked.agents_online.sort()).toEqual(["alpha", "beta"]);
+    expect(checked.agents_online).not.toContain("outsider");
+  });
+
+  it("a broadcast alone in its group is refused, and says why", async () => {
+    await registerAgent("alpha", "backend", "panorama");
+    await registerAgent("outsider", "other", "site");
+    const alpha = await joinAs("alpha");
+    const sent = await callTool(alpha, "send_message", { to: "all", message: "anyone?" });
+    expect(sent.ok).toBe(false);
+    expect(sent.error).toContain("no other agent is in your group");
+  });
+
+  it("the operator is above the groups and reaches every agent", async () => {
+    await registerAgent("alpha", "backend", "panorama");
+    await registerAgent("outsider", "other", "site");
+
+    // The human sending from the dashboard: no group, reaches both.
+    for (const to of ["alpha", "outsider"]) {
+      const res = await fetch(api("/api/messages"), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ to, body: "from the human" }),
+      });
+      expect(res.status).toBe(201);
+    }
+    const outsiderClient = await joinAs("outsider");
+    expect((await callTool(outsiderClient, "check_messages", {})).messages).toHaveLength(1);
+  });
 });
 
 describe("alpha → beta flow via MCP", () => {

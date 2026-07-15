@@ -29,7 +29,7 @@ import {
   type SseEvent,
 } from "../shared/types.js";
 import type { Logger } from "./log.js";
-import type { Store } from "./store.js";
+import { GROUP_NAME_RE, resolveGroup, type Store } from "./store.js";
 // Value imports for the instanceof mapping and the /api/fs/dirs path
 // translation below. No runtime cycle: launcher.ts imports this module with
 // `import type` only (erased at compile time).
@@ -94,8 +94,31 @@ export interface RecipientError {
 }
 
 /**
+ * Everyone `from` is allowed to message: its own group, minus itself. The
+ * operator is in no group and owns the board, so it reaches every agent.
+ * Sorted, because these names go into error text a model reads.
+ */
+export function reachableFrom(store: Store, from: string): string[] {
+  const all = store.listAgents().filter((a) => a.name !== from);
+  if (from === "operator") return all.map((a) => a.name).sort();
+  const sender = store.getAgent(from);
+  if (!sender) return [];
+  return all
+    .filter((a) => resolveGroup(a.group) === resolveGroup(sender.group))
+    .map((a) => a.name)
+    .sort();
+}
+
+/**
  * Validates the recipient. Returns a {code, error} object, or null when valid.
- * "all" requires at least one registered agent other than the sender.
+ * "all" requires at least one reachable agent.
+ *
+ * This is where the group wall stands, because it is the one chokepoint both
+ * the MCP send_message and the REST POST /api/messages pass through. An agent
+ * outside the sender's group is reported as UNKNOWN rather than forbidden: from
+ * inside the group it does not exist, and a model that is told "this one exists
+ * but is off limits" tries to work around the limit. The names it can actually
+ * use come back with the error, so the retry is a correct one.
  */
 export function validateRecipient(
   store: Store,
@@ -114,26 +137,26 @@ export function validateRecipient(
       error: `You cannot send a message to yourself ("${to}" is your own name).`,
     };
   }
+
+  const reachable = reachableFrom(store, from);
   if (to === "all") {
-    const others = store.listAgents().filter((a) => a.name !== from);
-    if (others.length === 0) {
+    if (reachable.length === 0) {
       return {
         code: "invalid",
         error:
-          `Broadcast has no recipients: no other agent is registered on the network. ` +
+          `Broadcast has no recipients: no other agent is in your group. ` +
           `Use the list_agents tool to see who is available before sending.`,
       };
     }
     return null;
   }
-  if (!store.getAgent(to)) {
-    const names = store.listAgents().map((a) => a.name);
+  if (!reachable.includes(to)) {
     return {
       code: "unknown_recipient",
       error:
-        `Unknown recipient: "${to}". Registered agents: ` +
-        `${names.length > 0 ? names.join(", ") : "(none)"}. ` +
-        `Use the list_agents tool to find who is on the network, or "all" for broadcast.`,
+        `Unknown recipient: "${to}". You can message: ` +
+        `${reachable.length > 0 ? reachable.join(", ") : "(nobody — no other agent is in your group)"}. ` +
+        `Use the list_agents tool to find who is on the network, or "all" to reach all of them.`,
     };
   }
   return null;
@@ -188,12 +211,24 @@ export function deliverMessage(
   store: Store,
   bus: EventBus,
   onMessage: OnMessage,
-  input: { from: string; to: string; body: string },
+  input: { from: string; to: string; body: string; group?: string },
 ): DeliverResult {
   const broadcastId = input.to === "all" ? ulid() : null;
+  // "all" means everyone the sender is ALLOWED to reach, which for an agent is
+  // its own group. A broadcast that leaked into other groups would be the one
+  // hole in the wall, and the loudest possible one: it wakes every agent on the
+  // machine.
+  //
+  // The operator reaches everybody, so for the human "all" is the whole board —
+  // unless it says which group it means. The dashboard always says, because it
+  // shows one room at a time and a broadcast that jumped from the room you are
+  // reading to every project on the machine is precisely the accident groups
+  // exist to prevent.
   const recipients: Agent[] =
     input.to === "all"
-      ? store.listAgents().filter((a) => a.name !== input.from)
+      ? reachableFrom(store, input.from)
+          .map((name) => store.getAgent(name)!)
+          .filter((a) => input.group === undefined || resolveGroup(a.group) === input.group)
       : [store.getAgent(input.to)!];
 
   const messages: Message[] = [];
@@ -354,11 +389,33 @@ export function createApiRouter(options: ApiOptions): express.Router {
       res.status(400).json({ ok: false, error: sizeError });
       return;
     }
+    // Optional, and only meaningful with to:"all": scopes the human's broadcast
+    // to one group instead of the whole board (see deliverMessage).
+    const group = raw.group;
+    if (group !== undefined && (typeof group !== "string" || !GROUP_NAME_RE.test(group))) {
+      res.status(400).json({
+        ok: false,
+        error: `Invalid group: "${String(group)}" is not a group name.`,
+      });
+      return;
+    }
+    if (typeof group === "string" && store.listAgentsInGroup(group).length === 0) {
+      res.status(404).json({
+        ok: false,
+        error: `Unknown group: "${group}". No agent belongs to it.`,
+      });
+      return;
+    }
 
     // No pair rate limit here: section 14 is the anti-loop layer BETWEEN
     // AGENTS; "operator" is the human, who has the dashboard mute/visibility
     // as their own control plane.
-    const result = deliverMessage(store, bus, onMessage, { from: "operator", to, body });
+    const result = deliverMessage(store, bus, onMessage, {
+      from: "operator",
+      to,
+      body,
+      group: group as string | undefined,
+    });
     log.info(`[api] operator → ${to}: message recorded (delivery=${result.delivery}).`);
     res.status(201).json({
       ok: true,
@@ -419,6 +476,7 @@ export function createApiRouter(options: ApiOptions): express.Router {
         name: raw.name,
         role: raw.role as string | undefined,
         agentType: raw.agentType as AgentType | undefined,
+        group: raw.group as string | undefined,
         cwd: (raw.cwd as string | undefined) ?? "",
         tmuxSession:
           (raw.tmuxSession as string | undefined) ?? config.tmuxSessionPrefix + raw.name,
@@ -491,6 +549,18 @@ export function createApiRouter(options: ApiOptions): express.Router {
       res.status(400).json({ ok: false, error: invalidAgentTypeMessage(raw.agentType) });
       return;
     }
+    // Rejected rather than defaulted, for the reason above and one more: a
+    // typo'd group is a group of one, and an agent alone in a room looks
+    // identical to a working install right up until it needs to reach someone.
+    if (raw.group !== undefined && !GROUP_NAME_RE.test(String(raw.group))) {
+      res.status(400).json({
+        ok: false,
+        error:
+          `Invalid group name: "${String(raw.group)}". Use lowercase letters, digits and ` +
+          `hyphens (2 to 31 characters, starting with a letter or digit).`,
+      });
+      return;
+    }
 
     try {
       const result = await launcher.launchAgent({
@@ -500,6 +570,7 @@ export function createApiRouter(options: ApiOptions): express.Router {
         continueConversation: (raw.continue as boolean | undefined) ?? false,
         openTerminal: (raw.openTerminal as boolean | undefined) ?? false,
         agentType: raw.agentType as AgentType | undefined,
+        group: raw.group as string | undefined,
       });
       log.info(
         `[api] launch: agent ${result.agent.name} launched from the dashboard ` +

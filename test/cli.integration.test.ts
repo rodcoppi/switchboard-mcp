@@ -369,8 +369,9 @@ describe.skipIf(!hasTmux)("CLI Phase 4 + real hub + real tmux", () => {
     out = [];
     await runStatus({ hubUrl: hub.url, out: outFn });
     const table = out.join("\n");
-    expect(table).toMatch(/NAME\s+ROLE\s+STATUS\s+MCP\s+UNREAD\s+LAST SEEN/);
-    expect(table).toMatch(new RegExp(`${name}\\s+test role\\s+\\w+\\s+no\\s+1\\s+`));
+    expect(table).toMatch(/NAME\s+GROUP\s+ROLE\s+STATUS\s+MCP\s+UNREAD\s+LAST SEEN/);
+    // No --group passed → the agent lands in the default group.
+    expect(table).toMatch(new RegExp(`${name}\\s+default\\s+test role\\s+\\w+\\s+no\\s+1\\s+`));
   }, 20_000);
 
   it("down: kills ALL live sessions (aggregated confirmation with --yes) and does NOT kill the hub", async () => {
