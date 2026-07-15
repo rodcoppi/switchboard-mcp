@@ -16,6 +16,8 @@
 // This degrades, it never breaks: outside WSL, or with powershell.exe missing,
 // the caller falls back to the dashboard's own folder browser.
 
+import fs from "node:fs";
+import os from "node:os";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
@@ -23,6 +25,36 @@ const execFileAsync = promisify(execFile);
 
 /** Marker the script prints when the user closes the dialog with Cancel. */
 export const PICK_CANCELLED = "<<switchboard-cancelled>>";
+
+/**
+ * Where PowerShell 7 installs itself. Worth looking for by hand: it is not on
+ * the PATH of a WSL shell unless the user put it there, and it is the whole
+ * difference between the two dialogs below.
+ */
+export const PWSH_PATHS = [
+  "/mnt/c/Program Files/PowerShell/7/pwsh.exe",
+  "/mnt/c/Program Files/PowerShell/6/pwsh.exe",
+];
+
+/**
+ * Picks the PowerShell to run the dialog with, and it decides which DIALOG the
+ * user gets — the same FolderBrowserDialog class renders very differently:
+ *
+ *   - powershell.exe is 5.1 on .NET Framework, whose FolderBrowserDialog is the
+ *     Windows-XP-era "Browse For Folder" tree. It opens on the Desktop showing
+ *     OneDrive and Libraries, and it will NOT navigate to a \\wsl$\… path — so
+ *     the folders the user actually wants are several clicks away, if they find
+ *     them at all;
+ *   - pwsh is PowerShell 7 on modern .NET, where the same class is the Vista+
+ *     IFileDialog: the Windows 11 dialog, with a path bar, the distro in the
+ *     sidebar, and UNC paths it can open on.
+ *
+ * So pwsh when it exists, powershell.exe when it does not — the old dialog beats
+ * no dialog, and the caller can always fall back to the in-page browser.
+ */
+export function findPowerShell(exists: (p: string) => boolean = fs.existsSync): string {
+  return PWSH_PATHS.find(exists) ?? "powershell.exe";
+}
 
 /**
  * The PowerShell that shows the dialog (pure — unit-tested).
@@ -43,7 +75,13 @@ export function pickFolderScript(startIn: string): string {
     "Add-Type -AssemblyName System.Windows.Forms",
     "$dialog = New-Object System.Windows.Forms.FolderBrowserDialog",
     "$dialog.Description = 'Switchboard — pick the folder the agent works in'",
+    // Modern .NET only, and harmless on 5.1 (guarded): it promotes Description
+    // from a label above the tree to the dialog's actual title.
+    "if ($dialog.PSObject.Properties['UseDescriptionForTitle']) { $dialog.UseDescriptionForTitle = $true }",
     "$dialog.ShowNewFolderButton = $false",
+    // Start on the agent's own world. The modern dialog opens right here; the
+    // legacy one ignores UNC and lands on the Desktop, which is one more reason
+    // findPowerShell prefers pwsh.
     `$dialog.SelectedPath = ${quoted}`,
     // The owner window: TopMost, so the dialog lands in front.
     "$owner = New-Object System.Windows.Forms.Form",
@@ -62,6 +100,19 @@ export interface PickFolderDeps {
   distro?: string;
   /** How long to wait for a human to browse before giving up. */
   timeoutMs?: number;
+  /** Which PowerShell to run (default: pwsh if installed — see findPowerShell). */
+  shell?: string;
+  /** The hub's home directory, where browsing starts (default: os.homedir()). */
+  homeDir?: string;
+}
+
+/**
+ * Windows spelling of a path inside the distro: /home/rod → \\wsl$\Ubuntu\home\rod.
+ * Used only to choose where the dialog OPENS; whatever comes back goes through
+ * wslpath, so this never has to be exact about anything else.
+ */
+export function toWslUnc(distro: string, dir: string): string {
+  return `\\\\wsl$\\${distro}${dir.replace(/\//g, "\\")}`;
 }
 
 export class PickError extends Error {
@@ -101,14 +152,28 @@ export async function pickWindowsFolder(
       return { stdout };
     });
 
-  const script = pickFolderScript(startIn ?? `\\\\wsl$\\${distro}\\home`);
+  // Where to open: whatever the form already points at, else the operator's own
+  // home INSIDE the distro — that is where the projects are. Not \\wsl$\<distro>
+  // root, which would make them walk down to home themselves.
+  //
+  // The form holds WSL paths ("/home/rod/projects"), and SelectedPath only
+  // speaks Windows, so a POSIX one is translated here. Without this, "resume
+  // where you were" would hand the dialog a path Windows cannot resolve and it
+  // would open wherever it liked.
+  const requested = startIn ?? (deps.homeDir ?? os.homedir());
+  const script = pickFolderScript(
+    requested.startsWith("/") ? toWslUnc(distro, requested) : requested,
+  );
+  const shell = deps.shell ?? findPowerShell();
 
   let stdout: string;
   try {
-    ({ stdout } = await exec("powershell.exe", ["-NoProfile", "-STA", "-Command", script]));
+    // -STA is required by Windows Forms on 5.1 and accepted by pwsh, which is
+    // STA already — one argv serves both.
+    ({ stdout } = await exec(shell, ["-NoProfile", "-STA", "-Command", script]));
   } catch (err) {
     const message = (err as NodeJS.ErrnoException).code === "ENOENT"
-      ? "powershell.exe was not found — the native dialog needs Windows interop."
+      ? `${shell} was not found — the native dialog needs Windows interop.`
       : `The native folder dialog failed: ${(err as Error).message}`;
     // Either way the caller can still offer its own browser, so this is a
     // fallback signal rather than a dead end.
