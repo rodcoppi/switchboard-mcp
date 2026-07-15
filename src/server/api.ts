@@ -772,6 +772,45 @@ export function createApiRouter(options: ApiOptions): express.Router {
     res.json({ ok: true, removed: name });
   });
 
+  // POST /api/agents/:name/group — body {group: "<group>"}. Moves an agent to
+  // another group, i.e. changes who it is allowed to talk to.
+  //
+  // Works on a RUNNING agent, unlike rename, and the difference is not an
+  // oversight. Rename must stop the agent because a live one holds
+  // SWITCHBOARD_AGENT_NAME in its session env and would re-join under the old
+  // name, undoing the change. Nothing does that to a group: the MCP session maps
+  // to the agent's NAME, join never touches the group of an agent that already
+  // exists, and every send re-reads the record — so the move takes effect on the
+  // agent's next message with no restart at all.
+  //
+  // The agent is not told. Its join response listed the peers it had then, so
+  // after a move it may still try an old one and get the ordinary
+  // "Unknown recipient … You can message: …" back, which is the self-correcting
+  // path that already exists. Nudging every moved agent would cost it a full
+  // turn to learn something its next send teaches for free.
+  router.post("/api/agents/:name/group", (req, res) => {
+    const name = req.params.name;
+    if (!store.getAgent(name)) {
+      res.status(404).json({ ok: false, error: `Unknown agent: "${name}".` });
+      return;
+    }
+    const group = ((req.body ?? {}) as Record<string, unknown>).group;
+    if (typeof group !== "string" || !GROUP_NAME_RE.test(group)) {
+      res.status(400).json({
+        ok: false,
+        error:
+          `Invalid body: expected {"group": "<group>"} — lowercase letters, digits and ` +
+          `hyphens (2 to 31 characters, starting with a letter or digit).`,
+      });
+      return;
+    }
+
+    const updated = store.updateAgent(name, { group });
+    bus.emit({ type: "agent_updated", payload: toPublicAgent(updated) });
+    log.info(`[api] agent ${name} moved to group ${group}.`);
+    res.json({ ok: true, agent: toPublicAgent(updated) });
+  });
+
   // POST /api/agents/:name/rename — body {name: "<newName>"}. Post-v1
   // sibling of DELETE above (dashboard ⋯ menu / `switchboard rename`).
   //

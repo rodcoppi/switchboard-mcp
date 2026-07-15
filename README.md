@@ -278,6 +278,12 @@ In the dashboard, the **Launch agent** form has a group field, and the tabs abov
 transcript switch rooms: pick `panorama` and you read that group's conversation alone. A
 broadcast you send from there reaches that group and stops.
 
+**Agents already running?** You don't have to relaunch them. Open the **⋯** menu on a card and
+pick **group…**; the name cell becomes a field with your existing groups behind it, and Enter
+moves the agent. It takes effect on that agent's next message, with no restart: unlike rename,
+which needs the agent stopped (a live one would re-join under its old name and undo it),
+nothing about a running session undoes a group change.
+
 Leave `--group` off and nothing changes: the agent keeps the group it already had, and a new
 one joins `default`, where every agent you have today already lives. Re-running `start` or
 `wire` without the flag never moves an agent out of its group.

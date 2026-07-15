@@ -1548,6 +1548,20 @@
           },
         ),
       );
+      // Works while the agent RUNS, unlike rename: nothing about a live session
+      // undoes a group change, so there is no reason to make you stop an agent
+      // to sort it into a project.
+      menu.appendChild(
+        menuItem(
+          "group-btn",
+          "group…",
+          `Move "${agent.name}" to another group — it can only message agents in the same one`,
+          () => {
+            closeMenus();
+            startGroupEdit(agent, name);
+          },
+        ),
+      );
       menu.appendChild(
         menuItem(
           `mute-toggle${agent.muted ? " muted" : ""}`,
@@ -1810,6 +1824,73 @@
         toast(`Agent "${name}" renamed to "${body.agent.name}" (history kept).`);
       } catch (err) {
         toast(`Rename failed: ${err && err.message ? err.message : err}`, "warn");
+      }
+    }
+
+    /**
+     * Move an agent to another group, editing in place where the rename editor
+     * works — the name cell. The input is backed by the same datalist as the
+     * launcher, so existing groups are one keystroke away and a new one is just
+     * typed. No blocking dialog, Enter commits, Esc cancels.
+     */
+    function startGroupEdit(agent, nameEl) {
+      const input = el("input", "agent-rename-input");
+      input.type = "text";
+      input.value = groupOf(agent);
+      input.spellcheck = false;
+      input.maxLength = 31;
+      input.setAttribute("list", "group-options");
+      input.title = "Group — Enter to confirm, Esc to cancel";
+      input.setAttribute("aria-label", `Group for agent ${agent.name}`);
+
+      let done = false;
+      function restore() {
+        if (done) return true;
+        done = true;
+        input.replaceWith(nameEl);
+        return false;
+      }
+      function confirm() {
+        const next = sanitizeAgentNameInput(input.value, false);
+        if (restore()) return;
+        if (next === "" || next === groupOf(agent)) return;
+        moveAgentToGroup(agent.name, next);
+      }
+
+      input.addEventListener("click", (ev) => ev.stopPropagation());
+      input.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter") confirm();
+        else if (ev.key === "Escape") restore();
+      });
+      input.addEventListener("blur", restore);
+      bindAgentNameSanitizer(input);
+
+      nameEl.replaceWith(input);
+      input.focus();
+      input.select();
+    }
+
+    async function moveAgentToGroup(name, group) {
+      try {
+        const res = await fetch(`/api/agents/${encodeURIComponent(name)}/group`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ group }),
+        });
+        const body = await res.json();
+        if (!res.ok || !body.ok) {
+          toast(`Could not move the agent: ${body.error || `HTTP ${res.status}`}`, "warn");
+          return;
+        }
+        // agent_updated arrives over SSE too; applying it here keeps the
+        // clicking tab snappy.
+        mergeAgent(body.agent);
+        renderAgents();
+        renderRecipients();
+        renderFeed(); // the transcript is filtered by group — the card just moved
+        toast(`"${name}" is now in the ${group} group.`);
+      } catch (err) {
+        toast(`Could not move the agent: ${err && err.message ? err.message : err}`, "warn");
       }
     }
 

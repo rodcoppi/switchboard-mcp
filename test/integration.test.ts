@@ -304,6 +304,54 @@ describe("groups (the wall, over MCP)", () => {
   });
 });
 
+describe("POST /api/agents/:name/group (sorting agents that are already running)", () => {
+  it("moves a RUNNING agent, and the wall follows on its very next message", async () => {
+    await registerAgent("alpha", "backend", "panorama");
+    await registerAgent("beta", "frontend", "panorama");
+    hub.store.updateAgent("alpha", { status: "online" });
+
+    const alpha = await joinAs("alpha");
+    // Same group at join time → reachable.
+    expect((await callTool(alpha, "send_message", { to: "beta", message: "1" })).ok).toBe(true);
+
+    // Moved while running and joined. Rename would refuse this with a 409; a
+    // group has nothing a live session can undo, and making the user stop an
+    // agent to sort it into a project would defeat the point.
+    const res = await fetch(api("/api/agents/alpha/group"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ group: "site" }),
+    });
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as any).agent.group).toBe("site");
+
+    // No re-join, no restart: the SAME live session is now walled off from the
+    // peer it could reach a moment ago, because every send re-reads the record.
+    const after = await callTool(alpha, "send_message", { to: "beta", message: "2" });
+    expect(after.ok).toBe(false);
+    expect(after.error).toContain('Unknown recipient: "beta"');
+  });
+
+  it("404 for an unknown agent, 400 for a group name that is not an address", async () => {
+    await registerAgent("alpha", "backend", "panorama");
+    const unknown = await fetch(api("/api/agents/nobody/group"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ group: "site" }),
+    });
+    expect(unknown.status).toBe(404);
+
+    const bad = await fetch(api("/api/agents/alpha/group"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ group: "Chefe de Redes" }),
+    });
+    expect(bad.status).toBe(400);
+    // Unchanged: a rejected move must not half-apply.
+    expect(hub.store.getAgent("alpha")?.group).toBe("panorama");
+  });
+});
+
 describe("alpha → beta flow via MCP", () => {
   it("join, send_message, SSE message_created, check_messages, JSONL and unread", async () => {
     await registerAgent("alpha");
