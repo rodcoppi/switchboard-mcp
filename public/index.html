@@ -1514,11 +1514,15 @@
         return;
       }
       // Grouped, under a header each: the rail then answers "who can talk to
-      // whom" by its shape, which is the question a group exists to settle. A
-      // single default group is not worth a header — it would just be a label
-      // over everything.
+      // whom" by its shape, which is the question a group exists to settle.
+      //
+      // The one case with no header is the install that never asked for groups:
+      // everyone in `default`, where a label over the whole rail says nothing.
+      // The moment you NAME a room, it gets its header even if it is the only
+      // one — hiding it made a group you had just created and filled look like
+      // it had vanished.
       const groups = allGroups();
-      if (groups.length === 1) {
+      if (groups.length === 1 && groups[0] === DEFAULT_GROUP) {
         for (const agent of agents) container.appendChild(buildAgentCard(agent));
       } else {
         for (const group of groups) {
