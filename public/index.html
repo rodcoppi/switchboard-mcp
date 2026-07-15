@@ -2785,6 +2785,49 @@
       }
     }
 
+    /**
+     * Browse… asks the hub to open the REAL Windows folder dialog — the one you
+     * already know how to use. The page cannot open it itself: no browser gives
+     * a page a folder's absolute path, so the hub opens it Windows-side and
+     * reads the answer (see src/server/winpicker.ts).
+     *
+     * The built-in browser below is the fallback, for a machine with no Windows
+     * to ask. Losing the native dialog must not cost you the ability to pick a
+     * folder at all.
+     */
+    async function browseForFolder() {
+      const btn = $("#dirpicker-browse");
+      const prev = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = "pick a folder…";
+      try {
+        const res = await fetch("/api/fs/pick", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          // Start where the form already points, so a second Browse resumes
+          // where you were rather than at the top again.
+          body: JSON.stringify({ startIn: $("#launch-dir").value.trim() || undefined }),
+        });
+        const body = await res.json();
+        if (body.ok) {
+          if (!body.cancelled) $("#launch-dir").value = body.path;
+          return;
+        }
+        if (body.fallback) {
+          toast(body.error, "warn");
+          dirpickerOpen(); // still pick a folder, just not natively
+          return;
+        }
+        toast(body.error || `Could not open the folder dialog (HTTP ${res.status}).`, "warn");
+      } catch (err) {
+        toast(`Could not open the folder dialog: ${err && err.message ? err.message : err}`, "warn");
+        dirpickerOpen();
+      } finally {
+        btn.disabled = false;
+        btn.textContent = prev;
+      }
+    }
+
     function dirpickerOpen() {
       $("#dirpicker").hidden = false;
       dirpickerLoad(null); // always starts at the hub's home directory
@@ -2918,7 +2961,7 @@
       });
 
       // Dir picker wiring (the launcher form's "Browse…" panel).
-      $("#dirpicker-browse").addEventListener("click", dirpickerOpen);
+      $("#dirpicker-browse").addEventListener("click", browseForFolder);
       $("#dirpicker-close").addEventListener("click", dirpickerClose);
       $("#dirpicker-select").addEventListener("click", () => {
         if (dirpickerState.path) $("#launch-dir").value = dirpickerState.path;

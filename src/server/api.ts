@@ -34,6 +34,7 @@ import { GROUP_NAME_RE, resolveGroup, type Store } from "./store.js";
 // translation below. No runtime cycle: launcher.ts imports this module with
 // `import type` only (erased at compile time).
 import { LaunchError, normalizeIncomingPath, type Launcher } from "./launcher.js";
+import { PickError, pickWindowsFolder } from "./winpicker.js";
 import {
   invalidAgentTypeMessage,
   isAgentType,
@@ -629,6 +630,51 @@ export function createApiRouter(options: ApiOptions): express.Router {
 
   // GET /api/fs/dirs?path=<abs> — the dashboard's folder browser (backs the
   // "Browse…" panel of the Launch agent form). Answers the SUBDIRECTORY NAMES
+  // POST /api/fs/pick — opens the NATIVE Windows folder dialog and answers with
+  // the WSL path the operator chose. Body {startIn?: "<path>"}.
+  //
+  // The hub opens it because a browser will not hand a page a folder's absolute
+  // path (see winpicker.ts) — the one thing the launcher needs is the one thing
+  // the sandbox withholds. Same interop as the terminal opener, same trust
+  // boundary: this reveals a path the operator picked themselves, on a hub bound
+  // to 127.0.0.1, next to an endpoint that already launches processes in any
+  // directory they name.
+  //
+  // 503 + fallback:true when there is no Windows to ask (plain Linux, no
+  // powershell.exe): the dashboard then opens its own folder browser, which is
+  // why this can never be a dead end. 408 when nobody answers the dialog.
+  router.post("/api/fs/pick", async (req, res) => {
+    const raw = (req.body ?? {}) as Record<string, unknown>;
+    const startIn = typeof raw.startIn === "string" && raw.startIn.trim() !== ""
+      ? raw.startIn.trim()
+      : undefined;
+    try {
+      const picked = await pickWindowsFolder(startIn);
+      if (picked === null) {
+        res.json({ ok: true, cancelled: true });
+        return;
+      }
+      log.info(`[api] folder picked in the Windows dialog: ${picked}`);
+      res.json({ ok: true, path: picked });
+    } catch (err) {
+      if (err instanceof PickError) {
+        res.status(err.unsupported ? 503 : 500).json({
+          ok: false,
+          error: err.message,
+          fallback: err.unsupported,
+        });
+        return;
+      }
+      // execFile's own timeout kills powershell and lands here: the dialog is
+      // still open on the desktop but nobody is listening for it any more.
+      res.status(408).json({
+        ok: false,
+        error: "The folder dialog was not answered in time. Click Browse again, or type the path.",
+        fallback: true,
+      });
+    }
+  });
+
   // of one absolute path: never files, never file contents; hidden
   // (dot-prefixed) entries excluded; sorted case-insensitively; capped at
   // FS_DIRS_CAP (truncated:true when the cap hits). `path` omitted → the
