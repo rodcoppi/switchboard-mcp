@@ -811,6 +811,39 @@ export function createApiRouter(options: ApiOptions): express.Router {
     res.json({ ok: true, agent: toPublicAgent(updated) });
   });
 
+  // POST /api/groups/:group/rename — body {name: "<newName>"}. Renames a group
+  // for every agent in it (Store.renameGroup moves them in one write, so the
+  // room can never end up split across two names).
+  //
+  // Merging is deliberate rather than blocked: renaming "site" to an existing
+  // "panorama" puts both sets of agents in one room, which is the obvious
+  // reading of the action and the only way to join two groups you already have.
+  router.post("/api/groups/:group/rename", (req, res) => {
+    const group = req.params.group;
+    const next = ((req.body ?? {}) as Record<string, unknown>).name;
+    if (typeof next !== "string" || next.length === 0) {
+      res.status(400).json({
+        ok: false,
+        error: `Invalid body: expected {"name": "<new group name>"} with a non-empty name.`,
+      });
+      return;
+    }
+
+    let members;
+    try {
+      members = store.renameGroup(group, next);
+    } catch (err) {
+      const message = (err as Error).message;
+      res.status(message.startsWith("Unknown group") ? 404 : 400).json({ ok: false, error: message });
+      return;
+    }
+    for (const agent of members) {
+      bus.emit({ type: "agent_updated", payload: toPublicAgent(agent) });
+    }
+    log.info(`[api] group ${group} renamed to ${next} (${members.length} agent(s)).`);
+    res.json({ ok: true, group: next, agents: members.map(toPublicAgent) });
+  });
+
   // POST /api/agents/:name/rename — body {name: "<newName>"}. Post-v1
   // sibling of DELETE above (dashboard ⋯ menu / `switchboard rename`).
   //

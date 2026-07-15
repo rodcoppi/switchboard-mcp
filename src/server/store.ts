@@ -388,6 +388,32 @@ export class Store {
     return this.listAgents().filter((a) => resolveGroup(a.group) === group);
   }
 
+  /**
+   * Renames a group: every member moves at once. Returns the agents as they
+   * now stand.
+   *
+   * The whole group is rewritten before ANY of it is persisted, because a
+   * half-applied rename is worse than none: the members left behind would keep
+   * the old name and the room would silently split in two, with each half
+   * unable to reach the other. Validation of the new name happens up front for
+   * the same reason.
+   */
+  renameGroup(from: string, to: string): Agent[] {
+    if (!GROUP_NAME_RE.test(to)) {
+      throw new Error(
+        `Invalid group name: "${to}". Use lowercase letters, digits and hyphens ` +
+          `(2 to 31 characters, starting with a letter or digit): ^[a-z0-9][a-z0-9-]{1,30}$`,
+      );
+    }
+    const members = this.listAgentsInGroup(from);
+    if (members.length === 0) {
+      throw new Error(`Unknown group: "${from}". No agent belongs to it.`);
+    }
+    for (const agent of members) agent.group = to;
+    this.saveAgentsSnapshot();
+    return members;
+  }
+
   /** Every group that currently has an agent in it, sorted for a stable UI. */
   listGroups(): string[] {
     return [...new Set(this.listAgents().map((a) => resolveGroup(a.group)))].sort();

@@ -391,6 +391,46 @@ describe("groups", () => {
     expect(store.listGroups()).toEqual(["default", "panorama", "site"]);
   });
 
+  it("renaming a group moves every member, and they still reach each other", () => {
+    const store = newStore();
+    registerIn(store, "alpha", "panorama");
+    registerIn(store, "beta", "panorama");
+    registerIn(store, "outsider", "site");
+
+    const moved = store.renameGroup("panorama", "radar");
+    expect(moved.map((a) => a.name).sort()).toEqual(["alpha", "beta"]);
+    expect(store.listAgentsInGroup("radar").map((a) => a.name).sort()).toEqual(["alpha", "beta"]);
+    expect(store.listAgentsInGroup("panorama")).toEqual([]);
+    // The room must not split: a half-applied rename would leave one member
+    // behind and quietly cut the group in two.
+    expect(store.canReach("alpha", "beta")).toBe(true);
+    expect(store.canReach("alpha", "outsider")).toBe(false);
+  });
+
+  it("a rejected group rename leaves every member untouched", () => {
+    const store = newStore();
+    registerIn(store, "alpha", "panorama");
+    registerIn(store, "beta", "panorama");
+    expect(() => store.renameGroup("panorama", "Nome Errado")).toThrow(/Invalid group name/);
+    expect(store.listAgentsInGroup("panorama").map((a) => a.name).sort()).toEqual(["alpha", "beta"]);
+  });
+
+  it("renaming a group onto an existing one merges them", () => {
+    const store = newStore();
+    registerIn(store, "alpha", "panorama");
+    registerIn(store, "gamma", "site");
+    store.renameGroup("site", "panorama");
+    // Merging is the obvious reading of the action, and the only way to join two
+    // groups you already have.
+    expect(store.canReach("alpha", "gamma")).toBe(true);
+  });
+
+  it("renaming a group nobody is in is an error, not a silent no-op", () => {
+    const store = newStore();
+    registerIn(store, "alpha", "panorama");
+    expect(() => store.renameGroup("ghost", "x2")).toThrow(/Unknown group/);
+  });
+
   it("the group survives a reboot (snapshot round-trip)", () => {
     const store = newStore();
     registerIn(store, "alpha", "panorama");

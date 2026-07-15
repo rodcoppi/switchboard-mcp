@@ -704,6 +704,90 @@
     }
     .group-tab .count { color: var(--text-faint); margin-left: 5px; }
 
+    .groups-open { margin-left: 8px; flex: none; }
+
+    /* The Groups panel. Drops under the feed header, over the transcript. */
+    .groups-panel {
+      flex: 0 0 auto;
+      max-height: 52vh;
+      overflow-y: auto;
+      padding: 12px 18px 14px;
+      background: var(--bg-elev);
+      border-bottom: 1px solid var(--accent-line);
+    }
+    .groups-panel[hidden] { display: none; }
+    .groups-head {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+    .groups-hint {
+      font-family: var(--sans);
+      font-size: var(--fs-xs);
+      color: var(--text-faint);
+    }
+    .groups-head .dirpicker-close { margin-left: auto; }
+
+    .groups-body { display: flex; flex-direction: column; gap: 12px; }
+    .groups-group {
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--bg-inset);
+      padding: 8px 10px 10px;
+    }
+    .groups-group-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 7px;
+    }
+    .groups-group-name {
+      font-family: var(--mono);
+      font-size: var(--fs-sm);
+      font-weight: 600;
+      color: var(--accent);
+    }
+    .groups-group-count { font-family: var(--mono); font-size: var(--fs-xs); color: var(--text-faint); }
+    .groups-rename {
+      margin-left: auto;
+      background: none;
+      border: none;
+      color: var(--text-faint);
+      font-family: var(--mono);
+      font-size: var(--fs-xs);
+      cursor: pointer;
+    }
+    .groups-rename:hover { color: var(--accent); text-decoration: underline; }
+
+    .groups-member {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 0;
+      font-family: var(--mono);
+      font-size: var(--fs-xs);
+    }
+    .groups-member + .groups-member { border-top: 1px solid var(--border-soft); }
+    .groups-member .name { color: var(--text); font-weight: 600; }
+    .groups-member .role { color: var(--text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .groups-member select {
+      margin-left: auto;
+      flex: none;
+      background: var(--bg-elev-2);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 2px 6px;
+      font-family: var(--mono);
+      font-size: var(--fs-xs);
+    }
+    .groups-member select:hover { border-color: var(--accent-line); }
+    .groups-empty { font-family: var(--sans); font-size: var(--fs-xs); color: var(--text-faint); padding: 2px 0; }
+
+    .groups-foot { display: flex; gap: 8px; align-items: center; margin-top: 12px; }
+    .groups-new-input { max-width: 220px; }
+
     /* Group header in the rail: the agents under it are the ones that can
        actually talk to each other. */
     .group-head {
@@ -1137,6 +1221,26 @@
         <span class="eyebrow">Messages</span>
         <span class="sub">what your agents said to each other — newest at the bottom</span>
         <div class="group-tabs" id="group-tabs"></div>
+        <button class="btn groups-open" id="groups-open" type="button"
+          title="See every group and move agents between them">Groups</button>
+      </div>
+
+      <!-- Groups panel: a group holds several agents, so it is managed in one
+           place where you can see all of them, not one text field per card. -->
+      <div class="groups-panel" id="groups-panel" hidden>
+        <div class="groups-head">
+          <span class="eyebrow">Groups</span>
+          <span class="groups-hint">An agent can only message agents in the same group.</span>
+          <button class="dirpicker-close" id="groups-close" type="button"
+            title="Close (Esc)">✕</button>
+        </div>
+        <div class="groups-body" id="groups-body"></div>
+        <div class="groups-foot">
+          <input class="launch-input groups-new-input" id="groups-new" spellcheck="false"
+            placeholder="new group name" maxlength="31" />
+          <button class="btn" id="groups-create" type="button"
+            title="Create the group — then move agents into it above">Create group</button>
+        </div>
       </div>
       <div class="filter-bar" id="filter-bar">
         <span class="label">filtering by</span>
@@ -1548,9 +1652,11 @@
           },
         ),
       );
-      // Works while the agent RUNS, unlike rename: nothing about a live session
-      // undoes a group change, so there is no reason to make you stop an agent
-      // to sort it into a project.
+      // Opens the Groups panel rather than editing here: a group is a container
+      // holding several agents, so it is managed where you can see all of them
+      // at once. (This used to turn the NAME cell into a group field, which put
+      // the group's name where the agent's name lives — confusing, and it left
+      // no way to rename a group or put a second agent in one.)
       menu.appendChild(
         menuItem(
           "group-btn",
@@ -1558,7 +1664,7 @@
           `Move "${agent.name}" to another group — it can only message agents in the same one`,
           () => {
             closeMenus();
-            startGroupEdit(agent, name);
+            openGroups(agent.name);
           },
         ),
       );
@@ -1827,37 +1933,133 @@
       }
     }
 
-    /**
-     * Move an agent to another group, editing in place where the rename editor
-     * works — the name cell. The input is backed by the same datalist as the
-     * launcher, so existing groups are one keystroke away and a new one is just
-     * typed. No blocking dialog, Enter commits, Esc cancels.
-     */
-    function startGroupEdit(agent, nameEl) {
+    // =====================================================================
+    // Groups panel — one place that shows every room and who is in it.
+    // A group holds several agents, so managing it one text field per card
+    // meant you could never see the rooms, rename one, or put a second agent
+    // into one without retyping the name from memory.
+    // =====================================================================
+
+    // Groups with no agent in them yet. The hub only knows a group because an
+    // agent is in it, so a group you just created has nowhere to live until you
+    // move someone in — it is kept here, in the page, so it can appear in the
+    // pickers meanwhile. Nothing is lost on reload but an empty room.
+    const draftGroups = new Set();
+
+    function openGroups(focusAgent) {
+      $("#groups-panel").hidden = false;
+      renderGroupsPanel();
+      if (focusAgent) {
+        const sel = document.querySelector(`.groups-member select[data-agent="${focusAgent}"]`);
+        if (sel) sel.focus();
+      }
+    }
+
+    function closeGroups() {
+      $("#groups-panel").hidden = true;
+      draftGroups.clear(); // an empty group nobody joined was never real
+    }
+
+    function panelGroups() {
+      return [...new Set([...allGroups(), ...draftGroups])].sort();
+    }
+
+    function renderGroupsPanel() {
+      const body = $("#groups-body");
+      body.textContent = "";
+      const groups = panelGroups();
+
+      for (const group of groups) {
+        const members = sortedAgents().filter((a) => groupOf(a) === group);
+        const box = el("div", "groups-group");
+
+        const head = el("div", "groups-group-head");
+        head.append(
+          el("span", "groups-group-name", group),
+          el("span", "groups-group-count", members.length === 1 ? "1 agent" : `${members.length} agents`),
+        );
+        // Renaming a group renames it for everyone in it, in one write.
+        const rename = el("button", "groups-rename", "rename");
+        rename.type = "button";
+        rename.title = `Rename "${group}" — every agent in it moves along`;
+        rename.addEventListener("click", () => startGroupRename(group, head, rename));
+        if (members.length > 0) head.appendChild(rename);
+        box.appendChild(head);
+
+        if (members.length === 0) {
+          box.appendChild(
+            el("div", "groups-empty", "Nobody here yet — move an agent in with the pickers below."),
+          );
+        }
+        for (const agent of members) box.appendChild(buildGroupMemberRow(agent, groups));
+        body.appendChild(box);
+      }
+
+      // Agents whose group has no box yet cannot happen (every group comes from
+      // its agents), so nothing else to render.
+      if (groups.length === 0) {
+        body.appendChild(el("div", "groups-empty", "No agents registered yet."));
+      }
+    }
+
+    function buildGroupMemberRow(agent, groups) {
+      const row = el("div", "groups-member");
+      row.appendChild(buildAvatar(agent.name));
+      row.appendChild(el("span", "name", agent.name));
+      row.appendChild(el("span", "role", agent.role || ""));
+
+      // A picker, not a text field: the rooms already exist, so choosing beats
+      // spelling one from memory. "New group…" is the escape hatch.
+      const sel = el("select");
+      sel.dataset.agent = agent.name;
+      sel.title = `Which group ${agent.name} talks in`;
+      for (const group of groups) {
+        const opt = el("option", null, group);
+        opt.value = group;
+        if (group === groupOf(agent)) opt.selected = true;
+        sel.appendChild(opt);
+      }
+      const newOpt = el("option", null, "new group…");
+      newOpt.value = "__new__";
+      sel.appendChild(newOpt);
+
+      sel.addEventListener("change", () => {
+        if (sel.value === "__new__") {
+          sel.value = groupOf(agent); // undo the visual pick until one is typed
+          $("#groups-new").focus();
+          return;
+        }
+        if (sel.value !== groupOf(agent)) moveAgentToGroup(agent.name, sel.value);
+      });
+      row.appendChild(sel);
+      return row;
+    }
+
+    /** Inline rename of a group, in the group's own header — where its name is. */
+    function startGroupRename(group, head, trigger) {
+      const nameEl = head.querySelector(".groups-group-name");
       const input = el("input", "agent-rename-input");
       input.type = "text";
-      input.value = groupOf(agent);
+      input.value = group;
       input.spellcheck = false;
       input.maxLength = 31;
-      input.setAttribute("list", "group-options");
-      input.title = "Group — Enter to confirm, Esc to cancel";
-      input.setAttribute("aria-label", `Group for agent ${agent.name}`);
+      input.title = "Group name — Enter to confirm, Esc to cancel";
 
       let done = false;
       function restore() {
         if (done) return true;
         done = true;
         input.replaceWith(nameEl);
+        trigger.hidden = false;
         return false;
       }
       function confirm() {
         const next = sanitizeAgentNameInput(input.value, false);
         if (restore()) return;
-        if (next === "" || next === groupOf(agent)) return;
-        moveAgentToGroup(agent.name, next);
+        if (next === "" || next === group) return;
+        renameGroup(group, next);
       }
 
-      input.addEventListener("click", (ev) => ev.stopPropagation());
       input.addEventListener("keydown", (ev) => {
         if (ev.key === "Enter") confirm();
         else if (ev.key === "Escape") restore();
@@ -1865,9 +2067,35 @@
       input.addEventListener("blur", restore);
       bindAgentNameSanitizer(input);
 
+      trigger.hidden = true;
       nameEl.replaceWith(input);
       input.focus();
       input.select();
+    }
+
+    async function renameGroup(group, next) {
+      try {
+        const res = await fetch(`/api/groups/${encodeURIComponent(group)}/rename`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ name: next }),
+        });
+        const body = await res.json();
+        if (!res.ok || !body.ok) {
+          toast(`Could not rename the group: ${body.error || `HTTP ${res.status}`}`, "warn");
+          renderGroupsPanel();
+          return;
+        }
+        for (const agent of body.agents) mergeAgent(agent);
+        if (state.group === group) state.group = next; // keep reading the same room
+        renderAgents();
+        renderRecipients();
+        renderFeed();
+        renderGroupsPanel();
+        toast(`Group "${group}" is now "${next}" (${body.agents.length} agent(s) moved).`);
+      } catch (err) {
+        toast(`Could not rename the group: ${err && err.message ? err.message : err}`, "warn");
+      }
     }
 
     async function moveAgentToGroup(name, group) {
@@ -1885,9 +2113,11 @@
         // agent_updated arrives over SSE too; applying it here keeps the
         // clicking tab snappy.
         mergeAgent(body.agent);
+        draftGroups.delete(group); // it has a member now, so the hub knows it
         renderAgents();
         renderRecipients();
         renderFeed(); // the transcript is filtered by group — the card just moved
+        if (!$("#groups-panel").hidden) renderGroupsPanel();
         toast(`"${name}" is now in the ${group} group.`);
       } catch (err) {
         toast(`Could not move the agent: ${err && err.message ? err.message : err}`, "warn");
@@ -2651,6 +2881,38 @@
       // "chefe-de-redes" rather than bouncing off the hub.
       bindAgentNameSanitizer($("#launch-group"));
 
+      // Groups panel wiring.
+      $("#groups-open").addEventListener("click", () => {
+        if ($("#groups-panel").hidden) openGroups();
+        else closeGroups();
+      });
+      $("#groups-close").addEventListener("click", closeGroups);
+      $("#groups-create").addEventListener("click", () => {
+        const input = $("#groups-new");
+        const name = sanitizeAgentNameInput(input.value, false);
+        if (name === "") {
+          toast("Name the group first — lowercase letters, digits and hyphens.", "warn");
+          return;
+        }
+        if (panelGroups().includes(name)) {
+          toast(`The group "${name}" already exists.`, "warn");
+          return;
+        }
+        // The hub learns a group from the agents in it, so a new one is only a
+        // box on screen until you move somebody into it.
+        draftGroups.add(name);
+        input.value = "";
+        renderGroupsPanel();
+        toast(`Group "${name}" is ready — move an agent into it to make it real.`);
+      });
+      bindAgentNameSanitizer($("#groups-new"));
+      $("#groups-new").addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter") {
+          ev.preventDefault();
+          $("#groups-create").click();
+        }
+      });
+
       // Dir picker wiring (the launcher form's "Browse…" panel).
       $("#dirpicker-browse").addEventListener("click", dirpickerOpen);
       $("#dirpicker-close").addEventListener("click", dirpickerClose);
@@ -2659,7 +2921,9 @@
         dirpickerClose();
       });
       document.addEventListener("keydown", (ev) => {
-        if (ev.key === "Escape" && !$("#dirpicker").hidden) dirpickerClose();
+        if (ev.key !== "Escape") return;
+        if (!$("#dirpicker").hidden) dirpickerClose();
+        else if (!$("#groups-panel").hidden) closeGroups();
       });
 
       // Bootstrap snapshot (agents + messages + health) BEFORE the live stream,
