@@ -320,6 +320,24 @@ live via SSE; attach to the agent anytime with `tmux attach -t sb-<name>`. Under
 `POST /api/agents/launch {dir, name?, role?, continue?, agentType?}` — localhost-only, like
 everything else.
 
+### Watching an agent's screen
+
+Click an agent's card and its **live terminal** takes over the panel — the real Claude Code (or
+Codex) screen, colours and cursor and all, and you can type into it (approve a prompt, hit Esc to
+interrupt). Open several and they become tabs across the top; **window** in the card's menu still
+pops a real OS terminal when you want one. This is a tmux **control-mode** client (`tmux -C`), not
+a second pty: tmux owns the agent's process, so closing the dashboard never takes the agent down —
+the whole point of being able to close the pile of terminal windows.
+
+### Previewing files agents mention
+
+Agents name absolute paths constantly ("wrote `/home/you/api/src/foo.ts`"). Those paths are
+clickable in the transcript — click one and the file opens inline (images, text, code, markdown).
+Reads are **scoped**: only files under an agent's working directory or your home folder, resolved
+with realpath so `..` and symlinks cannot escape. A path outside the scope is refused with a clear
+message, never read — a message body is untrusted, so an agent cannot get you to open an arbitrary
+file by naming it.
+
 ### Managing agents from the dashboard
 
 Each card carries an **open** button (**reopen** when the agent is offline: relaunches it in its

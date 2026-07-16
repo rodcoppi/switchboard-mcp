@@ -36,6 +36,7 @@ import { GROUP_NAME_RE, resolveGroup, type Store } from "./store.js";
 import { LaunchError, normalizeIncomingPath, type Launcher } from "./launcher.js";
 import { PickError, pickWindowsFolder } from "./winpicker.js";
 import { TerminalError } from "./terminal.js";
+import { PreviewError, readPreview, resolveInScope } from "./filepreview.js";
 import {
   invalidAgentTypeMessage,
   isAgentType,
@@ -695,6 +696,34 @@ export function createApiRouter(options: ApiOptions): express.Router {
         error: "The folder dialog was not answered in time. Click Browse again, or type the path.",
         fallback: true,
       });
+    }
+  });
+
+  // GET /api/files/preview?path=<abs path> — file preview for the dashboard.
+  // Agents name paths in their messages; the dashboard makes those clickable and
+  // shows the file here. SCOPED (see filepreview.ts): reads only under an agent
+  // working dir or the operator's home, resolved with realpath so `..`/symlinks
+  // cannot escape, because a message body is untrusted (an agent could plant a
+  // sensitive path). Everything else is refused, never read.
+  router.get("/api/files/preview", (req, res) => {
+    const rawPath = typeof req.query.path === "string" ? req.query.path : "";
+    // Scope = every agent's cwd (an agent may run outside home) + the operator's
+    // home. Empty cwds (legacy records) are dropped.
+    const roots = [
+      ...new Set(
+        store
+          .listAgents()
+          .map((a) => a.cwd)
+          .filter((c) => typeof c === "string" && c.trim() !== ""),
+      ),
+      os.homedir(),
+    ];
+    try {
+      const real = resolveInScope(rawPath, roots);
+      res.json({ ok: true, ...readPreview(real) });
+    } catch (err) {
+      const status = err instanceof PreviewError ? err.status : 500;
+      res.status(status).json({ ok: false, error: (err as Error).message });
     }
   });
 

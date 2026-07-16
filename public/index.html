@@ -884,6 +884,42 @@
     }
     /* Wider than the launcher: this one lists every room and everyone in them. */
     .lightbox-card-wide { max-width: 720px; }
+
+    /* A file path an agent named, made clickable. Amber + dotted underline so it
+       reads as "actionable" without shouting. */
+    .path-link {
+      color: var(--accent);
+      border-bottom: 1px dotted var(--accent-line);
+      cursor: pointer;
+      word-break: break-all;
+    }
+    .path-link:hover { border-bottom-style: solid; background: var(--accent-wash); }
+
+    .preview-path {
+      font-family: var(--mono);
+      font-size: var(--fs-xs);
+      color: var(--text-faint);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .preview-body {
+      max-height: 72vh;
+      overflow: auto;
+      padding: 12px 14px;
+    }
+    .preview-status { font-family: var(--sans); font-size: var(--fs-sm); color: var(--text-dim); padding: 20px; text-align: center; }
+    .preview-status.stale { color: var(--danger); }
+    .preview-image { max-width: 100%; height: auto; display: block; margin: 0 auto; image-rendering: auto; }
+    .preview-text {
+      margin: 0;
+      font-family: var(--mono);
+      font-size: var(--fs-body);
+      line-height: 1.5;
+      color: var(--text);
+      white-space: pre;
+      tab-size: 2;
+    }
     .groups-head {
       display: flex;
       align-items: baseline;
@@ -2517,6 +2553,76 @@
       }
     }
 
+    // =====================================================================
+    // File preview. A path an agent named becomes a link; clicking it fetches
+    // the file (scoped server-side) and shows it in a lightbox.
+    // =====================================================================
+
+    async function openPreview(filePath) {
+      $("#preview-box").hidden = false;
+      $("#preview-name").textContent = filePath.split("/").pop() || filePath;
+      $("#preview-path").textContent = "";
+      const body = $("#preview-body");
+      body.textContent = "";
+      body.appendChild(el("div", "preview-status", "Loading…"));
+      try {
+        const res = await fetch(`/api/files/preview?path=${encodeURIComponent(filePath)}`);
+        const data = await res.json();
+        body.textContent = "";
+        if (!data.ok) {
+          body.appendChild(el("div", "preview-status stale", data.error || `HTTP ${res.status}`));
+          return;
+        }
+        $("#preview-name").textContent = data.name;
+        $("#preview-path").textContent = `${data.path} · ${fmtBytes(data.size)}`;
+        renderPreview(body, data);
+      } catch (err) {
+        body.textContent = "";
+        body.appendChild(
+          el("div", "preview-status stale", `Could not load: ${err && err.message ? err.message : err}`),
+        );
+      }
+    }
+
+    function renderPreview(body, data) {
+      if (data.kind === "image") {
+        const img = el("img", "preview-image");
+        img.src = data.content; // a data: URL from the hub; loads nothing off-machine
+        img.alt = data.name;
+        body.appendChild(img);
+        return;
+      }
+      if (data.kind === "pdf" || data.kind === "binary" || data.content === null) {
+        body.appendChild(
+          el(
+            "div",
+            "preview-status",
+            data.kind === "pdf"
+              ? "PDF — open it in your editor to view."
+              : "Binary file — nothing to show as text.",
+          ),
+        );
+        return;
+      }
+      // text / markdown / code: monospace, as-is. No markdown rendering and no
+      // syntax highlighting — that would be a dependency; the raw file is the
+      // honest preview and 90% of the value.
+      const pre = el("pre", "preview-text");
+      pre.textContent = data.content; // textContent: server data never touches innerHTML
+      body.appendChild(pre);
+    }
+
+    function closePreview() {
+      $("#preview-box").hidden = true;
+      $("#preview-body").textContent = "";
+    }
+
+    function fmtBytes(n) {
+      if (n < 1024) return `${n} B`;
+      if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+      return `${(n / 1024 / 1024).toFixed(1)} MB`;
+    }
+
     async function moveAgentToGroup(name, group) {
       try {
         const res = await fetch(`/api/agents/${encodeURIComponent(name)}/group`, {
@@ -2694,10 +2800,40 @@
       return foot;
     }
 
+    // Absolute-ish file paths agents name in messages: "/home/..", "~/..", with
+    // an extension. Kept conservative (needs a dir separator and an extension)
+    // so ordinary prose is not littered with false links. The scope check on
+    // the server is the real gate; this only decides what looks clickable.
+    const FILE_PATH_RE = /(?:~|\/)[\w.\-+@]+(?:\/[\w.\-+@ ]+)*\.[A-Za-z0-9]{1,8}/g;
+
+    /**
+     * Builds the message body as text nodes with clickable spans for any file
+     * path. Stays XSS-safe like the rest of this file: createElement + text
+     * nodes, never innerHTML — the path text goes in via textContent.
+     */
+    function buildBodyWithPaths(body) {
+      const el2 = el("div", "msg-body clamped");
+      let last = 0;
+      for (const match of body.matchAll(FILE_PATH_RE)) {
+        const p = match[0];
+        if (match.index > last) el2.appendChild(document.createTextNode(body.slice(last, match.index)));
+        const link = el("span", "path-link", p);
+        link.title = `Preview ${p}`;
+        link.addEventListener("click", (ev) => {
+          ev.stopPropagation(); // the card click toggles the feed filter
+          openPreview(p);
+        });
+        el2.appendChild(link);
+        last = match.index + p.length;
+      }
+      if (last < body.length) el2.appendChild(document.createTextNode(body.slice(last)));
+      return el2;
+    }
+
     function buildBubble(from, to, body, createdAt, flag, extra) {
       const bubble = el("div", "msg-bubble");
       bubble.appendChild(buildMetaLine(from, to, { extra }));
-      bubble.appendChild(el("div", "msg-body clamped", body));
+      bubble.appendChild(buildBodyWithPaths(body));
       bubble.appendChild(buildFoot(createdAt, flag));
       return bubble;
     }
@@ -3276,6 +3412,12 @@
       // Messages: a tab like any other, so selecting it is closing the screen.
       $("#tab-messages").addEventListener("click", closeScreen);
 
+      // File preview lightbox.
+      $("#preview-close").addEventListener("click", closePreview);
+      $("#preview-box").addEventListener("click", (ev) => {
+        if (ev.target === $("#preview-box")) closePreview();
+      });
+
       // Launch agent (lightbox).
       $("#launcher-open").addEventListener("click", () => {
         $("#launcher-box").hidden = false;
@@ -3342,6 +3484,7 @@
         // it (it is how you interrupt Claude Code), so it must reach the pane
         // rather than close the view. The ✕ and the card do that.
         if (!$("#dirpicker").hidden) dirpickerClose();
+        else if (!$("#preview-box").hidden) closePreview();
         else if (!$("#launcher-box").hidden) closeLauncher();
         else if (!$("#groups-box").hidden) closeGroups();
       });
@@ -3396,6 +3539,21 @@
               title="Create the group — then move agents into it above">Create group</button>
           </div>
         </div>
+    </div>
+  </div>
+
+  <!-- File preview: a file path an agent named in a message, opened inline.
+       Reads are scoped server-side (an agent working dir or your home); the
+       modal just renders what comes back. -->
+  <div class="lightbox" id="preview-box" hidden>
+    <div class="lightbox-card lightbox-card-wide">
+      <div class="lightbox-head">
+        <span class="eyebrow" id="preview-name">file</span>
+        <span class="preview-path" id="preview-path"></span>
+        <button class="dirpicker-close" id="preview-close" type="button"
+          title="Close (Esc)">✕</button>
+      </div>
+      <div class="preview-body" id="preview-body"></div>
     </div>
   </div>
 
