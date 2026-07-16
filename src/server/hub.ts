@@ -211,13 +211,17 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
     app.use(express.static(publicDir));
   }
 
-  // xterm.js, served straight out of node_modules. It is the one browser
-  // dependency (owner-approved: a terminal emulator is not something to
-  // hand-roll) and the hub serves it itself, so the dashboard still fetches
-  // nothing off this machine — no CDN, and no build step to copy it either.
+  // Browser deps served straight out of node_modules — no CDN, no build step,
+  // the dashboard still fetches nothing off this machine. xterm.js (terminal
+  // emulator) and marked (markdown → the chat casca renders tables/lists/code
+  // like the reference app, instead of a hand-rolled parser).
   const vendorDir = fileURLToPath(new URL("../../node_modules/@xterm", import.meta.url));
   if (fs.existsSync(vendorDir)) {
     app.use("/vendor", express.static(vendorDir));
+  }
+  const markedDir = fileURLToPath(new URL("../../node_modules/marked/lib", import.meta.url));
+  if (fs.existsSync(markedDir)) {
+    app.use("/vendor/marked", express.static(markedDir));
   }
 
   // Malformed JSON body throws inside express.json(), BEFORE any handler

@@ -983,7 +983,12 @@ export function createApiRouter(options: ApiOptions): express.Router {
           const nl = text.lastIndexOf("\n");
           const complete = nl === -1 ? "" : text.slice(0, nl);
           carry = nl === -1 ? text : text.slice(nl + 1);
-          const items = parseConversation(complete.split("\n"));
+          const parsed = parseConversation(complete.split("\n"));
+          // The initial dump is capped to the most recent turns: a long project
+          // has thousands, and sending them all made the page render ~40k DOM
+          // nodes and choke. Live appends are never capped (they are new).
+          const INITIAL_LIMIT = 200;
+          const items = initial && parsed.length > INITIAL_LIMIT ? parsed.slice(-INITIAL_LIMIT) : parsed;
           if (items.length > 0 || initial) {
             res.write(`data: ${JSON.stringify({ items, initial })}\n\n`);
           }
