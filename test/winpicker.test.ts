@@ -34,6 +34,20 @@ describe("pickFolderScript", () => {
     expect(script).toContain("$dialog.ShowDialog($owner)");
   });
 
+  it("forces the dialog to the foreground (a WSL launch cannot on its own)", () => {
+    const script = pickFolderScript("\\\\wsl$\\Ubuntu\\home");
+    // The whole reason the dialog was invisible: Windows only lets the current
+    // foreground process raise a window, and a WSL-launched process is not it.
+    // The AttachThreadInput + SetForegroundWindow dance lifts that restriction.
+    // If this ever gets "cleaned up", the dialog silently opens behind Chrome
+    // again.
+    expect(script).toContain("AttachThreadInput");
+    expect(script).toContain("SetForegroundWindow");
+    // The owner must be a REAL shown window, not an unshown form (which has no
+    // window to foreground).
+    expect(script).toContain("$owner.Show()");
+  });
+
   it("starts where it was told and reports a cancel distinctly from a path", () => {
     const script = pickFolderScript("\\\\wsl$\\Ubuntu\\home\\rod\\projects");
     expect(script).toContain("$dialog.SelectedPath = '\\\\wsl$\\Ubuntu\\home\\rod\\projects'");

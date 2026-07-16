@@ -59,20 +59,39 @@ export function findPowerShell(exists: (p: string) => boolean = fs.existsSync): 
 /**
  * The PowerShell that shows the dialog (pure — unit-tested).
  *
- * Two details are load-bearing:
- *   - the dialog is owned by a TopMost form, or it opens BEHIND the browser the
- *     user just clicked in and looks like nothing happened;
- *   - -STA is required for Windows Forms; without it ShowDialog throws.
+ * The hard part is the FOREGROUND. A process launched from WSL cannot bring its
+ * window forward: Windows only lets the process that currently owns the
+ * foreground (the browser the user just clicked in) call SetForegroundWindow,
+ * so a folder dialog opened from here lands BEHIND Chrome and the user sees
+ * nothing. A TopMost owner form that is never shown does not fix it — it has no
+ * window to activate.
  *
- * `startIn` is a Windows path to open on. It is machine-derived (the distro's
- * own \\wsl$ root, or the folder already typed in the form), never free text
- * from the network, and it is embedded in a single-quoted literal with the
- * quotes doubled, so a folder called "Tim O'Brien" cannot end the literal.
+ * So the owner form is REAL: TopMost, 1×1, off-screen, and actually shown, then
+ * forced foreground through the AttachThreadInput trick (attach to the current
+ * foreground thread's input queue, which lifts the restriction, then
+ * SetForegroundWindow). The modal dialog opens parented to that topmost,
+ * foregrounded owner, so it comes up in front. The owner is 1×1 and transparent,
+ * so the flash is invisible.
+ *
+ * -STA is required for Windows Forms; without it ShowDialog throws. `startIn` is
+ * machine-derived (never network text) and embedded in a single-quoted literal
+ * with quotes doubled, so a folder called "Tim O'Brien" cannot end the literal.
  */
 export function pickFolderScript(startIn: string): string {
   const quoted = `'${startIn.replace(/'/g, "''")}'`;
   return [
     "Add-Type -AssemblyName System.Windows.Forms",
+    // Win32 the managed API does not expose: force-foreground a window even when
+    // the process did not start in the foreground (the WSL case).
+    "$sig = '" +
+      "[DllImport(\"user32.dll\")] public static extern bool SetForegroundWindow(IntPtr h); " +
+      "[DllImport(\"user32.dll\")] public static extern IntPtr GetForegroundWindow(); " +
+      "[DllImport(\"user32.dll\")] public static extern uint GetWindowThreadProcessId(IntPtr h, IntPtr pid); " +
+      "[DllImport(\"kernel32.dll\")] public static extern uint GetCurrentThreadId(); " +
+      "[DllImport(\"user32.dll\")] public static extern bool AttachThreadInput(uint a, uint b, bool attach); " +
+      "[DllImport(\"user32.dll\")] public static extern bool BringWindowToTop(IntPtr h); " +
+      "[DllImport(\"user32.dll\")] public static extern bool ShowWindow(IntPtr h, int cmd);'",
+    "$fg = Add-Type -MemberDefinition $sig -Name Fg -Namespace Win32 -PassThru",
     "$dialog = New-Object System.Windows.Forms.FolderBrowserDialog",
     "$dialog.Description = 'Switchboard — pick the folder the agent works in'",
     // Modern .NET only, and harmless on 5.1 (guarded): it promotes Description
@@ -83,10 +102,25 @@ export function pickFolderScript(startIn: string): string {
     // legacy one ignores UNC and lands on the Desktop, which is one more reason
     // findPowerShell prefers pwsh.
     `$dialog.SelectedPath = ${quoted}`,
-    // The owner window: TopMost, so the dialog lands in front.
+    // A REAL topmost owner: 1x1, transparent, off-screen, shown — so it owns a
+    // window that can be forced to the front.
     "$owner = New-Object System.Windows.Forms.Form",
     "$owner.TopMost = $true",
     "$owner.ShowInTaskbar = $false",
+    "$owner.FormBorderStyle = 'None'",
+    "$owner.Opacity = 0",
+    "$owner.Size = New-Object System.Drawing.Size(1,1)",
+    "$owner.StartPosition = 'Manual'",
+    "$owner.Location = New-Object System.Drawing.Point(-32000,-32000)",
+    "$owner.Show()",
+    // Steal the foreground: attach to whoever holds it now, then claim it.
+    "$foreThread = $fg::GetWindowThreadProcessId($fg::GetForegroundWindow(), [IntPtr]::Zero)",
+    "$thisThread = $fg::GetCurrentThreadId()",
+    "[void]$fg::AttachThreadInput($thisThread, $foreThread, $true)",
+    "[void]$fg::BringWindowToTop($owner.Handle)",
+    "[void]$fg::SetForegroundWindow($owner.Handle)",
+    "[void]$fg::AttachThreadInput($thisThread, $foreThread, $false)",
+    "$owner.Activate()",
     "$result = $dialog.ShowDialog($owner)",
     "$owner.Dispose()",
     "if ($result -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $dialog.SelectedPath } " +
@@ -148,6 +182,11 @@ export async function pickWindowsFolder(
       const { stdout } = await execFileAsync(file, args, {
         timeout: deps.timeoutMs ?? 180_000,
         maxBuffer: 1024 * 64,
+        // cwd /mnt/c, the same reason the terminal opener uses it (launcher.ts):
+        // a Windows GUI launched from a \\wsl$ UNC working directory misbehaves,
+        // and here that meant the dialog opened with no visible window. The hub
+        // runs in a WSL cwd, so without this the picker inherited it.
+        cwd: "/mnt/c",
       });
       return { stdout };
     });
