@@ -257,7 +257,7 @@
     }
     .sidebar-head {
       flex: 0 0 auto;
-      display: flex; align-items: center; justify-content: space-between;
+      display: flex; align-items: center; gap: 8px;
       padding: 13px 16px 11px;
       border-bottom: 1px solid var(--border-soft);
     }
@@ -719,8 +719,10 @@
     }
     .group-tab .count { color: var(--text-faint); margin-left: 5px; }
 
-    .groups-open { margin-left: 8px; flex: none; }
-    .launcher-open { margin-left: auto; flex: none; }
+    /* Both sit at the right end of the rail's header, together: the label and
+       the count on the left, the two things you DO to this list on the right. */
+    .groups-open { margin-left: auto; flex: none; }
+    .launcher-open { margin-left: 6px; flex: none; }
 
     /* --------------------------- the tab strip ---------------------------
        Messages and every open agent, side by side. */
@@ -734,7 +736,6 @@
       border-bottom: 1px solid var(--border);
     }
     .tab-strip { display: flex; align-items: stretch; gap: 2px; min-width: 0; overflow-x: auto; }
-    .tabs .groups-open { margin-left: auto; align-self: center; }
 
     .tab {
       display: flex;
@@ -1301,6 +1302,11 @@
       <div class="sidebar-head">
         <span class="eyebrow">Patchbay</span>
         <span id="sidebar-count" class="rail-count">0</span>
+        <!-- Groups and + agent live HERE, over the rail: both are about the
+             agents listed below them. Groups was up in the tab strip, which is
+             about which SCREEN you are looking at — a different question. -->
+        <button class="btn groups-open" id="groups-open" type="button"
+          title="See every group and move agents between them">Groups</button>
         <button class="btn launcher-open" id="launcher-open" type="button"
           title="Launch a new agent">+ agent</button>
       </div>
@@ -1322,8 +1328,6 @@
           <span class="tab-unread" id="tab-messages-unread" hidden></span>
         </button>
         <div class="tab-strip" id="tab-strip"></div>
-        <button class="btn groups-open" id="groups-open" type="button"
-          title="See every group and move agents between them">Groups</button>
       </div>
 
       <div class="feed-head">
