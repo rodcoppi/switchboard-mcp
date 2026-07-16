@@ -856,9 +856,21 @@
     .screen-hint.stale { color: var(--danger); }
     .screen-head .btn { margin-left: auto; }
     .screen-head .dirpicker-close { margin-left: 0; }
-    /* xterm paints its own grid; it just needs a box that does not collapse. */
-    .screen-term { flex: 1 1 auto; min-height: 0; padding: 6px 0 6px 10px; }
-    .screen-term .xterm { height: 100%; }
+    /* xterm paints its own grid; it just needs a box that does not collapse.
+       CENTRED, and on the terminal's own colour: while mirroring, the grid is
+       the pane's and its shape rarely matches the panel's, so something is
+       always left over. Centred on a matching background that reads as margin;
+       pinned top-left on the page's background it read as the terminal having
+       fallen into the corner of a black hole. */
+    .screen-term {
+      flex: 1 1 auto;
+      min-height: 0;
+      padding: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #070b10; /* xterm's own background (see the theme below) */
+    }
 
     /* The Groups panel — the body of its lightbox now. It used to drop under
        the feed header and shove the transcript down, which is what a VIEW does;
@@ -2344,7 +2356,7 @@
         // (1b 5b 35 7e) sent as raw bytes scrolls Claude Code's history.
         scrollback: 0,
         fontFamily: getComputedStyle(document.body).getPropertyValue("--mono").trim(),
-        fontSize: 12,
+        fontSize: SCREEN_FONT_PX,
         theme: {
           background: "#070b10",
           foreground: "#e6edf3",
@@ -2403,7 +2415,7 @@
             setScreenHint("live — type here to drive it", false);
           } else {
             term.resize(parsed.cols, parsed.rows);
-            fitFontToGrid();
+            fitScreenToPanel();
             setScreenHint(
               `live — mirroring ${parsed.cols}×${parsed.rows} (a terminal window is attached; close it and this panel sets the size)`,
               false,
@@ -2458,26 +2470,38 @@
     }
 
     /**
-     * Mirroring mode: the grid is the pane's and cannot be touched, so the FONT
-     * is what gives, sized so the agent's screen fills the panel without
-     * changing a single column. The alternative would be a small terminal
-     * marooned in a large panel.
+     * Mirroring mode: the grid belongs to the pane and cannot be touched, so the
+     * terminal is SCALED to the panel — exactly how an image fits a frame with
+     * object-fit: contain.
+     *
+     * This replaces computing a font size, which could not stop being wrong:
+     * a font size is an integer (a grid that wants 31.4px settles for 31 and
+     * leaves a strip of dead space), it needs the rendered cell metrics read
+     * back at the right instant, and every clamp I put on it eventually became
+     * the bug — a 120x29 pane in a 2238px panel wanted 31px, hit a ceiling of
+     * 22, and sat in the corner of a black hole.
+     *
+     * A scale factor is a float, needs one measurement of a box that does not
+     * move, and cannot overflow: min() of the two ratios always fits. The font
+     * stays at SCREEN_FONT_PX forever. Text stays sharp because xterm renders
+     * DOM text and the browser rasterises transformed text at its final size.
      */
-    function fitFontToGrid() {
+    const SCREEN_FONT_PX = 14;
+
+    function fitScreenToPanel() {
       const { term } = screenState;
       if (!term) return;
-      const box = $("#screen-term").getBoundingClientRect();
-      if (box.width < 40 || box.height < 40) return;
-      // Measure this font rather than assume a ratio: xterm reports the cell it
-      // actually rendered, and mono faces differ.
-      const core = term._core?._renderService?.dimensions?.css?.cell;
-      if (!core || !core.width || !core.height) return;
-      const perW = (box.width - 12) / (core.width / term.options.fontSize);
-      const perH = (box.height - 12) / (core.height / term.options.fontSize);
-      const size = Math.floor(Math.min(perW / term.cols, perH / term.rows));
-      // Rails, not taste: below ~8px it is unreadable, above ~22px one agent
-      // eats the panel.
-      term.options.fontSize = Math.max(8, Math.min(22, size));
+      const wrap = $("#screen-term");
+      const inner = wrap.querySelector(".xterm");
+      if (!inner) return;
+      // Natural size = what the terminal is at font SCREEN_FONT_PX, untransformed.
+      inner.style.transform = "none";
+      const box = wrap.getBoundingClientRect();
+      const nat = inner.getBoundingClientRect();
+      if (nat.width < 10 || nat.height < 10 || box.width < 40) return;
+      const scale = Math.min(box.width / nat.width, box.height / nat.height);
+      inner.style.transformOrigin = "center center";
+      inner.style.transform = `scale(${scale})`;
     }
 
     let fitTimer = null;
@@ -2491,7 +2515,7 @@
           screenState.fit.fit();
           pushScreenSize();
         } else {
-          fitFontToGrid();
+          fitScreenToPanel();
         }
       }, 120);
     }
