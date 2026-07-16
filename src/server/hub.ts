@@ -223,6 +223,13 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
   if (fs.existsSync(markedDir)) {
     app.use("/vendor/marked", express.static(markedDir));
   }
+  // highlight.js (syntax colours for the code the agents write in the chat).
+  const hljsDir = fileURLToPath(
+    new URL("../../node_modules/@highlightjs/cdn-assets", import.meta.url),
+  );
+  if (fs.existsSync(hljsDir)) {
+    app.use("/vendor/highlight", express.static(hljsDir));
+  }
 
   // Malformed JSON body throws inside express.json(), BEFORE any handler
   // (spike NOTES.md finding 5): answer in-protocol instead of the Express

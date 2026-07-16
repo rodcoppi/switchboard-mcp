@@ -17,6 +17,10 @@
        equivalent of the reference app's react-markdown+remark-gfm, served from
        node_modules so the page still fetches nothing off this machine. -->
   <script src="/vendor/marked/marked.umd.js"></script>
+  <!-- highlight.js: syntax colours for code the agents write in the chat, also
+       served from node_modules. The theme only touches .hljs elements. -->
+  <link rel="stylesheet" href="/vendor/highlight/styles/atom-one-dark.min.css" />
+  <script src="/vendor/highlight/highlight.min.js"></script>
   <!-- Inline favicon to avoid a /favicon.ico 404 in the hub logs. The mark is
        the "⇄" of the header and of the Windows shortcut icon (assets/switchboard.ico,
        drawn by scripts/make-icon.mjs) — same shape, same amber, one product. -->
@@ -1037,6 +1041,8 @@
     .chat-bubble code { font-family: var(--mono); font-size: 0.92em; background: var(--bg-inset); padding: 1px 5px; border-radius: 4px; }
     .chat-bubble pre { margin: 6px 0; padding: 9px 11px; background: var(--bg-inset); border: 1px solid var(--border-soft); border-radius: 7px; overflow-x: auto; }
     .chat-bubble pre code { background: none; padding: 0; font-size: var(--fs-sm); line-height: 1.5; }
+    /* highlight.js theme sits on OUR pre background, not its own dark slab. */
+    .chat-bubble pre code.hljs { background: transparent; padding: 0; }
     .chat-bubble strong { color: var(--text); font-weight: 600; }
 
     /* Tool call: a compact chip that expands to input + result. */
@@ -3347,6 +3353,16 @@
       sanitizeNode(doc.body);
       linkifyPaths(doc.body);
       while (doc.body.firstChild) container.appendChild(doc.body.firstChild);
+      // Syntax colours for fenced code, once it is in the live document.
+      if (window.hljs) {
+        for (const block of container.querySelectorAll("pre code")) {
+          try {
+            window.hljs.highlightElement(block);
+          } catch {
+            /* highlighting is cosmetic — never let it break the message */
+          }
+        }
+      }
     }
 
     // Removes anything that could execute; keeps the structure marked built.

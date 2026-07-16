@@ -32,7 +32,12 @@ table, section 17).
 
 - Node.js >= 20 (ESM), TypeScript 5.x executed with `tsx` — **no build step, no bundler**.
 - Production: `@modelcontextprotocol/sdk`, `express`, `zod`, `ulid`, `commander`,
-  `@xterm/xterm` + `@xterm/addon-fit`. Dev: `vitest`, `@types/express`, `@types/node`.
+  `@xterm/xterm` + `@xterm/addon-fit`, `marked`, `@highlightjs/cdn-assets`. Dev: `vitest`,
+  `@types/express`, `@types/node`.
+- Browser deps (`@xterm/*`, `marked`, `@highlightjs/cdn-assets`) are all served by the hub
+  straight out of `node_modules` at `/vendor/*`, so the dashboard still fetches nothing off
+  this machine. `marked` renders the chat casca's markdown (tables/lists/code); highlight.js
+  colours the fenced code. These are owner-approved dashboard-polish deps.
 - `@xterm/xterm` is the ONE browser dependency, owner-approved, and it is a terminal
   EMULATOR — the thing you cannot sanely hand-roll (weeks of escape-sequence bugs). It is
   served by the hub from `node_modules` at `/vendor/*`, so the dashboard still fetches
