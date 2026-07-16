@@ -398,6 +398,44 @@
       border-color: var(--accent-line);
       background: var(--accent-wash);
     }
+    /* Idle vs working — the thing the operator actually watches for. Same chip
+       metrics as .mcp-icon so it drops into the same badge slot. Working glows
+       and breathes; idle is quiet. */
+    .activity-chip {
+      font-family: var(--mono);
+      font-size: 9px;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+      text-transform: lowercase;
+      padding: 2px 7px;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+      color: var(--text-faint);
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .activity-chip::before {
+      content: "";
+      width: 5px; height: 5px; border-radius: 50%;
+      background: currentColor;
+    }
+    .activity-chip.working {
+      color: var(--accent);
+      border-color: var(--accent-line);
+      background: var(--accent-wash);
+    }
+    .activity-chip.working::before { animation: pulse-work 1.15s ease-in-out infinite; }
+    @keyframes pulse-work {
+      0%, 100% { opacity: 1; box-shadow: 0 0 0 0 var(--accent-line); }
+      50% { opacity: 0.45; box-shadow: 0 0 6px 1px var(--accent-line); }
+    }
+    /* The lamp itself breathes amber while the agent is mid-turn. */
+    .status-dot.working {
+      background: var(--accent);
+      box-shadow: 0 0 8px rgba(245, 166, 35, 0.7);
+      animation: pulse-work 1.15s ease-in-out infinite;
+    }
     /* Which agent CLI the card's agent runs — same chip metrics as .mcp-icon
        so the two sit as one badge row. Deliberately NOT accent-colored: the
        accent means "connected/active", and the type is neutral information. */
@@ -2548,8 +2586,10 @@
         card.style.setProperty("--chat-color", tint);
       }
 
-      const dot = el("span", `status-dot ${agent.status === "online" ? "online" : "offline"}`);
-      dot.title = agent.status;
+      const online = agent.status === "online";
+      const working = online && agent.activity === "working";
+      const dot = el("span", `status-dot ${online ? "online" : "offline"}${working ? " working" : ""}`);
+      dot.title = online ? (working ? "online · working" : "online · idle") : "offline";
 
       const name = el("div", "agent-name", agent.name);
       name.title = agent.name;
@@ -2564,15 +2604,17 @@
       typeChip.appendChild(document.createTextNode(AGENT_TYPE_LABELS[type]));
       typeChip.title = `This agent runs ${AGENT_TYPE_TITLES[type]}`;
       badges.appendChild(typeChip);
-      // The MCP chip answers one question: is this agent actually wired into
-      // Switchboard? Green = its Claude Code called `join`, so it can RECEIVE
-      // messages other agents send it. Dim = running but not joined yet, so a
-      // message to it would only sit in the queue until it joins.
-      const mcp = el("span", `mcp-icon${agent.mcpConnected ? " connected" : ""}`, "MCP");
-      mcp.title = agent.mcpConnected
-        ? "Wired into Switchboard — this agent has joined and can receive messages."
-        : "Not joined yet — this agent won't receive messages until its Claude Code calls join.";
-      badges.appendChild(mcp);
+      // Idle vs working — what the operator actually watches. (The old "MCP"
+      // chip is gone: whether an agent had joined was hub plumbing nobody needed
+      // on the card. Its one real use — a queued message waiting for a not-yet-
+      // joined agent — surfaces as the unread count regardless.)
+      if (online) {
+        const act = el("span", `activity-chip${working ? " working" : " idle"}`, working ? "working" : "idle");
+        act.title = working
+          ? "Mid-turn — this agent is generating or running a tool right now."
+          : "Idle — this agent is up and waiting for input.";
+        badges.appendChild(act);
+      }
       if (agent.unreadCount > 0) {
         const badge = el("span", "unread-badge", String(agent.unreadCount));
         badge.title = `${agent.unreadCount} unread`;
@@ -2586,7 +2628,7 @@
       // Stop propagation everywhere so a control click never toggles the
       // card's feed filter.
       const actions = el("div", "agent-actions");
-      const online = agent.status === "online";
+      // `online` and `working` were computed up top (for the status lamp).
 
       // The agent's screen is the CARD's job now (one click, no button), so the
       // primary here is the thing the card cannot do: pop a real Windows

@@ -6,12 +6,21 @@ import type { AgentType } from "./agent-types.js";
 
 export type AgentStatus = "online" | "offline";
 
+/**
+ * Whether the agent's CLI is mid-turn (generating / running a tool) or waiting
+ * for input. EPHEMERAL, derived live from the pane every activity poll — never
+ * a real fact about the record, so it is reset on boot exactly like `status`.
+ * "online + idle" = up and waiting; "online + working" = up and busy.
+ */
+export type AgentActivity = "working" | "idle";
+
 export interface Agent {
   name: string; // ^[a-z0-9][a-z0-9-]{1,30}$ , unique
   role: string; // free-form description, e.g. "backend da API de pagamentos"
   tmuxSession: string; // e.g. "sb-alpha" (prefix + name)
   cwd: string; // directory where the agent CLI was opened
   status: AgentStatus; // derived from tmux has-session during polling
+  activity?: AgentActivity; // idle vs working, derived from the live pane (ephemeral)
   mcpConnected: boolean; // true after the first join via MCP
   muted: boolean; // dashboard can silence nudges (messages are still recorded)
   createdAt: string; // ISO 8601

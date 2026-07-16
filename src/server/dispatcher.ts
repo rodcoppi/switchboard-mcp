@@ -27,6 +27,7 @@
 import {
   toPublicAgent,
   type Agent,
+  type AgentActivity,
   type AgentStatus,
   type Config,
   type Delivery,
@@ -41,12 +42,32 @@ import type { NudgeResult } from "./tmux.js";
 /** Flush cadence for coalesced (pending) nudges — PRD 10.2: "timer a cada 5s". */
 export const FLUSH_INTERVAL_MS = 5000;
 
+/**
+ * Idle/working sweep cadence. Faster than the 10s status poll because a turn
+ * can begin and end within one status interval, and a stale "working" badge is
+ * exactly the kind of thing that makes a dashboard feel dead.
+ */
+export const ACTIVITY_POLL_INTERVAL_MS = 2500;
+
 /** The narrow tmux surface the dispatcher needs (injectable for unit tests). */
 export interface DispatcherTmux {
   hasSession(session: string): Promise<boolean>;
   nudgeSession(session: string, text: string, enterDelayMs: number): Promise<NudgeResult>;
   /** Pane guard probe (fail-closed) — used to break the online↔offline flap. */
   isPaneSafeToNudge(session: string): Promise<boolean>;
+  /** Reads the pane to tell idle from working. Optional so test mocks may omit it. */
+  capturePane?(session: string, lines?: number): Promise<string>;
+}
+
+/**
+ * The agent's CLI is mid-turn when its TUI shows the interrupt affordance —
+ * Claude Code and Codex both print "esc to interrupt" while generating or
+ * running a tool, and drop it the instant they return to the prompt. That one
+ * marker is the signal; the CLIs run in the alternate screen (no scrollback),
+ * so a captured pane holds only the CURRENT frame, never a stale one.
+ */
+export function detectWorking(pane: string): boolean {
+  return /esc to interrupt/i.test(pane) || /\besc\b\s+to\s+interrupt/i.test(pane);
 }
 
 export interface DispatcherOptions {
@@ -89,6 +110,8 @@ export class Dispatcher {
   private readonly nudgeBlocked = new Set<string>();
   private flushTimer: NodeJS.Timeout | undefined;
   private pollTimer: NodeJS.Timeout | undefined;
+  private activityTimer: NodeJS.Timeout | undefined;
+  private activityInFlight = false;
   /** Guards against overlapping polls when tmux calls outlast the interval. */
   private pollInFlight = false;
 
@@ -248,7 +271,7 @@ export class Dispatcher {
     return [...this.pendingNudge];
   }
 
-  /** Starts the flush (5s) and status-polling timers. Idempotent. */
+  /** Starts the flush (5s), status-polling and activity timers. Idempotent. */
   start(): void {
     if (this.flushTimer || this.pollTimer) return;
     this.flushTimer = setInterval(() => this.flushPending(), this.flushIntervalMs);
@@ -259,6 +282,16 @@ export class Dispatcher {
       });
     }, this.config.agentPollIntervalMs);
     this.pollTimer.unref();
+    // Idle vs working needs a livelier cadence than the 10s status poll — a
+    // turn can start and finish inside one status interval — so it runs on its
+    // own faster timer. It is cheap: one capture-pane of a few lines per online
+    // agent.
+    this.activityTimer = setInterval(() => {
+      void this.refreshActivityOnce().catch((err) => {
+        this.log.error(`[dispatcher] error in activity polling:`, err);
+      });
+    }, ACTIVITY_POLL_INTERVAL_MS);
+    this.activityTimer.unref();
     // Immediate first poll so status converges right after boot (replay may
     // have loaded agents whose sessions are still alive).
     void this.pollOnce().catch((err) => {
@@ -266,12 +299,46 @@ export class Dispatcher {
     });
   }
 
-  /** Stops both timers. Safe to call multiple times; no dangling handles. */
+  /** Stops all timers. Safe to call multiple times; no dangling handles. */
   stop(): void {
     if (this.flushTimer) clearInterval(this.flushTimer);
     if (this.pollTimer) clearInterval(this.pollTimer);
+    if (this.activityTimer) clearInterval(this.activityTimer);
     this.flushTimer = undefined;
     this.pollTimer = undefined;
+    this.activityTimer = undefined;
+  }
+
+  /**
+   * Idle-vs-working sweep: for each ONLINE agent, read a few lines of its pane
+   * and flip `activity` when it crosses the working/idle line. Best-effort and
+   * change-only (emits + persists solely on a transition), so a steadily busy
+   * or steadily idle agent costs one capture and no writes. Offline agents are
+   * left as the status poll set them (idle).
+   */
+  async refreshActivityOnce(): Promise<void> {
+    if (this.activityInFlight) return;
+    if (!this.tmux.capturePane) return; // test mock without pane access
+    this.activityInFlight = true;
+    try {
+      for (const { name, tmuxSession } of this.store.listAgents()) {
+        const agent = this.store.getAgent(name);
+        if (!agent || agent.status !== "online") continue;
+        let working = false;
+        try {
+          const pane = await this.tmux.capturePane(tmuxSession, 30);
+          working = detectWorking(pane);
+        } catch {
+          working = false; // unreadable pane: treat as idle, never throw
+        }
+        const next: AgentActivity = working ? "working" : "idle";
+        if (agent.activity === next) continue;
+        const updated = this.store.updateAgent(name, { activity: next });
+        this.bus.emit({ type: "agent_updated", payload: toPublicAgent(updated) });
+      }
+    } finally {
+      this.activityInFlight = false;
+    }
   }
 
   // ------------------------------------------------------------------ internals

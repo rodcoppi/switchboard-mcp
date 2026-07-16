@@ -479,9 +479,10 @@ export class Store {
   resetConnectionState(): void {
     let changed = false;
     for (const agent of this.agents.values()) {
-      if (agent.mcpConnected || agent.status === "online") {
+      if (agent.mcpConnected || agent.status === "online" || agent.activity === "working") {
         agent.mcpConnected = false;
         agent.status = "offline";
+        agent.activity = "idle"; // ephemeral: re-derived by the activity poll
         changed = true;
       }
     }
