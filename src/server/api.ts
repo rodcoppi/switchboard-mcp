@@ -37,6 +37,7 @@ import { LaunchError, normalizeIncomingPath, type Launcher } from "./launcher.js
 import { PickError, pickWindowsFolder } from "./winpicker.js";
 import { TerminalError } from "./terminal.js";
 import { PreviewError, readPreview, resolveInScope } from "./filepreview.js";
+import { parseConversation, projectDirForCwd } from "./conversation.js";
 import {
   invalidAgentTypeMessage,
   isAgentType,
@@ -907,6 +908,112 @@ export function createApiRouter(options: ApiOptions): express.Router {
     bus.emit({ type: "agent_updated", payload: toPublicAgent(updated) });
     log.info(`[api] agent ${name} moved to group ${group}.`);
     res.json({ ok: true, agent: toPublicAgent(updated) });
+  });
+
+  // GET /api/agents/:name/conversation — SSE. The agent's conversation as a
+  // clean chat (the "casca"): Claude Code logs every message/tool to JSONL under
+  // ~/.claude/projects, and this reads it — no ownership of the agent's process,
+  // so the connector stays a connector (a wrapper would spawn the agent to get
+  // structured output). First event is the full parsed conversation; then the
+  // file is watched and only NEW lines are parsed and pushed.
+  router.get("/api/agents/:name/conversation", (req, res) => {
+    const agent = store.getAgent(String(req.params.name));
+    if (!agent) {
+      res.status(404).json({ ok: false, error: `Unknown agent: "${req.params.name}".` });
+      return;
+    }
+    if (!agent.cwd || agent.cwd.trim() === "") {
+      res.status(409).json({
+        ok: false,
+        error: `No working directory recorded for "${agent.name}", so its conversation log cannot be found.`,
+      });
+      return;
+    }
+
+    const dir = projectDirForCwd(agent.cwd);
+    // The active session = the most-recently-modified .jsonl in the project dir.
+    let file: string;
+    try {
+      const jsonls = fs
+        .readdirSync(dir)
+        .filter((f) => f.endsWith(".jsonl"))
+        .map((f) => path.join(dir, f))
+        .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
+      if (jsonls.length === 0) throw new Error("no conversation log yet");
+      file = jsonls[0];
+    } catch {
+      res.status(404).json({
+        ok: false,
+        error:
+          `No conversation log for "${agent.name}" yet (looked in ${dir}). ` +
+          `It appears once the agent has talked at least once.`,
+      });
+      return;
+    }
+
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    });
+
+    let offset = 0;
+    let carry = ""; // a trailing partial line held for the next read
+    let sending = false;
+
+    // Reads from `offset` to EOF, parses only COMPLETE lines, forwards the new
+    // chat items, and keeps any partial last line for next time. Serialized so
+    // two watch events cannot interleave reads of the same bytes.
+    const pump = (initial: boolean): void => {
+      if (sending) return;
+      sending = true;
+      try {
+        const size = fs.statSync(file).size;
+        if (size < offset) offset = 0; // file rotated/truncated: restart
+        if (size > offset) {
+          const buf = Buffer.alloc(size - offset);
+          const fd = fs.openSync(file, "r");
+          try {
+            fs.readSync(fd, buf, 0, buf.length, offset);
+          } finally {
+            fs.closeSync(fd);
+          }
+          offset = size;
+          const text = carry + buf.toString("utf8");
+          const nl = text.lastIndexOf("\n");
+          const complete = nl === -1 ? "" : text.slice(0, nl);
+          carry = nl === -1 ? text : text.slice(nl + 1);
+          const items = parseConversation(complete.split("\n"));
+          if (items.length > 0 || initial) {
+            res.write(`data: ${JSON.stringify({ items, initial })}\n\n`);
+          }
+        } else if (initial) {
+          res.write(`data: ${JSON.stringify({ items: [], initial: true })}\n\n`);
+        }
+      } catch (err) {
+        res.write(`data: ${JSON.stringify({ error: (err as Error).message })}\n\n`);
+      } finally {
+        sending = false;
+      }
+    };
+
+    pump(true);
+    // fs.watch is edge-triggered and can miss rapid appends, so a slow poll
+    // backs it up — the pump is idempotent (offset-based), so double-firing is
+    // harmless.
+    let watcher: fs.FSWatcher | undefined;
+    try {
+      watcher = fs.watch(file, () => pump(false));
+    } catch {
+      /* watch unsupported here; the poll below still delivers */
+    }
+    const poll = setInterval(() => pump(false), 1500);
+    poll.unref?.();
+
+    req.on("close", () => {
+      clearInterval(poll);
+      watcher?.close();
+    });
   });
 
   // -------------------------------------------------------------------------
