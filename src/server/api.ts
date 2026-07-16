@@ -269,7 +269,9 @@ export interface ManualNudger {
  * undefined when the hub runs with a stubbed onMessage (no tmux, no terminals).
  */
 export interface Terminals {
-  firstFrame(session: string): Promise<{ frame: string; cols: number; rows: number }>;
+  firstFrame(
+    session: string,
+  ): Promise<{ frame: string; cols: number; rows: number; attached: number }>;
   attach(session: string, onData: (chunk: Buffer) => void): Promise<() => void>;
   input(session: string, bytes: Buffer): Promise<void>;
   resize(session: string, cols: number, rows: number): Promise<void>;
@@ -919,10 +921,10 @@ export function createApiRouter(options: ApiOptions): express.Router {
 
     let detach: (() => void) | undefined;
     try {
-      const { frame, cols, rows } = await terminals!.firstFrame(target.session);
+      const { frame, cols, rows, attached } = await terminals!.firstFrame(target.session);
       // The grid first: the viewer sizes ITSELF to the pane (it must not size
       // the pane to itself — see TerminalBridge.resize).
-      res.write(`data: ${JSON.stringify({ cols, rows })}\n\n`);
+      res.write(`data: ${JSON.stringify({ cols, rows, attached })}\n\n`);
       // \x1b[2J\x1b[H: the viewer's emulator may hold an older paint of this
       // pane (a reconnect), and the frame below is a full screen, not a diff.
       send(Buffer.from(`\x1b[2J\x1b[H${frame}`, "utf8"));

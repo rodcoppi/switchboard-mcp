@@ -85,19 +85,28 @@ export class TerminalBridge {
 
   /**
    * The screen as it stands right now, escape sequences and all, plus the grid
-   * it is laid out for. Sent as the viewer's first frame because the tee only
-   * carries what the pane does NEXT — without it you would watch a blank
-   * rectangle until the agent moved.
+   * it is laid out for and whether a real terminal is attached to it. Sent as
+   * the viewer's first frame because the tee only carries what the pane does
+   * NEXT — without it you would watch a blank rectangle until the agent moved.
    *
-   * The size ships with it because a viewer MIRRORS the pane rather than
-   * sizing it: see resize() for what imposing a browser panel's size did.
+   * No scrollback comes with it, and none is missing: Claude Code runs in the
+   * ALTERNATE SCREEN, which has no history by definition (tmux reports
+   * history_size 0 for these panes, and `capture-pane -S -` returns the visible
+   * screen and nothing more). The conversation you scroll inside Claude Code is
+   * drawn by Claude Code from its own memory; it never becomes terminal
+   * scrollback, so the operator's own window has no history there either. You
+   * scroll it by talking to the TUI, which the viewer can do — it is just keys.
+   *
+   * `attached` decides who owns the size: see resize().
    */
-  async firstFrame(session: string): Promise<{ frame: string; cols: number; rows: number }> {
+  async firstFrame(
+    session: string,
+  ): Promise<{ frame: string; cols: number; rows: number; attached: number }> {
     const [frame, size] = await Promise.all([
       this.tmux.capturePaneAnsi(session),
       this.tmux.paneSize(session),
     ]);
-    return { frame, cols: size.cols, rows: size.rows };
+    return { frame, cols: size.cols, rows: size.rows, attached: size.attached };
   }
 
   /**

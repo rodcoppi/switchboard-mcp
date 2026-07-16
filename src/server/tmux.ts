@@ -206,7 +206,7 @@ export interface Tmux {
    * that resized it to fit a browser panel reflowed the agent's TUI to 316
    * columns for everyone.
    */
-  paneSize(session: string): Promise<{ cols: number; rows: number }>;
+  paneSize(session: string): Promise<{ cols: number; rows: number; attached: number }>;
   /** `tmux kill-session -t =<s>`. */
   killSession(session: string): Promise<void>;
   /** Session names starting with prefix; [] when the tmux server is down. */
@@ -399,18 +399,24 @@ export function createTmux(options: TmuxOptions = {}): Tmux {
     ]);
   }
 
-  async function paneSize(session: string): Promise<{ cols: number; rows: number }> {
+  async function paneSize(
+    session: string,
+  ): Promise<{ cols: number; rows: number; attached: number }> {
     assertValidSession(session);
+    // `attached` rides along because it decides who owns the size: a real
+    // terminal window is watching this pane and laid out for it, or nobody is
+    // and the dashboard may fit it to its own panel (verified: resize-window
+    // sticks on a session with no clients).
     const { stdout } = await exec("tmux", [
       "display-message",
       "-p",
       "-t",
       paneTarget(session),
-      "#{pane_width}x#{pane_height}",
+      "#{pane_width}x#{pane_height}x#{session_attached}",
     ]);
-    const match = /^(\d+)x(\d+)$/.exec(stdout.trim());
+    const match = /^(\d+)x(\d+)x(\d+)$/.exec(stdout.trim());
     if (!match) throw new Error(`Could not read the pane size of "${session}".`);
-    return { cols: Number(match[1]), rows: Number(match[2]) };
+    return { cols: Number(match[1]), rows: Number(match[2]), attached: Number(match[3]) };
   }
 
   async function killSession(session: string): Promise<void> {

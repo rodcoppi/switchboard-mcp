@@ -2251,7 +2251,7 @@
     // belongs to tmux, not to the dashboard.
     // =====================================================================
 
-    const screenState = { name: null, term: null, fit: null, sse: null, ro: null };
+    const screenState = { name: null, term: null, fit: null, sse: null, ro: null, owns: false };
 
     // Groups folded away in the rail. Page-local on purpose: which projects you
     // have collapsed right now is a view, not something the hub should store.
@@ -2297,13 +2297,12 @@
       // base64 and reach tmux as those same bytes.
       term.onData((data) => sendScreenInput(name, data));
 
-      // The pane must match the box, or the TUI wraps against a width nobody
-      // is looking at. ResizeObserver instead of a window listener: the panel
-      // changes size when the rail does, not only when the window does.
+      // ResizeObserver instead of a window listener: the panel changes size
+      // when the rail does, not only when the window does. Whether a resize is
+      // even allowed is decided per-stream (see `attached` below).
       const ro = new ResizeObserver(() => scheduleScreenFit());
       ro.observe($("#screen-term"));
       screenState.ro = ro;
-      pushScreenSize();
 
       const sse = new EventSource(`/api/agents/${encodeURIComponent(name)}/terminal`);
       sse.onmessage = (ev) => {
@@ -2315,6 +2314,31 @@
         }
         if (parsed.error) {
           setScreenHint(parsed.error, true);
+          return;
+        }
+        // The grid frame. WHO OWNS THE SIZE is decided here:
+        //   attached > 0 → a real terminal window is watching this pane and is
+        //     laid out for it, so we MIRROR. Fitting the grid to this panel
+        //     instead reflowed a live agent's TUI to 316 columns — in the
+        //     operator's own window too, because resize-window is the window's
+        //     size, not a per-viewer preference.
+        //   attached === 0 → nobody else is looking, so the panel may fit the
+        //     pane to itself. Closing the terminal windows is the point of all
+        //     this; it should be an upgrade, not a pane frozen at whatever size
+        //     the last window happened to have.
+        if (typeof parsed.cols === "number") {
+          screenState.owns = parsed.attached === 0;
+          if (screenState.owns) {
+            scheduleScreenFit();
+            setScreenHint("live — type here to drive it", false);
+          } else {
+            term.resize(parsed.cols, parsed.rows);
+            fitFontToGrid();
+            setScreenHint(
+              `live — mirroring ${parsed.cols}×${parsed.rows} (a terminal window is attached; close it and this panel sets the size)`,
+              false,
+            );
+          }
           return;
         }
         // atob → bytes → xterm. The stream is raw terminal output, so it is
@@ -2354,15 +2378,42 @@
       hint.classList.toggle("stale", !!bad);
     }
 
+    /**
+     * Mirroring mode: the grid is the pane's and cannot be touched, so the FONT
+     * is what gives, sized so the agent's screen fills the panel without
+     * changing a single column. The alternative would be a small terminal
+     * marooned in a large panel.
+     */
+    function fitFontToGrid() {
+      const { term } = screenState;
+      if (!term) return;
+      const box = $("#screen-term").getBoundingClientRect();
+      if (box.width < 40 || box.height < 40) return;
+      // Measure this font rather than assume a ratio: xterm reports the cell it
+      // actually rendered, and mono faces differ.
+      const core = term._core?._renderService?.dimensions?.css?.cell;
+      if (!core || !core.width || !core.height) return;
+      const perW = (box.width - 12) / (core.width / term.options.fontSize);
+      const perH = (box.height - 12) / (core.height / term.options.fontSize);
+      const size = Math.floor(Math.min(perW / term.cols, perH / term.rows));
+      // Rails, not taste: below ~8px it is unreadable, above ~22px one agent
+      // eats the panel.
+      term.options.fontSize = Math.max(8, Math.min(22, size));
+    }
+
     let fitTimer = null;
     function scheduleScreenFit() {
-      // Debounced: a drag fires ResizeObserver dozens of times, and each fit is
-      // a tmux resize-window on the other end.
+      // Debounced: a drag fires ResizeObserver dozens of times, and in owning
+      // mode each fit is a tmux resize-window on the other end.
       clearTimeout(fitTimer);
       fitTimer = setTimeout(() => {
-        if (!screenState.fit) return;
-        screenState.fit.fit();
-        pushScreenSize();
+        if (!screenState.term) return;
+        if (screenState.owns) {
+          screenState.fit.fit();
+          pushScreenSize();
+        } else {
+          fitFontToGrid();
+        }
       }, 120);
     }
 

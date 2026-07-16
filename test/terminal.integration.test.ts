@@ -141,6 +141,10 @@ describe.runIf(true)("TerminalBridge (real tmux)", () => {
       "display-message", "-p", "-t", `=${session}:`, "#{pane_width}x#{pane_height}",
     ]);
     expect(`${first.cols}x${first.rows}`).toBe(real.trim());
+    // Nobody is attached to a session created with -d, so the viewer is free to
+    // size this pane to its own panel. With a real terminal window attached the
+    // count is > 0 and the viewer must mirror instead — that is the whole rule.
+    expect(first.attached).toBe(0);
   }, 20_000);
 
   it("stops the tee when the last viewer leaves, and cleans the file up", async () => {
