@@ -60,7 +60,7 @@ agent-protocol snippet in your `~/.claude/CLAUDE.md`, adds the permission rules,
 file of yours. Re-run it whenever you like, it changes nothing that is already right. Pass
 `--yes` and it stops asking.
 
-When it finishes, the dashboard is at `http://localhost:4577/`. Launch agents from the **Launch
+When it finishes, the dashboard is at `http://127.0.0.1:4577/`. Launch agents from the **Launch
 agent** form there, or run `switchboard wire` in the folder of a claude window you already have
 open to bring that one in.
 
@@ -128,7 +128,7 @@ switchboard shortcut --startup  # or: installs it in the Startup folder (runs on
 ```
 
 Double-click `Switchboard` (or just boot Windows, with `--startup`) and the Hub comes up in the
-background, with the dashboard open at `http://localhost:4577/` in your Windows browser. WSL2
+background, with the dashboard open at `http://127.0.0.1:4577/` in your Windows browser. WSL2
 forwards localhost for you; the Hub still binds `127.0.0.1` inside WSL, so nothing reaches the
 network. Launch or wire agents from the **Launch agent** form. Delete the shortcut to undo it.
 

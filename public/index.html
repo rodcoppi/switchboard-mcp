@@ -205,6 +205,12 @@
     @keyframes blink { 50% { opacity: 0.25; } }
 
     .header-spacer { flex: 1 1 auto; }
+    /* [hidden] LAST, and it must exist on every rule that sets `display`: the
+       attribute is only a UA-stylesheet `display:none`, so any `display` of ours
+       beats it and the element stays on screen while the JS believes it hid it.
+       This has now bitten the card menus and this snippet. */
+    [hidden] { display: none !important; }
+
     .mcp-add {
       display: flex; align-items: center; gap: 8px;
       background: var(--bg-inset);
@@ -715,6 +721,69 @@
 
     .groups-open { margin-left: 8px; flex: none; }
     .launcher-open { margin-left: auto; flex: none; }
+
+    /* --------------------------- the tab strip ---------------------------
+       Messages and every open agent, side by side. */
+    .tabs {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: stretch;
+      gap: 2px;
+      padding: 0 12px;
+      background: var(--bg-elev);
+      border-bottom: 1px solid var(--border);
+    }
+    .tab-strip { display: flex; align-items: stretch; gap: 2px; min-width: 0; overflow-x: auto; }
+    .tabs .groups-open { margin-left: auto; align-self: center; }
+
+    .tab {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      flex: none;
+      max-width: 220px;
+      padding: 9px 12px;
+      background: transparent;
+      border: none;
+      /* The active tab is joined to the panel below it by an amber underline —
+         a tab is a thing you are INSIDE, not a button you pressed. */
+      border-bottom: 2px solid transparent;
+      color: var(--text-faint);
+      font-family: var(--mono);
+      font-size: var(--fs-sm);
+      cursor: pointer;
+      white-space: nowrap;
+      transition: color 0.12s var(--ease), border-color 0.12s var(--ease);
+    }
+    .tab:hover { color: var(--text); }
+    .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .tab-mark { color: var(--accent); font-weight: 700; }
+    .tab .name { overflow: hidden; text-overflow: ellipsis; }
+    .tab .dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+    .tab .dot.online { background: var(--online); }
+    .tab .dot.offline { background: var(--offline); }
+    .tab-close {
+      margin-left: 2px;
+      padding: 0 3px;
+      background: none;
+      border: none;
+      color: var(--text-faint);
+      font-size: 12px;
+      line-height: 1;
+      cursor: pointer;
+      border-radius: 3px;
+    }
+    .tab-close:hover { color: var(--danger); background: var(--bg-hover); }
+    .tab-unread {
+      min-width: 18px;
+      padding: 1px 5px;
+      text-align: center;
+      border-radius: 9px;
+      background: var(--unread-bg);
+      color: var(--unread-fg);
+      font-size: var(--fs-eyebrow);
+      font-weight: 700;
+    }
 
     /* Lightbox. One in the file, for the launcher — a form you touch once per
        project has no business owning half the rail, which is now the list of
@@ -1235,17 +1304,31 @@
         <button class="btn launcher-open" id="launcher-open" type="button"
           title="Launch a new agent">+ agent</button>
       </div>
+
       <div class="agents" id="agents"></div>
 
     </aside>
 
     <main class="main">
-      <div class="feed-head">
-        <span class="eyebrow">Messages</span>
-        <span class="sub">what your agents said to each other — newest at the bottom</span>
-        <div class="group-tabs" id="group-tabs"></div>
+      <!-- The tab strip. Messages is the first tab and always there; every
+           agent you open becomes one beside it. The transcript used to be
+           "whatever the panel showed when no screen was open", which made the
+           one view that is not an agent behave unlike everything next to it. -->
+      <div class="tabs" id="tabs">
+        <button class="tab active" id="tab-messages" type="button"
+          title="The messages your agents sent each other">
+          <span class="tab-mark">⇄</span>
+          <span>Messages</span>
+          <span class="tab-unread" id="tab-messages-unread" hidden></span>
+        </button>
+        <div class="tab-strip" id="tab-strip"></div>
         <button class="btn groups-open" id="groups-open" type="button"
           title="See every group and move agents between them">Groups</button>
+      </div>
+
+      <div class="feed-head">
+        <span class="sub">what your agents said to each other — newest at the bottom</span>
+        <div class="group-tabs" id="group-tabs"></div>
       </div>
 
       <!-- Groups panel: a group holds several agents, so it is managed in one
@@ -1449,6 +1532,15 @@
       $("#sidebar-count").textContent = String(agents.length);
       // The MCP registration line is a first-run instruction, not furniture.
       $("#mcp-add").hidden = agents.length > 0;
+
+      // The Messages tab is active whenever no agent's screen is. And it counts
+      // unread: with the panel showing a terminal, the transcript is off screen,
+      // and a message arriving there would otherwise be invisible.
+      $("#tab-messages").classList.toggle("active", screenState.name === null);
+      const unread = agents.reduce((n, a) => n + (a.unreadCount || 0), 0);
+      const badge = $("#tab-messages-unread");
+      badge.hidden = unread === 0;
+      badge.textContent = String(unread);
     }
 
     function renderUptime() {
@@ -1565,6 +1657,7 @@
       // that already runs whenever an agent appears, moves group or leaves.
       renderGroupTabs();
       renderGroupOptions();
+      renderTabs(); // the tabs carry each agent's dot and unread count
     }
 
     /**
@@ -2187,10 +2280,61 @@
     // have collapsed right now is a view, not something the hub should store.
     const collapsedGroups = new Set();
 
+    // Agents with a tab open, in the order you opened them. Only the ACTIVE one
+    // streams: a tab you are not looking at does not need a live terminal, and
+    // re-attaching costs a 2ms capture-pane — the pane has no scrollback to lose
+    // (Claude Code redraws its own), so the switch is invisible.
+    const openTabs = [];
+
+    function renderTabs() {
+      const strip = $("#tab-strip");
+      strip.textContent = "";
+      for (const name of openTabs) {
+        const agent = state.agents.get(name);
+        const tab = el("button", `tab${screenState.name === name ? " active" : ""}`);
+        tab.type = "button";
+        tab.title = agent ? `${name} — ${agent.role || "no role"}` : name;
+        tab.append(
+          el("span", `dot ${agent && agent.status === "online" ? "online" : "offline"}`),
+          el("span", "name", name),
+        );
+        if (agent && agent.unreadCount > 0) {
+          tab.appendChild(el("span", "tab-unread", String(agent.unreadCount)));
+        }
+        tab.addEventListener("click", () => openScreen(name));
+
+        const close = el("button", "tab-close", "✕");
+        close.type = "button";
+        close.title = `Close the ${name} tab`;
+        close.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          closeTab(name);
+        });
+        tab.appendChild(close);
+        strip.appendChild(tab);
+      }
+      $("#tab-messages").classList.toggle("active", screenState.name === null);
+    }
+
+    function closeTab(name) {
+      const i = openTabs.indexOf(name);
+      if (i !== -1) openTabs.splice(i, 1);
+      // Closing the tab you are looking at lands you on its neighbour, the way
+      // a browser does — not on a blank panel.
+      if (screenState.name === name) {
+        const next = openTabs[i] || openTabs[i - 1];
+        if (next) openScreen(next);
+        else closeScreen();
+      } else {
+        renderTabs();
+      }
+    }
+
     function openScreen(name) {
       if (screenState.name === name) return;
-      closeScreen();
+      closeScreen({ keepTabs: true });
       screenState.name = name;
+      if (!openTabs.includes(name)) openTabs.push(name);
 
       // The whole Messages panel steps aside, header and filter bar included.
       // Leaving "MESSAGES" labelling an agent's terminal was a lie.
@@ -2292,9 +2436,15 @@
       screenState.sse = sse;
       term.focus();
       renderAgents(); // the rail marks which agent is on screen
+      renderTabs();
     }
 
-    function closeScreen() {
+    /**
+     * Leaves the screen and shows Messages. keepTabs is for switching BETWEEN
+     * agents: the terminal is torn down and rebuilt, but the tab strip is not
+     * the terminal — closing tabs on every switch would be a different feature.
+     */
+    function closeScreen(opts) {
       if (screenState.sse) screenState.sse.close();
       if (screenState.ro) screenState.ro.disconnect();
       if (screenState.term) screenState.term.dispose();
@@ -2303,11 +2453,15 @@
       screenState.name = null;
       $("#screen").hidden = true;
       $("#screen-term").textContent = "";
+      // Mid-switch: openScreen is about to show the next agent, so leaving
+      // Messages visible for that instant would just flash the transcript.
+      if (opts && opts.keepTabs) return;
       $("#feed").hidden = false;
       $(".feed-head").hidden = false;
       $("#filter-bar").hidden = false;
       renderFilterBar(); // it owns its own visibility
       if (had) renderAgents();
+      renderTabs();
     }
 
     function setScreenHint(text, bad) {
@@ -3146,6 +3300,9 @@
       // it gets the same treatment: typing "Chefe de Redes" reads back as
       // "chefe-de-redes" rather than bouncing off the hub.
       bindAgentNameSanitizer($("#launch-group"));
+
+      // Messages: a tab like any other, so selecting it is closing the screen.
+      $("#tab-messages").addEventListener("click", closeScreen);
 
       // Launch agent (lightbox).
       $("#launcher-open").addEventListener("click", () => {

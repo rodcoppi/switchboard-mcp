@@ -747,7 +747,12 @@ describe("shortcut", () => {
       `wsl.exe -d Ubuntu -- bash -lc "'/home/u/.n/bin/node' '/home/u/sb/bin/switchboard.mjs' up"`,
     );
     expect(bat).not.toMatch(/"node /); // never a bare PATH-dependent node
-    expect(bat).toContain('start "" http://localhost:4577/');
+    // 127.0.0.1, never "localhost": the hub binds 127.0.0.1 (a security
+    // invariant), and localhost resolves to ::1 first on a modern Windows/WSL
+    // box — the browser knocks on IPv6, nothing answers, and the dashboard sits
+    // on "connecting" forever with every agent alive behind it. Real report.
+    expect(bat).toContain('start "" http://127.0.0.1:4577/');
+    expect(bat).not.toContain("localhost");
     expect(bat).toContain("if errorlevel 1"); // failure keeps the window open (pause)
     expect(bat).toContain("pause");
     // ASCII only — no codepage surprises in cmd.exe.

@@ -17,7 +17,7 @@
 //   on real NTFS. A \\wsl$\... IconLocation renders blank whenever the distro is
 //   not running — which is exactly the case at boot, when the Startup shortcut
 //   is drawn.
-// - The dashboard is reachable from Windows at http://localhost:<port>/
+// - The dashboard is reachable from Windows at http://127.0.0.1:<port>/
 //   thanks to WSL2's built-in localhost forwarding — the hub itself still
 //   binds 127.0.0.1 INSIDE WSL only (D6 intact; forwarding is Windows-local).
 // - The Windows folders are resolved via PowerShell's
@@ -107,7 +107,13 @@ export function shortcutBatContent(input: {
     "  pause",
     "  exit /b 1",
     ")",
-    `start "" http://localhost:${input.port}/`,
+    // 127.0.0.1, NOT localhost. The hub binds 127.0.0.1 — that is a security
+    // invariant, not a default — while "localhost" resolves to ::1 first on a
+    // modern Windows/WSL box. The browser then knocks on an IPv6 address where
+    // nothing is listening and the dashboard hangs on "connecting" forever,
+    // with every agent alive and unreachable behind it. Verified here:
+    // http://[::1]:4577 → ECONNREFUSED, http://127.0.0.1:4577 → OK.
+    `start "" http://127.0.0.1:${input.port}/`,
   ];
   return lines.join("\r\n") + "\r\n";
 }
