@@ -102,10 +102,16 @@ export class TerminalBridge {
   async firstFrame(
     session: string,
   ): Promise<{ frame: string; cols: number; rows: number; attached: number }> {
-    const [frame, size] = await Promise.all([
+    const [raw, size] = await Promise.all([
       this.tmux.capturePaneAnsi(session),
       this.tmux.paneSize(session),
     ]);
+    // capture-pane prints the screen as TEXT LINES, separated by \n. A terminal
+    // is not a text file: \n only moves DOWN, and \r is what returns to column
+    // 0. Written raw, every line started where the previous one ended and the
+    // paint walked off to the right. The live stream needs no such help — those
+    // are real terminal bytes, with their own \r\n.
+    const frame = raw.replace(/\r?\n/g, "\r\n");
     return { frame, cols: size.cols, rows: size.rows, attached: size.attached };
   }
 

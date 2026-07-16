@@ -145,6 +145,11 @@ describe.runIf(true)("TerminalBridge (real tmux)", () => {
     // size this pane to its own panel. With a real terminal window attached the
     // count is > 0 and the viewer must mirror instead — that is the whole rule.
     expect(first.attached).toBe(0);
+    // Every line break must be CRLF. capture-pane prints text lines separated
+    // by \n, but \n on a terminal only moves DOWN — \r is what returns to
+    // column 0. Written raw, each line started where the previous ended and the
+    // whole paint walked off to the right.
+    expect(first.frame).not.toMatch(/[^\r]\n/);
   }, 20_000);
 
   it("stops the tee when the last viewer leaves, and cleans the file up", async () => {

@@ -714,6 +714,41 @@
     .group-tab .count { color: var(--text-faint); margin-left: 5px; }
 
     .groups-open { margin-left: 8px; flex: none; }
+    .launcher-open { margin-left: auto; flex: none; }
+
+    /* Lightbox. One in the file, for the launcher — a form you touch once per
+       project has no business owning half the rail, which is now the list of
+       agents you switch between. */
+    .lightbox {
+      position: fixed;
+      inset: 0;
+      z-index: 50;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 8vh 16px 16px;
+      background: rgba(4, 7, 11, 0.72);
+      overflow-y: auto;
+      animation: lightin 0.12s var(--ease);
+    }
+    .lightbox[hidden] { display: none; }
+    @keyframes lightin { from { opacity: 0 } to { opacity: 1 } }
+    .lightbox-card {
+      width: 100%;
+      max-width: 560px;
+      background: var(--bg-elev);
+      border: 1px solid var(--accent-line);
+      border-radius: var(--radius);
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+    }
+    .lightbox-head {
+      display: flex;
+      align-items: center;
+      padding: 12px 14px 0;
+    }
+    .lightbox-head .dirpicker-close { margin-left: auto; }
+    .lightbox .launcher { border: none; background: none; padding: 12px 14px 14px; }
+    .lightbox .launcher-title { display: none; } /* the head says it already */
 
     /* ------------------------- the agent's screen ------------------------
        tmux is the pty and xterm.js is the emulator, so this is the real
@@ -1088,22 +1123,6 @@
     .msg-read-flag.read { color: var(--text-faint); }
 
     /* ----------------------------- Composer ------------------------------ */
-    .composer {
-      flex: 0 0 auto;
-      border-top: 1px solid var(--border);
-      background: linear-gradient(180deg, var(--bg-elev), var(--bg-elev-2));
-      padding: 13px 18px;
-    }
-    /* Same left-pinned spine as the transcript above it: the panel is ONE
-       column. A capped transcript over an edge-to-edge composer looks like the
-       column landed there by accident. */
-    .composer-row { display: flex; gap: 12px; align-items: stretch; max-width: 1200px; }
-    .composer-side { display: flex; flex-direction: column; gap: 9px; min-width: 158px; }
-    .composer label {
-      font-family: var(--mono);
-      font-size: var(--fs-eyebrow); text-transform: uppercase; letter-spacing: 1.2px;
-      color: var(--text-faint); display: block; margin-bottom: 4px;
-    }
     .field { flex: 1 1 auto; display: flex; flex-direction: column; }
     select, textarea {
       background: var(--bg-inset);
@@ -1131,8 +1150,6 @@
     }
     .send-btn:hover { background: var(--accent-bright); box-shadow: 0 0 16px rgba(245, 166, 35, 0.35); }
     .send-btn:disabled { opacity: 0.5; cursor: default; box-shadow: none; }
-    .composer-hint { color: var(--text-faint); font-family: var(--sans); font-size: var(--fs-xs); margin-top: 8px; }
-    .composer-as { font-family: var(--mono); color: var(--accent); font-weight: 600; }
 
     /* ------------------------------ Toasts ------------------------------- */
     .toasts {
@@ -1176,8 +1193,6 @@
         border-bottom: 1px solid var(--border);
       }
       .mcp-add code { max-width: 28ch; }
-      .composer-row { flex-direction: column; }
-      .composer-side { flex-direction: row; align-items: flex-end; }
     }
 
     /* Motion is purposeful; honor the OS reduced-motion request. */
@@ -1217,80 +1232,11 @@
       <div class="sidebar-head">
         <span class="eyebrow">Patchbay</span>
         <span id="sidebar-count" class="rail-count">0</span>
+        <button class="btn launcher-open" id="launcher-open" type="button"
+          title="Launch a new agent">+ agent</button>
       </div>
       <div class="agents" id="agents"></div>
 
-      <form class="launcher" id="launcher" autocomplete="off">
-        <div class="launcher-title">Launch agent</div>
-        <div>
-          <label class="launcher-label" for="launch-dir">directory (absolute path)</label>
-          <div class="launcher-dir-row">
-            <input class="launch-input" id="launch-dir" name="dir"
-              placeholder="/home/you/project — \\wsl$\… and C:\… accepted too"
-              spellcheck="false" />
-            <button class="btn dirpicker-browse" id="dirpicker-browse" type="button"
-              title="Browse the WSL filesystem and pick a folder">Browse…</button>
-          </div>
-          <div class="dirpicker" id="dirpicker" hidden>
-            <div class="dirpicker-head">
-              <span class="dirpicker-path" id="dirpicker-path"></span>
-              <button class="dirpicker-close" id="dirpicker-close" type="button"
-                title="Close (Esc)">✕</button>
-            </div>
-            <div class="dirpicker-list" id="dirpicker-list"></div>
-            <div class="dirpicker-foot">
-              <button class="dirpicker-select" id="dirpicker-select" type="button">
-                Use this folder
-              </button>
-            </div>
-          </div>
-        </div>
-        <div class="launcher-grid">
-          <div>
-            <label class="launcher-label" for="launch-name">name</label>
-            <input class="launch-input" id="launch-name" name="name"
-              placeholder="defaults to folder name" spellcheck="false" />
-          </div>
-          <div>
-            <label class="launcher-label" for="launch-role">role</label>
-            <input class="launch-input" id="launch-role" name="role"
-              placeholder="e.g. API backend" />
-          </div>
-        </div>
-        <div>
-          <label class="launcher-label" for="launch-group">group</label>
-          <input class="launch-input" id="launch-group" name="group"
-            list="group-options" spellcheck="false"
-            placeholder="default — the agents it can talk to"
-            title="An agent can only message agents in the same group. Type a new name to start a group, or pick one you already have." />
-          <datalist id="group-options"></datalist>
-        </div>
-        <div class="launcher-row">
-          <label class="launcher-label" for="launch-agent-claude">agent</label>
-          <div class="launcher-segmented" id="launch-agent"
-            title="Which coding agent CLI the hub opens in the tmux session.">
-            <input type="radio" name="agentType" id="launch-agent-claude"
-              value="claude" checked />
-            <label class="launcher-segment" for="launch-agent-claude">
-              <svg class="agent-logo" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M17.3041 3.541h-3.6718l6.696 16.918H24Zm-10.6082 0L0 20.459h3.7442l1.3693-3.5527h7.0052l1.3693 3.5527h3.7442L10.5363 3.541Zm-.3712 10.2232 2.2914-5.9456 2.2914 5.9456Z"/></svg>
-              Claude
-            </label>
-            <input type="radio" name="agentType" id="launch-agent-codex" value="codex" />
-            <label class="launcher-segment" for="launch-agent-codex">
-              <svg class="agent-logo" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.4593a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z"/></svg>
-              Codex
-            </label>
-          </div>
-        </div>
-        <div class="launcher-row">
-          <label class="launcher-toggle"
-            title="Resume the folder's previous conversation (claude -c / codex resume --last). Falls back to a fresh session when there is nothing to resume.">
-            <input type="checkbox" id="launch-continue" checked />
-            continue conversation
-          </label>
-          <button class="launch-btn" id="launch-btn" type="submit">launch</button>
-        </div>
-      </form>
     </aside>
 
     <main class="main">
@@ -1342,25 +1288,12 @@
         <div class="screen-term" id="screen-term"></div>
       </div>
 
-      <form class="composer" id="composer" autocomplete="off">
-        <div class="composer-row">
-          <div class="composer-side">
-            <div>
-              <label for="recipient">recipient</label>
-              <select id="recipient" name="recipient"></select>
-            </div>
-            <button class="send-btn" id="send-btn" type="submit">send</button>
-          </div>
-          <div class="field">
-            <label for="composer-body">message (as <span class="composer-as">operator</span>)</label>
-            <textarea id="composer-body" name="body"
-              placeholder="Factual, actionable message for the agent…&#10;Ctrl/⌘+Enter sends."></textarea>
-          </div>
-        </div>
-        <div class="composer-hint">
-          Sends as <span class="composer-as">operator</span> (the human). Broadcast = recipient “all”.
-        </div>
-      </form>
+      <!-- The operator composer lived here: a recipient picker, a textarea and
+           a broadcast. It was a way to reach an agent back when the dashboard
+           could not show you one. Now a card opens the agent's real screen and
+           you type AT it, which is what the composer was approximating. Sending
+           as "operator" is still a thing — `switchboard send <to> <msg>` — where
+           it belongs: a script, not the panel you stare at all day. -->
     </main>
   </div>
 
@@ -1691,7 +1624,6 @@
           state.group = value;
           renderAgents();
           renderFeed();
-          renderRecipients();
         });
         return btn;
       };
@@ -2071,7 +2003,6 @@
         dropAgent(name);
         mergeAgent(body.agent);
         renderAgents();
-        renderRecipients();
         toast(`Agent "${name}" renamed to "${body.agent.name}" (history kept).`);
       } catch (err) {
         toast(`Rename failed: ${err && err.message ? err.message : err}`, "warn");
@@ -2234,7 +2165,6 @@
         for (const agent of body.agents) mergeAgent(agent);
         if (state.group === group) state.group = next; // keep reading the same room
         renderAgents();
-        renderRecipients();
         renderFeed();
         renderGroupsPanel();
         toast(`Group "${group}" is now "${next}" (${body.agents.length} agent(s) moved).`);
@@ -2262,10 +2192,9 @@
       closeScreen();
       screenState.name = name;
 
-      // The whole Messages panel steps aside — header, filter bar and composer
-      // included. Leaving "MESSAGES" labelling an agent's terminal was a lie.
+      // The whole Messages panel steps aside, header and filter bar included.
+      // Leaving "MESSAGES" labelling an agent's terminal was a lie.
       $("#feed").hidden = true;
-      $("#composer").hidden = true;
       $(".feed-head").hidden = true;
       $("#filter-bar").hidden = true;
       $("#screen").hidden = false;
@@ -2275,9 +2204,16 @@
       const term = new Terminal({
         convertEol: false,
         cursorBlink: true,
+        // The pane has NO scrollback of its own — Claude Code runs in the
+        // alternate screen (tmux reports history_size 0), and the conversation
+        // you page through lives in Claude Code's own buffer, which redraws the
+        // screen when you scroll it. So xterm must NOT keep a scrollback and
+        // must NOT eat PageUp/PageDown to scroll one: those keys belong to the
+        // agent, exactly as in a real terminal window. Verified: PageUp
+        // (1b 5b 35 7e) sent as raw bytes scrolls Claude Code's history.
+        scrollback: 0,
         fontFamily: getComputedStyle(document.body).getPropertyValue("--mono").trim(),
         fontSize: 12,
-        scrollback: 5000,
         theme: {
           background: "#070b10",
           foreground: "#e6edf3",
@@ -2288,7 +2224,10 @@
       const fit = new FitAddon.FitAddon();
       term.loadAddon(fit);
       term.open($("#screen-term"));
-      fit.fit();
+      // NO fit() here. The stream's first message says what the grid must be
+      // (the pane's, when a window is attached), and fitting to the panel first
+      // meant the screen frame landed on a grid of the wrong width for a moment
+      // — which is a garbled paint, not a cosmetic flicker.
       screenState.term = term;
       screenState.fit = fit;
 
@@ -2365,7 +2304,6 @@
       $("#screen").hidden = true;
       $("#screen-term").textContent = "";
       $("#feed").hidden = false;
-      $("#composer").hidden = false;
       $(".feed-head").hidden = false;
       $("#filter-bar").hidden = false;
       renderFilterBar(); // it owns its own visibility
@@ -2470,7 +2408,6 @@
         mergeAgent(body.agent);
         draftGroups.delete(group); // it has a member now, so the hub knows it
         renderAgents();
-        renderRecipients();
         renderFeed(); // the transcript is filtered by group — the card just moved
         if (!$("#groups-panel").hidden) renderGroupsPanel();
         toast(`"${name}" is now in the ${group} group.`);
@@ -2503,7 +2440,6 @@
       if (!state.agents.delete(name)) return;
       if (state.filter === name) state.filter = null;
       renderAgents();
-      renderRecipients();
       renderFeed();
     }
 
@@ -2670,32 +2606,6 @@
       return row;
     }
 
-    function renderRecipients() {
-      const sel = $("#recipient");
-      const prev = sel.value;
-      sel.textContent = "";
-      // You are the operator: you reach every agent, groups do not wall you off.
-      // But the list follows the room you are READING, and the broadcast says
-      // which room it will hit — from inside "panorama", "all" meaning every
-      // project on the machine would be a trap.
-      const optAll = el(
-        "option",
-        null,
-        state.group ? `everyone in ${state.group}` : "all (broadcast)",
-      );
-      optAll.value = "all";
-      sel.appendChild(optAll);
-      const agents = sortedAgents().filter((a) => !state.group || groupOf(a) === state.group);
-      for (const agent of agents) {
-        const label = agent.role ? `${agent.name} — ${agent.role}` : agent.name;
-        const opt = el("option", null, label);
-        opt.value = agent.name;
-        sel.appendChild(opt);
-      }
-      const hasPrev = [...sel.options].some((o) => o.value === prev);
-      sel.value = hasPrev ? prev : "all";
-    }
-
     /** The datalist behind the launcher's group field: the rooms you have. */
     function renderGroupOptions() {
       const list = $("#group-options");
@@ -2766,7 +2676,6 @@
       loadAgents()
         .then(() => {
           renderAgents();
-          renderRecipients();
         })
         .catch(() => {
           /* non-fatal: nudge_sent resync and the next reconnect reconcile too */
@@ -2817,7 +2726,6 @@
         case "agent_updated":
           mergeAgent(event.payload);
           renderAgents();
-          renderRecipients();
           break;
         case "message_created":
           onMessageCreated(event.payload);
@@ -2886,7 +2794,6 @@
         Promise.all([loadAgents(), loadMessages()])
           .then(() => {
             renderAgents();
-            renderRecipients();
             renderFeed();
           })
           .catch(() => {
@@ -2928,7 +2835,6 @@
         }
         mergeAgent(data.agent); // agent_updated will also arrive via SSE
         renderAgents();
-        renderRecipients();
         toast(`${name} ${muted ? "muted" : "unmuted"}.`, "ok");
       } catch {
         toast("Network failure while changing mute.", "error");
@@ -2954,43 +2860,6 @@
       }
     }
 
-    async function sendMessage(ev) {
-      ev.preventDefault();
-      const to = $("#recipient").value;
-      const bodyEl = $("#composer-body");
-      const body = bodyEl.value;
-      if (body.trim().length === 0) {
-        toast("Empty message: write something factual and actionable.", "warn");
-        return;
-      }
-      const btn = $("#send-btn");
-      btn.disabled = true;
-      try {
-        const res = await fetch("/api/messages", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          // A broadcast is scoped to the room on screen. Only then: a direct
-          // message needs no group, and "all groups" means all of them.
-          body: JSON.stringify({
-            to,
-            body,
-            ...(to === "all" && state.group ? { group: state.group } : {}),
-          }),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok || !data.ok) {
-          toast(data.error || `Failed to send (HTTP ${res.status}).`, "error");
-          return;
-        }
-        bodyEl.value = "";
-        toast(`Sent to ${to} (${data.delivery}).`, "ok");
-      } catch {
-        toast("Network failure while sending.", "error");
-      } finally {
-        btn.disabled = false;
-      }
-    }
-
     // Launch an agent from the dashboard: the hub creates the tmux session
     // running claude (POST /api/agents/launch). Success is confirmed by a
     // toast; the new agent card arrives via the agent_updated SSE. The hub
@@ -3001,6 +2870,14 @@
     function selectedAgentType() {
       const checked = document.querySelector('#launch-agent input[name="agentType"]:checked');
       return checked && checked.value === "codex" ? "codex" : "claude";
+    }
+
+    function closeLauncher() {
+      $("#launcher-box").hidden = true;
+      dirpickerClose();
+      for (const id of ["#launch-dir", "#launch-name", "#launch-role", "#launch-group"]) {
+        $(id).value = "";
+      }
     }
 
     async function launchAgent(ev) {
@@ -3056,9 +2933,7 @@
             `The kickoff will instruct it to join.`,
           "ok",
         );
-        $("#launch-dir").value = "";
-        $("#launch-name").value = "";
-        $("#launch-role").value = "";
+        closeLauncher(); // it launched; the form has nothing left to say
         // No render here: the agent card arrives via the agent_updated SSE.
       } catch {
         toast("Network failure while launching.", "error");
@@ -3261,13 +3136,6 @@
       setupMcpCommand();
 
       // Composer wiring.
-      $("#composer").addEventListener("submit", sendMessage);
-      $("#composer-body").addEventListener("keydown", (ev) => {
-        if ((ev.ctrlKey || ev.metaKey) && ev.key === "Enter") {
-          ev.preventDefault();
-          $("#composer").requestSubmit();
-        }
-      });
       $("#filter-clear").addEventListener("click", () => setFilter(state.filter));
 
       // Launcher wiring. The name field sanitizes as you type for the same
@@ -3278,6 +3146,17 @@
       // it gets the same treatment: typing "Chefe de Redes" reads back as
       // "chefe-de-redes" rather than bouncing off the hub.
       bindAgentNameSanitizer($("#launch-group"));
+
+      // Launch agent (lightbox).
+      $("#launcher-open").addEventListener("click", () => {
+        $("#launcher-box").hidden = false;
+        $("#launch-dir").focus();
+      });
+      $("#launcher-close").addEventListener("click", closeLauncher);
+      // Clicking the backdrop closes; clicking the card must not.
+      $("#launcher-box").addEventListener("click", (ev) => {
+        if (ev.target === $("#launcher-box")) closeLauncher();
+      });
 
       // The agent's screen.
       $("#screen-close").addEventListener("click", closeScreen);
@@ -3330,6 +3209,7 @@
         // it (it is how you interrupt Claude Code), so it must reach the pane
         // rather than close the view. The ✕ and the card do that.
         if (!$("#dirpicker").hidden) dirpickerClose();
+        else if (!$("#launcher-box").hidden) closeLauncher();
         else if (!$("#groups-panel").hidden) closeGroups();
       });
 
@@ -3341,7 +3221,6 @@
         toast("Failed to load the Hub's initial state.", "error");
       }
       renderAgents();
-      renderRecipients();
       renderFilterBar();
       renderFeed();
 
@@ -3354,5 +3233,88 @@
 
     boot();
   </script>
+  <!-- Launch agent: a lightbox now. It used to own the bottom half of the rail
+       permanently — a form you use once per project, sitting in the space the
+       rail needs to be what it became: the list of agents you switch between. -->
+  <div class="lightbox" id="launcher-box" hidden>
+    <div class="lightbox-card">
+      <div class="lightbox-head">
+        <span class="eyebrow">Launch agent</span>
+        <button class="dirpicker-close" id="launcher-close" type="button"
+          title="Close (Esc)">✕</button>
+      </div>
+        <form class="launcher" id="launcher" autocomplete="off">
+          <div class="launcher-title">Launch agent</div>
+          <div>
+            <label class="launcher-label" for="launch-dir">directory (absolute path)</label>
+            <div class="launcher-dir-row">
+              <input class="launch-input" id="launch-dir" name="dir"
+                placeholder="/home/you/project — \\wsl$\… and C:\… accepted too"
+                spellcheck="false" />
+              <button class="btn dirpicker-browse" id="dirpicker-browse" type="button"
+                title="Browse the WSL filesystem and pick a folder">Browse…</button>
+            </div>
+            <div class="dirpicker" id="dirpicker" hidden>
+              <div class="dirpicker-head">
+                <span class="dirpicker-path" id="dirpicker-path"></span>
+                <button class="dirpicker-close" id="dirpicker-close" type="button"
+                  title="Close (Esc)">✕</button>
+              </div>
+              <div class="dirpicker-list" id="dirpicker-list"></div>
+              <div class="dirpicker-foot">
+                <button class="dirpicker-select" id="dirpicker-select" type="button">
+                  Use this folder
+                </button>
+              </div>
+            </div>
+          </div>
+          <div class="launcher-grid">
+            <div>
+              <label class="launcher-label" for="launch-name">name</label>
+              <input class="launch-input" id="launch-name" name="name"
+                placeholder="defaults to folder name" spellcheck="false" />
+            </div>
+            <div>
+              <label class="launcher-label" for="launch-role">role</label>
+              <input class="launch-input" id="launch-role" name="role"
+                placeholder="e.g. API backend" />
+            </div>
+          </div>
+          <div>
+            <label class="launcher-label" for="launch-group">group</label>
+            <input class="launch-input" id="launch-group" name="group"
+              list="group-options" spellcheck="false"
+              placeholder="default — the agents it can talk to"
+              title="An agent can only message agents in the same group. Type a new name to start a group, or pick one you already have." />
+            <datalist id="group-options"></datalist>
+          </div>
+          <div class="launcher-row">
+            <label class="launcher-label" for="launch-agent-claude">agent</label>
+            <div class="launcher-segmented" id="launch-agent"
+              title="Which coding agent CLI the hub opens in the tmux session.">
+              <input type="radio" name="agentType" id="launch-agent-claude"
+                value="claude" checked />
+              <label class="launcher-segment" for="launch-agent-claude">
+                <svg class="agent-logo" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M17.3041 3.541h-3.6718l6.696 16.918H24Zm-10.6082 0L0 20.459h3.7442l1.3693-3.5527h7.0052l1.3693 3.5527h3.7442L10.5363 3.541Zm-.3712 10.2232 2.2914-5.9456 2.2914 5.9456Z"/></svg>
+                Claude
+              </label>
+              <input type="radio" name="agentType" id="launch-agent-codex" value="codex" />
+              <label class="launcher-segment" for="launch-agent-codex">
+                <svg class="agent-logo" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M22.2819 9.8211a5.9847 5.9847 0 0 0-.5157-4.9108 6.0462 6.0462 0 0 0-6.5098-2.9A6.0651 6.0651 0 0 0 4.9807 4.1818a5.9847 5.9847 0 0 0-3.9977 2.9 6.0462 6.0462 0 0 0 .7427 7.0966 5.98 5.98 0 0 0 .511 4.9107 6.051 6.051 0 0 0 6.5146 2.9001A5.9847 5.9847 0 0 0 13.2599 24a6.0557 6.0557 0 0 0 5.7718-4.2058 5.9894 5.9894 0 0 0 3.9977-2.9001 6.0557 6.0557 0 0 0-.7475-7.0729zm-9.022 12.6081a4.4755 4.4755 0 0 1-2.8764-1.0408l.1419-.0804 4.7783-2.7582a.7948.7948 0 0 0 .3927-.6813v-6.7369l2.02 1.1686a.071.071 0 0 1 .038.052v5.5826a4.504 4.504 0 0 1-4.4945 4.4944zm-9.6607-4.1254a4.4708 4.4708 0 0 1-.5346-3.0137l.142.0852 4.783 2.7582a.7712.7712 0 0 0 .7806 0l5.8428-3.3685v2.3324a.0804.0804 0 0 1-.0332.0615L9.74 19.9502a4.4992 4.4992 0 0 1-6.1408-1.6464zM2.3408 7.8956a4.485 4.485 0 0 1 2.3655-1.9728V11.6a.7664.7664 0 0 0 .3879.6765l5.8144 3.3543-2.0201 1.1685a.0757.0757 0 0 1-.071 0l-4.8303-2.7865A4.504 4.504 0 0 1 2.3408 7.872zm16.5963 3.8558L13.1038 8.364 15.1192 7.2a.0757.0757 0 0 1 .071 0l4.8303 2.7913a4.4944 4.4944 0 0 1-.6765 8.1042v-5.6772a.79.79 0 0 0-.407-.667zm2.0107-3.0231l-.142-.0852-4.7735-2.7818a.7759.7759 0 0 0-.7854 0L9.409 9.2297V6.8974a.0662.0662 0 0 1 .0284-.0615l4.8303-2.7866a4.4992 4.4992 0 0 1 6.6802 4.66zM8.3065 12.863l-2.02-1.1638a.0804.0804 0 0 1-.038-.0567V6.0742a4.4992 4.4992 0 0 1 7.3757-3.4537l-.142.0805L8.704 5.4593a.7948.7948 0 0 0-.3927.6813zm1.0976-2.3654l2.602-1.4998 2.6069 1.4998v2.9994l-2.5974 1.4997-2.6067-1.4997Z"/></svg>
+                Codex
+              </label>
+            </div>
+          </div>
+          <div class="launcher-row">
+            <label class="launcher-toggle"
+              title="Resume the folder's previous conversation (claude -c / codex resume --last). Falls back to a fresh session when there is nothing to resume.">
+              <input type="checkbox" id="launch-continue" checked />
+              continue conversation
+            </label>
+            <button class="launch-btn" id="launch-btn" type="submit">launch</button>
+          </div>
+        </form>
+    </div>
+  </div>
 </body>
 </html>
