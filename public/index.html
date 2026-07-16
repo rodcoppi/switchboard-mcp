@@ -1292,6 +1292,16 @@
     .group-head:hover .group-swatch { opacity: 1; }
     .group-swatch:hover { transform: scale(1.18); }
 
+    /* Drag-to-reorder: the lifted card fades and shows a dashed berth so the gap
+       it will leave is legible while you place it. */
+    .agent-card.dragging {
+      opacity: 0.4;
+      outline: 1px dashed var(--accent-line);
+      outline-offset: -1px;
+    }
+    .agent-card[draggable="true"] { cursor: grab; }
+    .agent-card.dragging { cursor: grabbing; }
+
     .filter-bar {
       flex: 0 0 auto;
       display: none;
@@ -1827,9 +1837,31 @@
       state.agents.set(incoming.name, { ...prev, ...incoming, unreadCount });
     }
 
+    // Manual order (drag-to-reorder) is a viewer preference in localStorage: a
+    // list of names in the order the operator arranged. A name in the list wins;
+    // anything not yet arranged falls back to online-first-then-name and sits
+    // after the arranged ones. Empty list => the original default ordering.
+    function loadChatOrder() {
+      try {
+        const v = JSON.parse(localStorage.getItem("sb.chatOrder") || "[]");
+        return Array.isArray(v) ? v : [];
+      } catch {
+        return [];
+      }
+    }
+    function saveChatOrder(names) {
+      localStorage.setItem("sb.chatOrder", JSON.stringify(names));
+    }
+
     function sortedAgents() {
+      const order = loadChatOrder();
+      const rank = new Map(order.map((n, i) => [n, i]));
       return [...state.agents.values()].sort((a, b) => {
-        // online first, then by name — stable ordering for the redesign.
+        const ia = rank.has(a.name) ? rank.get(a.name) : -1;
+        const ib = rank.has(b.name) ? rank.get(b.name) : -1;
+        if (ia !== -1 && ib !== -1) return ia - ib; // both arranged: keep it
+        if (ia !== -1) return -1; // arranged sorts before unarranged
+        if (ib !== -1) return 1;
         if (a.status !== b.status) return a.status === "online" ? -1 : 1;
         return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
       });
@@ -1939,6 +1971,58 @@
       renderAgents();
     }
 
+    // --- Drag to reorder chats (and drop into another room) --------------
+    let dragName = null;
+    function cardAfterY(box, y) {
+      const cards = [...box.querySelectorAll(":scope > .agent-card:not(.dragging)")];
+      for (const c of cards) {
+        const r = c.getBoundingClientRect();
+        if (y < r.top + r.height / 2) return c;
+      }
+      return null;
+    }
+    // Read the arrangement out of the DOM and persist it. If the card ended in a
+    // different room's box, that is also a move-to-group. Never falls back to
+    // `default`: a card dropped outside every box keeps its current room.
+    function commitDrag(moved) {
+      const container = $("#agents");
+      const agent = state.agents.get(moved);
+      const card = container.querySelector(`.agent-card[data-name="${CSS.escape(moved)}"]`);
+      const box = card ? card.closest(".rail-group") : null;
+      const targetGroup = box ? box.dataset.group : agent ? groupOf(agent) : DEFAULT_GROUP;
+      saveChatOrder([...container.querySelectorAll(".agent-card")].map((c) => c.dataset.name));
+      if (agent && targetGroup && groupOf(agent) !== targetGroup) {
+        moveAgentToGroup(moved, targetGroup); // server + re-render, honours the saved order
+      } else {
+        renderAgents();
+      }
+    }
+
+    function initDragReorder() {
+      const container = $("#agents");
+      container.addEventListener("dragover", (e) => {
+        if (!dragName) return;
+        const dragging = container.querySelector(".agent-card.dragging");
+        if (!dragging) return;
+        // Only a real drop zone: a group box, or the flat container when there
+        // are no groups. Dead space in grouped mode is left alone, so a card is
+        // never orphaned outside every room.
+        const box = e.target.closest(".rail-group");
+        const grouped = !!container.querySelector(".rail-group");
+        const zone = box || (grouped ? null : container);
+        if (!zone) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        const after = cardAfterY(zone, e.clientY);
+        if (after == null) zone.appendChild(dragging);
+        else zone.insertBefore(dragging, after);
+      });
+      // drop only has to ACCEPT the gesture; dragend commits (it always fires).
+      container.addEventListener("drop", (e) => {
+        if (dragName) e.preventDefault();
+      });
+    }
+
     /**
      * Which room a message belongs to. Messages carry no group of their own —
      * they do not need to: agents can only message inside their group, so the
@@ -1990,6 +2074,7 @@
           const inGroup = agents.filter((a) => groupOf(a) === group);
           if (state.group && group !== state.group) continue;
           const box = el("div", "rail-group");
+          box.dataset.group = group;
           box.style.setProperty("--group-color", groupColor(group));
           box.appendChild(buildGroupHead(group, inGroup));
           if (!collapsedGroups.has(group)) {
@@ -2094,6 +2179,26 @@
     function buildAgentCard(agent) {
       const card = el("div", "agent-card");
       card.classList.add(agent.status === "online" ? "online" : "offline");
+      // Drag to reorder within a group, or across into another group's box.
+      card.draggable = true;
+      card.addEventListener("dragstart", (e) => {
+        dragName = agent.name;
+        card.classList.add("dragging");
+        e.dataTransfer.effectAllowed = "move";
+        try {
+          e.dataTransfer.setData("text/plain", agent.name);
+        } catch {
+          /* some browsers require a payload; the value itself is unused */
+        }
+      });
+      card.addEventListener("dragend", () => {
+        card.classList.remove("dragging");
+        // dragend ALWAYS fires (drop does not, e.g. dropped outside a zone), so
+        // this is where the arrangement is committed — the drop handler only has
+        // to accept the gesture.
+        if (dragName) commitDrag(dragName);
+        dragName = null;
+      });
       if (state.filter === agent.name) card.classList.add("active");
       card.dataset.name = agent.name;
 
@@ -4065,6 +4170,9 @@
       for (const b of document.querySelectorAll(".screen-mode")) {
         b.addEventListener("click", () => setScreenMode(b.dataset.mode));
       }
+
+      // Drag agent cards to reorder them (and drop across into another room).
+      initDragReorder();
 
       // Chat composer: type to the agent.
       const chatInput = $("#chat-input");
