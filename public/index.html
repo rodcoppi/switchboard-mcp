@@ -3388,7 +3388,16 @@
       setInterval(loadHealth, 15000);
     }
 
-    boot();
+    // WAIT for the DOM. This script sits in the middle of the body, so markup
+    // below it does not exist yet when it runs — boot() wires listeners onto
+    // ~50 elements and the first null threw, leaving the dashboard stuck on
+    // "connecting" with a live hub and four agents behind it. Nothing errored
+    // visibly; it just never started.
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", boot);
+    } else {
+      boot();
+    }
   </script>
   <!-- Launch agent: a lightbox now. It used to own the bottom half of the rail
        permanently — a form you use once per project, sitting in the space the
