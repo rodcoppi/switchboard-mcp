@@ -1255,6 +1255,43 @@
       background: var(--border-soft);
     }
 
+    /* A group HUGS its agents: head and cards share one container with the
+       group's colour running down the left as a rail, and a faint wash of that
+       colour behind them. This is what makes a group read as a container in the
+       sidebar and not just a label that happens to sit above some rows. */
+    .rail-group {
+      position: relative;
+      margin: 3px 6px 8px 8px;
+      padding-left: 2px;
+      border-left: 2px solid var(--group-color, var(--accent-line));
+      border-radius: 0 9px 9px 0;
+      background: linear-gradient(
+        to right,
+        color-mix(in srgb, var(--group-color, var(--accent)) 9%, transparent),
+        transparent 62%
+      );
+    }
+    .rail-group .group-head { padding-left: 10px; }
+    .rail-group .group-head > span:nth-child(2) {
+      color: color-mix(in srgb, var(--group-color, var(--text-dim)) 78%, var(--text));
+      font-weight: 600;
+    }
+    .rail-group .group-head .caret { color: var(--group-color, var(--text-faint)); }
+    /* The colour dot on the head doubles as the "recolour this group" control. */
+    .group-swatch {
+      flex: 0 0 auto;
+      width: 11px;
+      height: 11px;
+      border-radius: 4px;
+      border: 1px solid color-mix(in srgb, var(--group-color, var(--accent)) 60%, transparent);
+      background: var(--group-color, var(--accent));
+      cursor: pointer;
+      opacity: 0.55;
+      transition: opacity 0.12s var(--ease), transform 0.12s var(--ease);
+    }
+    .group-head:hover .group-swatch { opacity: 1; }
+    .group-swatch:hover { transform: scale(1.18); }
+
     .filter-bar {
       flex: 0 0 auto;
       display: none;
@@ -1579,7 +1616,7 @@
              agents listed below them. Groups was up in the tab strip, which is
              about which SCREEN you are looking at — a different question. -->
         <button class="btn groups-open" id="groups-open" type="button"
-          title="See every group and move agents between them">Groups</button>
+          title="Create a group, and move agents between rooms">+ group</button>
         <button class="btn launcher-open" id="launcher-open" type="button"
           title="Launch a new agent">+ agent</button>
       </div>
@@ -1875,6 +1912,33 @@
       return (agent && agent.group) || DEFAULT_GROUP;
     }
 
+    // --- Per-group colour ------------------------------------------------
+    // A group's colour is a VIEWER preference (this is one operator's console),
+    // so it lives in localStorage, not on the server. Unset groups get a stable
+    // colour derived from the name, so rooms look distinct the moment they exist
+    // — no "pick a colour first" step. `default` stays neutral: it is the
+    // absence of a room, not a room.
+    const GROUP_PALETTE = [
+      "#e0a326", "#4a9eff", "#3fb950", "#d1509a",
+      "#a371f7", "#e0623c", "#2bb8a3", "#c9a227",
+    ];
+    const DEFAULT_GROUP_COLOR = "#3a424d";
+    function hashStr(s) {
+      let h = 0;
+      for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+      return Math.abs(h);
+    }
+    function groupColor(group) {
+      const saved = localStorage.getItem("sb.groupColor." + group);
+      if (saved) return saved;
+      if (group === DEFAULT_GROUP) return DEFAULT_GROUP_COLOR;
+      return GROUP_PALETTE[hashStr(group) % GROUP_PALETTE.length];
+    }
+    function setGroupColor(group, color) {
+      localStorage.setItem("sb.groupColor." + group, color);
+      renderAgents();
+    }
+
     /**
      * Which room a message belongs to. Messages carry no group of their own —
      * they do not need to: agents can only message inside their group, so the
@@ -1925,9 +1989,13 @@
         for (const group of groups) {
           const inGroup = agents.filter((a) => groupOf(a) === group);
           if (state.group && group !== state.group) continue;
-          container.appendChild(buildGroupHead(group, inGroup));
-          if (collapsedGroups.has(group)) continue; // folded: the tally speaks for it
-          for (const agent of inGroup) container.appendChild(buildAgentCard(agent));
+          const box = el("div", "rail-group");
+          box.style.setProperty("--group-color", groupColor(group));
+          box.appendChild(buildGroupHead(group, inGroup));
+          if (!collapsedGroups.has(group)) {
+            for (const agent of inGroup) box.appendChild(buildAgentCard(agent));
+          }
+          container.appendChild(box);
         }
       }
       renderHeader();
@@ -1960,6 +2028,24 @@
         el("span", null, group),
         el("span", "tally", `${online}/${members.length}`),
       );
+      // A recolour control living on the head: a swatch you click to open a
+      // native colour picker. `default` is the non-room and stays neutral.
+      if (group !== DEFAULT_GROUP) {
+        const swatch = el("span", "group-swatch");
+        swatch.title = `Recolour the ${group} group`;
+        const picker = el("input");
+        picker.type = "color";
+        picker.value = groupColor(group);
+        picker.style.cssText = "position:absolute;width:0;height:0;opacity:0;pointer-events:none;";
+        picker.addEventListener("input", (e) => setGroupColor(group, e.target.value));
+        picker.addEventListener("click", (e) => e.stopPropagation());
+        swatch.addEventListener("click", (e) => {
+          e.stopPropagation(); // do not fold the group
+          picker.click();
+        });
+        swatch.appendChild(picker);
+        head.appendChild(swatch);
+      }
       if (unread > 0) {
         const badge = el("span", "unread-badge", String(unread));
         badge.title = `${unread} unread in ${group}`;
@@ -2027,10 +2113,14 @@
       typeChip.appendChild(document.createTextNode(AGENT_TYPE_LABELS[type]));
       typeChip.title = `This agent runs ${AGENT_TYPE_TITLES[type]}`;
       badges.appendChild(typeChip);
+      // The MCP chip answers one question: is this agent actually wired into
+      // Switchboard? Green = its Claude Code called `join`, so it can RECEIVE
+      // messages other agents send it. Dim = running but not joined yet, so a
+      // message to it would only sit in the queue until it joins.
       const mcp = el("span", `mcp-icon${agent.mcpConnected ? " connected" : ""}`, "MCP");
       mcp.title = agent.mcpConnected
-        ? "MCP connected (join confirmed)"
-        : "MCP not connected yet";
+        ? "Wired into Switchboard — this agent has joined and can receive messages."
+        : "Not joined yet — this agent won't receive messages until its Claude Code calls join.";
       badges.appendChild(mcp);
       if (agent.unreadCount > 0) {
         const badge = el("span", "unread-badge", String(agent.unreadCount));
@@ -2399,6 +2489,10 @@
       if (focusAgent) {
         const sel = document.querySelector(`.groups-member select[data-agent="${focusAgent}"]`);
         if (sel) sel.focus();
+      } else {
+        // Opened from "+ group": land on the create field, ready to name a room.
+        const nw = $("#groups-new");
+        if (nw) nw.focus();
       }
     }
 
