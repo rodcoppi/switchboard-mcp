@@ -14,6 +14,7 @@ import { Logger, createLogger } from "./log.js";
 import { Store } from "./store.js";
 import { PairRateLimiter } from "./ratelimit.js";
 import { EventBus, createApiRouter } from "./api.js";
+import { TerminalBridge } from "./terminal.js";
 import { createMcpEndpoint } from "./mcp.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -131,6 +132,7 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
   // dispatcher (and no tmux) exists at all.
   let dispatcher: Dispatcher | undefined;
   let launcher: Launcher | undefined;
+  let terminals: TerminalBridge | undefined;
   let onMessage: OnMessage;
   if (options.onMessage) {
     onMessage = options.onMessage;
@@ -138,6 +140,14 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
     const tmux = createTmux();
     dispatcher = new Dispatcher({ store, config, log, bus, tmux });
     onMessage = dispatcher.onNewMessage;
+    // The agent's screen in the dashboard. Same real tmux layer: tmux is the
+    // pty, so this needs no second one (see terminal.ts). A hub with a stubbed
+    // onMessage has no tmux and therefore no terminals — the routes answer 501.
+    terminals = new TerminalBridge({
+      tmux,
+      log,
+      dir: path.join(store.baseDir, "term"),
+    });
     // Dashboard "Launch agent": same real tmux layer as the dispatcher. Tests
     // that stub onMessage get NO launcher (endpoint answers 501). The Windows
     // terminal opener rides WSL interop and is null on non-WSL hosts.
@@ -190,6 +200,7 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
       onMessage,
       nudger: dispatcher,
       launcher,
+      terminals,
       claudeProjectsDir: options.claudeProjectsDir,
       startedAt,
       version,
@@ -202,6 +213,15 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
   const publicDir = fileURLToPath(new URL("../../public", import.meta.url));
   if (fs.existsSync(publicDir)) {
     app.use(express.static(publicDir));
+  }
+
+  // xterm.js, served straight out of node_modules. It is the one browser
+  // dependency (owner-approved: a terminal emulator is not something to
+  // hand-roll) and the hub serves it itself, so the dashboard still fetches
+  // nothing off this machine — no CDN, and no build step to copy it either.
+  const vendorDir = fileURLToPath(new URL("../../node_modules/@xterm", import.meta.url));
+  if (fs.existsSync(vendorDir)) {
+    app.use("/vendor", express.static(vendorDir));
   }
 
   // Malformed JSON body throws inside express.json(), BEFORE any handler
@@ -291,6 +311,9 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
     log.info(`[hub] shutting down…`);
     dispatcher?.stop();
     launcher?.stop(); // cancel pending kickoff timers/polls
+    // Stops every pipe-pane tee: an orphan would grow its file for the rest of
+    // the pane's life with nobody reading it.
+    terminals?.closeAll();
     await mcp.close();
     const serverClosed = new Promise<void>((resolve) => {
       server.close(() => resolve());

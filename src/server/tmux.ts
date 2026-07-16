@@ -174,6 +174,39 @@ export interface Tmux {
   newSession(session: string, cwd: string, cmd?: string | string[]): Promise<void>;
   /** `tmux capture-pane -t =<s>: -p -S -<lines>` (default 200 lines back). */
   capturePane(session: string, lines?: number): Promise<string>;
+  /**
+   * `tmux capture-pane -t =<s>: -p -e` — the VISIBLE screen WITH its SGR escape
+   * sequences, i.e. what the pane looks like right now, colours and all. The
+   * terminal view paints this as its first frame: pipe-pane only carries what
+   * happens NEXT, so without it a viewer stares at a blank screen until the
+   * agent moves.
+   */
+  capturePaneAnsi(session: string): Promise<string>;
+  /**
+   * `tmux pipe-pane -o -t =<s>: 'cat >> <file>'` — tees everything the pane
+   * OUTPUTS, raw bytes and escape sequences included, into a file. This is the
+   * stream a terminal emulator needs, and it is why no second pty layer
+   * (node-pty) has to exist: tmux already owns one. Passing no file turns the
+   * tee off, which is the only way to stop it.
+   */
+  pipePaneToFile(session: string, filePath: string | null): Promise<void>;
+  /**
+   * `tmux send-keys -t =<s>: -H <hex bytes>` — writes ARBITRARY bytes into the
+   * pane, so Escape (1b) and Ctrl-C (03) arrive as real control characters
+   * rather than as the words "Escape" and "C-c". LOW-LEVEL: no pane guard here;
+   * the caller runs it (see terminal.ts).
+   */
+  sendKeysHex(session: string, bytes: Buffer): Promise<void>;
+  /** `tmux resize-window -t =<s>: -x <cols> -y <rows>`. */
+  resizeWindow(session: string, cols: number, rows: number): Promise<void>;
+  /**
+   * `tmux display-message -p -t =<s>: '#{pane_width}x#{pane_height}'` — the
+   * pane's real grid. The dashboard MIRRORS this instead of imposing its own
+   * size: the pane is laid out for whatever is attached to it, and a viewer
+   * that resized it to fit a browser panel reflowed the agent's TUI to 316
+   * columns for everyone.
+   */
+  paneSize(session: string): Promise<{ cols: number; rows: number }>;
   /** `tmux kill-session -t =<s>`. */
   killSession(session: string): Promise<void>;
   /** Session names starting with prefix; [] when the tmux server is down. */
@@ -310,6 +343,76 @@ export function createTmux(options: TmuxOptions = {}): Tmux {
     return stdout;
   }
 
+  async function capturePaneAnsi(session: string): Promise<string> {
+    assertValidSession(session);
+    const { stdout } = await exec("tmux", [
+      "capture-pane",
+      "-t",
+      paneTarget(session),
+      "-p",
+      "-e", // keep the SGR sequences: this frame IS the coloured screen
+    ]);
+    return stdout;
+  }
+
+  async function pipePaneToFile(session: string, filePath: string | null): Promise<void> {
+    assertValidSession(session);
+    // No command argument = stop teeing. tmux has no other "off" switch.
+    if (filePath === null) {
+      await exec("tmux", ["pipe-pane", "-t", paneTarget(session)]);
+      return;
+    }
+    // -o toggles the pipe ONLY if it is not already running the same command,
+    // which keeps a second viewer from doubling the stream. The path is ours
+    // (~/.switchboard/term/<name>.raw, name already matched against
+    // AGENT_NAME_RE), never user text, but it is quoted anyway because tmux
+    // hands this string to sh.
+    await exec("tmux", [
+      "pipe-pane",
+      "-o",
+      "-t",
+      paneTarget(session),
+      `cat >> ${quoteShellArg(filePath)}`,
+    ]);
+  }
+
+  async function sendKeysHex(session: string, bytes: Buffer): Promise<void> {
+    assertValidSession(session);
+    if (bytes.length === 0) return;
+    const hex = [...bytes].map((b) => b.toString(16).padStart(2, "0"));
+    await exec("tmux", ["send-keys", "-t", paneTarget(session), "-H", ...hex]);
+  }
+
+  async function resizeWindow(session: string, cols: number, rows: number): Promise<void> {
+    assertValidSession(session);
+    if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols < 1 || rows < 1) {
+      throw new Error(`Invalid terminal size: ${cols}x${rows}.`);
+    }
+    await exec("tmux", [
+      "resize-window",
+      "-t",
+      sessionTarget(session),
+      "-x",
+      String(cols),
+      "-y",
+      String(rows),
+    ]);
+  }
+
+  async function paneSize(session: string): Promise<{ cols: number; rows: number }> {
+    assertValidSession(session);
+    const { stdout } = await exec("tmux", [
+      "display-message",
+      "-p",
+      "-t",
+      paneTarget(session),
+      "#{pane_width}x#{pane_height}",
+    ]);
+    const match = /^(\d+)x(\d+)$/.exec(stdout.trim());
+    if (!match) throw new Error(`Could not read the pane size of "${session}".`);
+    return { cols: Number(match[1]), rows: Number(match[2]) };
+  }
+
   async function killSession(session: string): Promise<void> {
     assertValidSession(session);
     await exec("tmux", ["kill-session", "-t", sessionTarget(session)]);
@@ -402,6 +505,11 @@ export function createTmux(options: TmuxOptions = {}): Tmux {
     sendEnter,
     newSession,
     capturePane,
+    capturePaneAnsi,
+    pipePaneToFile,
+    sendKeysHex,
+    resizeWindow,
+    paneSize,
     killSession,
     listSessions,
     isPaneSafeToNudge,

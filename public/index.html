@@ -1,9 +1,18 @@
 <!DOCTYPE html>
-<html lang="pt-BR">
+<!-- lang=en: every string in this file is English (project convention D8), and
+     a screen reader was announcing them with Portuguese pronunciation. -->
+<html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Switchboard</title>
+  <!-- xterm.js: the ONE thing this page loads that it did not write itself, and
+       the hub serves it from its own node_modules — nothing is fetched off this
+       machine. It is a terminal EMULATOR, the piece you cannot hand-roll; the
+       pty on the other end is tmux, not node-pty. -->
+  <link rel="stylesheet" href="/vendor/xterm/css/xterm.css" />
+  <script src="/vendor/xterm/lib/xterm.js"></script>
+  <script src="/vendor/addon-fit/lib/addon-fit.js"></script>
   <!-- Inline favicon to avoid a /favicon.ico 404 in the hub logs. The mark is
        the "⇄" of the header and of the Windows shortcut icon (assets/switchboard.ico,
        drawn by scripts/make-icon.mjs) — same shape, same amber, one product. -->
@@ -706,6 +715,46 @@
 
     .groups-open { margin-left: 8px; flex: none; }
 
+    /* ------------------------- the agent's screen ------------------------
+       tmux is the pty and xterm.js is the emulator, so this is the real
+       terminal: colours, cursor, Ctrl-C, the lot. It exists to kill the pile
+       of Windows terminal windows — the rail on the left is already the tab
+       bar, so the screen simply takes over the main panel. */
+    .screen {
+      flex: 1 1 auto;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      background: var(--bg-inset);
+    }
+    .screen[hidden] { display: none; }
+    .screen-head {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 14px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg-elev);
+    }
+    .screen-name {
+      font-family: var(--mono);
+      font-size: var(--fs-sm);
+      font-weight: 600;
+      color: var(--accent);
+    }
+    .screen-hint {
+      font-family: var(--sans);
+      font-size: var(--fs-xs);
+      color: var(--text-faint);
+    }
+    .screen-hint.stale { color: var(--danger); }
+    .screen-head .btn { margin-left: auto; }
+    .screen-head .dirpicker-close { margin-left: 0; }
+    /* xterm paints its own grid; it just needs a box that does not collapse. */
+    .screen-term { flex: 1 1 auto; min-height: 0; padding: 6px 0 6px 10px; }
+    .screen-term .xterm { height: 100%; }
+
     /* The Groups panel. Drops under the feed header, over the transcript. */
     .groups-panel {
       flex: 0 0 auto;
@@ -789,20 +838,40 @@
     .groups-new-input { max-width: 220px; }
 
     /* Group header in the rail: the agents under it are the ones that can
-       actually talk to each other. */
+       actually talk to each other. Click to fold the group away — with several
+       projects open the rail is the thing that gets long. */
     .group-head {
       display: flex;
       align-items: center;
       gap: 8px;
+      width: 100%;
       padding: 10px 12px 4px;
+      background: none;
+      border: none;
+      text-align: left;
+      cursor: pointer;
       font-family: var(--mono);
       font-size: var(--fs-eyebrow);
       text-transform: uppercase;
       letter-spacing: 1.2px;
       color: var(--text-faint);
+      transition: color 0.12s var(--ease);
     }
-    .group-head::after {
-      content: "";
+    .group-head:hover { color: var(--text-dim); }
+    .group-head .caret {
+      display: inline-block;
+      width: 8px;
+      transition: transform 0.14s var(--ease);
+    }
+    .group-head.collapsed .caret { transform: rotate(-90deg); }
+    /* The count is the point of collapsing: folded, it is all you see of the
+       group, so it has to say how much is in there. */
+    .group-head .tally {
+      font-variant-numeric: tabular-nums;
+      color: var(--text-faint);
+    }
+    .group-head.collapsed .tally { color: var(--accent); }
+    .group-head .rule {
       flex: 1;
       height: 1px;
       background: var(--border-soft);
@@ -837,7 +906,11 @@
     .feed {
       flex: 1 1 auto;
       overflow-y: auto;
-      padding: 6px 0 12px;
+      /* NO padding-top. A sticky child cannot rise above its containing block,
+         which is this element's CONTENT box — so 6px of padding here pinned the
+         day divider 6px below the top and left a sliver of the previous
+         message showing above it. The dividers carry their own top padding. */
+      padding: 0 0 12px;
       font-family: var(--mono);
       font-size: var(--fs-body);
       background:
@@ -1129,7 +1202,11 @@
       <span class="metric">v<span id="version">—</span></span>
     </div>
     <div class="header-spacer"></div>
-    <div class="mcp-add">
+    <!-- The one-time "register this hub in Claude Code" command. It only shows
+         on a hub with no agents yet, because that is the only time it is the
+         next thing to do — `switchboard setup` runs it for you, and once an
+         agent exists you are long past it. It used to sit here forever. -->
+    <div class="mcp-add" id="mcp-add" hidden>
       <code id="mcp-cmd" title=""></code>
       <button class="btn btn-copy" id="copy-mcp" type="button">copy</button>
     </div>
@@ -1249,6 +1326,21 @@
       </div>
 
       <div class="feed" id="feed"></div>
+
+      <!-- The agent's real screen. Replaces the transcript rather than sitting
+           beside it: the point is to stop juggling windows, not to add a pane
+           you have to juggle. -->
+      <div class="screen" id="screen" hidden>
+        <div class="screen-head">
+          <span class="screen-name" id="screen-name"></span>
+          <span class="screen-hint" id="screen-hint">live — type here to drive it</span>
+          <button class="btn" id="screen-window" type="button"
+            title="Open this agent in a real Windows terminal window instead">window</button>
+          <button class="dirpicker-close" id="screen-close" type="button"
+            title="Back to the messages (Esc)">✕</button>
+        </div>
+        <div class="screen-term" id="screen-term"></div>
+      </div>
 
       <form class="composer" id="composer" autocomplete="off">
         <div class="composer-row">
@@ -1422,6 +1514,8 @@
       $("#online-count").textContent = String(online);
       $("#agent-count").textContent = String(agents.length);
       $("#sidebar-count").textContent = String(agents.length);
+      // The MCP registration line is a first-run instruction, not furniture.
+      $("#mcp-add").hidden = agents.length > 0;
     }
 
     function renderUptime() {
@@ -1528,7 +1622,8 @@
         for (const group of groups) {
           const inGroup = agents.filter((a) => groupOf(a) === group);
           if (state.group && group !== state.group) continue;
-          container.appendChild(el("div", "group-head", group));
+          container.appendChild(buildGroupHead(group, inGroup));
+          if (collapsedGroups.has(group)) continue; // folded: the tally speaks for it
           for (const agent of inGroup) container.appendChild(buildAgentCard(agent));
         }
       }
@@ -1537,6 +1632,43 @@
       // that already runs whenever an agent appears, moves group or leaves.
       renderGroupTabs();
       renderGroupOptions();
+    }
+
+    /**
+     * A group's header in the rail, and its fold. Collapsed, the header is all
+     * that is left of the group, so it carries the tally — how many agents are
+     * in there and how many of those are up. Unread never hides: a folded group
+     * with something waiting has to say so, or folding becomes a way to miss
+     * messages.
+     */
+    function buildGroupHead(group, members) {
+      const collapsed = collapsedGroups.has(group);
+      const head = el("button", `group-head${collapsed ? " collapsed" : ""}`);
+      head.type = "button";
+      const online = members.filter((a) => a.status === "online").length;
+      const unread = members.reduce((n, a) => n + (a.unreadCount || 0), 0);
+      head.title = collapsed
+        ? `Unfold ${group} (${members.length} agents, ${online} online)`
+        : `Fold ${group} away`;
+
+      head.append(
+        el("span", "caret", "▾"),
+        el("span", null, group),
+        el("span", "tally", `${online}/${members.length}`),
+      );
+      if (unread > 0) {
+        const badge = el("span", "unread-badge", String(unread));
+        badge.title = `${unread} unread in ${group}`;
+        head.appendChild(badge);
+      }
+      head.appendChild(el("span", "rule"));
+
+      head.addEventListener("click", () => {
+        if (collapsedGroups.has(group)) collapsedGroups.delete(group);
+        else collapsedGroups.add(group);
+        renderAgents();
+      });
+      return head;
     }
 
     function renderGroupTabs() {
@@ -1605,21 +1737,20 @@
 
       // Actions (owner UX feedback: one PRIMARY action per state, the rest in
       // a compact ⋯ menu — four inline buttons crowded the card):
-      //   online  → [open]   + ⋯(nudge, mute)
-      //   offline → [reopen] + ⋯(mute, remove)
+      //   online  → [screen] + ⋯(window, nudge, group, mute)
+      //   offline → [reopen] + ⋯(group, mute, remove)
       // Stop propagation everywhere so a control click never toggles the
       // card's feed filter.
       const actions = el("div", "agent-actions");
       const online = agent.status === "online";
 
-      const primary = el(
-        "button",
-        online ? "open-btn" : "reopen-btn",
-        online ? "open" : "reopen",
-      );
+      // The agent's screen is the CARD's job now (one click, no button), so the
+      // primary here is the thing the card cannot do: pop a real Windows
+      // terminal, for when you want an actual window rather than the panel.
+      const primary = el("button", online ? "open-btn" : "reopen-btn", online ? "window" : "reopen");
       primary.type = "button";
       primary.title = online
-        ? `Open a Windows terminal window attached to "${agent.name}"`
+        ? `Open a Windows terminal window attached to "${agent.name}" (the card alone shows its screen here)`
         : `Relaunch "${agent.name}" in ${agent.cwd} (continues its conversation) and open its window`;
       primary.addEventListener("click", (ev) => {
         ev.stopPropagation();
@@ -1749,7 +1880,17 @@
       if (pulseTarget) pulseTarget.dataset.nudgeFor = agent.name;
 
       card.append(dot, name, badges, role, actions);
-      card.addEventListener("click", () => setFilter(agent.name));
+      // Clicking the agent shows the AGENT — its screen, live. The rail is the
+      // tab bar and a card is the tab, so making you click a second button to
+      // see the thing you just selected was friction for nothing.
+      //
+      // This used to filter the transcript instead. That is still there, but as
+      // what it always was: a filter, living inside Messages where filters
+      // belong (see renderFilterBar).
+      card.addEventListener("click", () => {
+        if (agent.status === "online") openScreen(agent.name);
+        else setFilter(agent.name); // no screen to show — fall back to its traffic
+      });
       return card;
     }
 
@@ -2099,6 +2240,165 @@
         toast(`Group "${group}" is now "${next}" (${body.agents.length} agent(s) moved).`);
       } catch (err) {
         toast(`Could not rename the group: ${err && err.message ? err.message : err}`, "warn");
+      }
+    }
+
+    // =====================================================================
+    // The agent's screen. tmux tees the pane's bytes to the hub, the hub
+    // relays them over SSE, xterm.js paints them; keystrokes go back the same
+    // way. No node-pty and no websocket: tmux is already the pty, SSE is
+    // already a stream, and the agent outlives this tab because the session
+    // belongs to tmux, not to the dashboard.
+    // =====================================================================
+
+    const screenState = { name: null, term: null, fit: null, sse: null, ro: null };
+
+    // Groups folded away in the rail. Page-local on purpose: which projects you
+    // have collapsed right now is a view, not something the hub should store.
+    const collapsedGroups = new Set();
+
+    function openScreen(name) {
+      if (screenState.name === name) return;
+      closeScreen();
+      screenState.name = name;
+
+      // The whole Messages panel steps aside — header, filter bar and composer
+      // included. Leaving "MESSAGES" labelling an agent's terminal was a lie.
+      $("#feed").hidden = true;
+      $("#composer").hidden = true;
+      $(".feed-head").hidden = true;
+      $("#filter-bar").hidden = true;
+      $("#screen").hidden = false;
+      $("#screen-name").textContent = name;
+      setScreenHint("live — type here to drive it", false);
+
+      const term = new Terminal({
+        convertEol: false,
+        cursorBlink: true,
+        fontFamily: getComputedStyle(document.body).getPropertyValue("--mono").trim(),
+        fontSize: 12,
+        scrollback: 5000,
+        theme: {
+          background: "#070b10",
+          foreground: "#e6edf3",
+          cursor: "#f5a623",
+          selectionBackground: "rgba(245,166,35,0.3)",
+        },
+      });
+      const fit = new FitAddon.FitAddon();
+      term.loadAddon(fit);
+      term.open($("#screen-term"));
+      fit.fit();
+      screenState.term = term;
+      screenState.fit = fit;
+
+      // Keystrokes → the pane. xterm hands us exactly the bytes a real terminal
+      // would send (Escape is "\x1b", Ctrl-C is "\x03"), so they go over as
+      // base64 and reach tmux as those same bytes.
+      term.onData((data) => sendScreenInput(name, data));
+
+      // The pane must match the box, or the TUI wraps against a width nobody
+      // is looking at. ResizeObserver instead of a window listener: the panel
+      // changes size when the rail does, not only when the window does.
+      const ro = new ResizeObserver(() => scheduleScreenFit());
+      ro.observe($("#screen-term"));
+      screenState.ro = ro;
+      pushScreenSize();
+
+      const sse = new EventSource(`/api/agents/${encodeURIComponent(name)}/terminal`);
+      sse.onmessage = (ev) => {
+        let parsed;
+        try {
+          parsed = JSON.parse(ev.data);
+        } catch {
+          return;
+        }
+        if (parsed.error) {
+          setScreenHint(parsed.error, true);
+          return;
+        }
+        // atob → bytes → xterm. The stream is raw terminal output, so it is
+        // fed as bytes; letting the browser decode it as text would mangle
+        // every escape sequence and any UTF-8 split across two chunks.
+        const bin = atob(parsed.b64);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        term.write(bytes);
+      };
+      sse.onerror = () => setScreenHint("reconnecting…", true);
+      screenState.sse = sse;
+      term.focus();
+      renderAgents(); // the rail marks which agent is on screen
+    }
+
+    function closeScreen() {
+      if (screenState.sse) screenState.sse.close();
+      if (screenState.ro) screenState.ro.disconnect();
+      if (screenState.term) screenState.term.dispose();
+      screenState.sse = screenState.ro = screenState.term = screenState.fit = null;
+      const had = screenState.name;
+      screenState.name = null;
+      $("#screen").hidden = true;
+      $("#screen-term").textContent = "";
+      $("#feed").hidden = false;
+      $("#composer").hidden = false;
+      $(".feed-head").hidden = false;
+      $("#filter-bar").hidden = false;
+      renderFilterBar(); // it owns its own visibility
+      if (had) renderAgents();
+    }
+
+    function setScreenHint(text, bad) {
+      const hint = $("#screen-hint");
+      hint.textContent = text;
+      hint.classList.toggle("stale", !!bad);
+    }
+
+    let fitTimer = null;
+    function scheduleScreenFit() {
+      // Debounced: a drag fires ResizeObserver dozens of times, and each fit is
+      // a tmux resize-window on the other end.
+      clearTimeout(fitTimer);
+      fitTimer = setTimeout(() => {
+        if (!screenState.fit) return;
+        screenState.fit.fit();
+        pushScreenSize();
+      }, 120);
+    }
+
+    async function pushScreenSize() {
+      const { name, term } = screenState;
+      if (!name || !term) return;
+      try {
+        await fetch(`/api/agents/${encodeURIComponent(name)}/terminal/resize`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ cols: term.cols, rows: term.rows }),
+        });
+      } catch {
+        /* the size is cosmetic; a failed resize must not break the stream */
+      }
+    }
+
+    async function sendScreenInput(name, data) {
+      // btoa needs latin1; the string xterm gives us is already byte-per-char
+      // for control codes, and unescape(encodeURIComponent(..)) turns anything
+      // typed (accents included) into its UTF-8 bytes first.
+      const b64 = btoa(unescape(encodeURIComponent(data)));
+      try {
+        const res = await fetch(`/api/agents/${encodeURIComponent(name)}/terminal/input`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ b64 }),
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          // The pane guard refusing is the loudest case: it means this pane is
+          // a shell, and typing into it would run commands.
+          setScreenHint(body.error || `Could not send input (HTTP ${res.status}).`, true);
+        }
+      } catch (err) {
+        setScreenHint(`Could not send input: ${err && err.message ? err.message : err}`, true);
       }
     }
 
@@ -2928,6 +3228,12 @@
       // "chefe-de-redes" rather than bouncing off the hub.
       bindAgentNameSanitizer($("#launch-group"));
 
+      // The agent's screen.
+      $("#screen-close").addEventListener("click", closeScreen);
+      $("#screen-window").addEventListener("click", (ev) => {
+        if (screenState.name) openAgentTerminal(screenState.name, ev.currentTarget);
+      });
+
       // Groups panel wiring.
       $("#groups-open").addEventListener("click", () => {
         if ($("#groups-panel").hidden) openGroups();
@@ -2969,6 +3275,9 @@
       });
       document.addEventListener("keydown", (ev) => {
         if (ev.key !== "Escape") return;
+        // NOT the screen: Escape belongs to the agent while you are typing at
+        // it (it is how you interrupt Claude Code), so it must reach the pane
+        // rather than close the view. The ✕ and the card do that.
         if (!$("#dirpicker").hidden) dirpickerClose();
         else if (!$("#groups-panel").hidden) closeGroups();
       });

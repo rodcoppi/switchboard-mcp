@@ -31,10 +31,18 @@ table, section 17).
 ## Locked stack
 
 - Node.js >= 20 (ESM), TypeScript 5.x executed with `tsx` — **no build step, no bundler**.
-- Production: `@modelcontextprotocol/sdk`, `express`, `zod`, `ulid`, `commander`. Dev:
-  `vitest`, `@types/express`, `@types/node`.
+- Production: `@modelcontextprotocol/sdk`, `express`, `zod`, `ulid`, `commander`,
+  `@xterm/xterm` + `@xterm/addon-fit`. Dev: `vitest`, `@types/express`, `@types/node`.
+- `@xterm/xterm` is the ONE browser dependency, owner-approved, and it is a terminal
+  EMULATOR — the thing you cannot sanely hand-roll (weeks of escape-sequence bugs). It is
+  served by the hub from `node_modules` at `/vendor/*`, so the dashboard still fetches
+  nothing off this machine. It does NOT drag `node-pty` or websockets in with it: tmux is
+  already the pty (`pipe-pane` gives the raw output bytes, `send-keys -H` writes arbitrary
+  input bytes, `resize-window` sizes it) and SSE already carries a stream.
 - System prerequisites: tmux >= 3.2, claude >= 2.x, jq (debug).
-- **Forbidden in v1:** websockets, database, ORM, frontend framework, bundler, docker.
+- **Forbidden in v1:** websockets, database, ORM, frontend framework, bundler, docker,
+  `node-pty` (tmux owns the ptys — a second pty layer would make us a wrapper, and an agent
+  would then die with the dashboard instead of outliving it).
 
 ## Commands
 

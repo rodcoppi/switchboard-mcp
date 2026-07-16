@@ -35,6 +35,7 @@ import { GROUP_NAME_RE, resolveGroup, type Store } from "./store.js";
 // `import type` only (erased at compile time).
 import { LaunchError, normalizeIncomingPath, type Launcher } from "./launcher.js";
 import { PickError, pickWindowsFolder } from "./winpicker.js";
+import { TerminalError } from "./terminal.js";
 import {
   invalidAgentTypeMessage,
   isAgentType,
@@ -263,6 +264,17 @@ export interface ManualNudger {
   forceNudge(name: string): Promise<{ sent: boolean; reason?: string }>;
 }
 
+/**
+ * The agent-screen bridge (terminal.ts). Structural type, like ManualNudger:
+ * undefined when the hub runs with a stubbed onMessage (no tmux, no terminals).
+ */
+export interface Terminals {
+  firstFrame(session: string): Promise<{ frame: string; cols: number; rows: number }>;
+  attach(session: string, onData: (chunk: Buffer) => void): Promise<() => void>;
+  input(session: string, bytes: Buffer): Promise<void>;
+  resize(session: string, cols: number, rows: number): Promise<void>;
+}
+
 export interface ApiOptions {
   store: Store;
   config: Config;
@@ -279,6 +291,11 @@ export interface ApiOptions {
    * exactly like the manual-nudge placeholder.
    */
   launcher?: Launcher;
+  /**
+   * The agent-screen bridge for the terminal routes. Undefined for the same
+   * reason as `launcher` (no tmux → nothing to stream): the routes answer 501.
+   */
+  terminals?: Terminals;
   /**
    * Claude Code projects directory used by GET /api/fs/dirs for the
    * best-effort "conversation" badge (default ~/.claude/projects).
@@ -321,7 +338,7 @@ function hasClaudeConversation(claudeProjectsDir: string, absPath: string): bool
 }
 
 export function createApiRouter(options: ApiOptions): express.Router {
-  const { store, config, log, bus, onMessage, nudger, launcher, startedAt, version } =
+  const { store, config, log, bus, onMessage, nudger, launcher, terminals, startedAt, version } =
     options;
   const heartbeatMs = options.heartbeatMs ?? 25_000;
   const claudeProjectsDir =
@@ -855,6 +872,105 @@ export function createApiRouter(options: ApiOptions): express.Router {
     bus.emit({ type: "agent_updated", payload: toPublicAgent(updated) });
     log.info(`[api] agent ${name} moved to group ${group}.`);
     res.json({ ok: true, agent: toPublicAgent(updated) });
+  });
+
+  // -------------------------------------------------------------------------
+  // The agent's screen (terminal.ts). Three routes: the stream, the keys, the
+  // size. tmux is the pty, so there is no second one to manage here.
+  // -------------------------------------------------------------------------
+
+  /** Resolves :name → its REGISTERED tmux session (never a recomputed prefix). */
+  function terminalTarget(
+    name: string,
+    res: express.Response,
+  ): { session: string } | null {
+    if (!terminals) {
+      res.status(501).json({
+        ok: false,
+        error: "This hub runs without tmux, so it has no agent screens to show.",
+      });
+      return null;
+    }
+    const agent = store.getAgent(name);
+    if (!agent) {
+      res.status(404).json({ ok: false, error: `Unknown agent: "${name}".` });
+      return null;
+    }
+    return { session: agent.tmuxSession };
+  }
+
+  // GET /api/agents/:name/terminal — SSE. First frame is the screen as it
+  // stands (the tee only carries what happens next), then every byte the pane
+  // emits. Bytes are base64: SSE is line-based UTF-8 text and a terminal stream
+  // is neither.
+  router.get("/api/agents/:name/terminal", async (req, res) => {
+    const target = terminalTarget(String(req.params.name), res);
+    if (!target) return;
+
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    });
+
+    const send = (chunk: Buffer) => {
+      res.write(`data: ${JSON.stringify({ b64: chunk.toString("base64") })}\n\n`);
+    };
+
+    let detach: (() => void) | undefined;
+    try {
+      const { frame, cols, rows } = await terminals!.firstFrame(target.session);
+      // The grid first: the viewer sizes ITSELF to the pane (it must not size
+      // the pane to itself — see TerminalBridge.resize).
+      res.write(`data: ${JSON.stringify({ cols, rows })}\n\n`);
+      // \x1b[2J\x1b[H: the viewer's emulator may hold an older paint of this
+      // pane (a reconnect), and the frame below is a full screen, not a diff.
+      send(Buffer.from(`\x1b[2J\x1b[H${frame}`, "utf8"));
+      detach = await terminals!.attach(target.session, send);
+    } catch (err) {
+      log.warn(`[api] terminal stream failed for ${String(req.params.name)}: ${(err as Error).message}`);
+      res.write(`data: ${JSON.stringify({ error: (err as Error).message })}\n\n`);
+      res.end();
+      return;
+    }
+
+    req.on("close", () => {
+      detach?.();
+    });
+  });
+
+  // POST /api/agents/:name/terminal/input — body {b64: "<base64 bytes>"}.
+  // Base64 and not text: Escape and Ctrl-C have to arrive as the bytes 1b and
+  // 03, not as the words. The pane guard runs inside terminals.input().
+  router.post("/api/agents/:name/terminal/input", async (req, res) => {
+    const target = terminalTarget(String(req.params.name), res);
+    if (!target) return;
+    const b64 = ((req.body ?? {}) as Record<string, unknown>).b64;
+    if (typeof b64 !== "string") {
+      res.status(400).json({ ok: false, error: `Invalid body: expected {"b64": "<base64>"}.` });
+      return;
+    }
+    try {
+      await terminals!.input(target.session, Buffer.from(b64, "base64"));
+      res.json({ ok: true });
+    } catch (err) {
+      const status = err instanceof TerminalError ? err.status : 500;
+      res.status(status).json({ ok: false, error: (err as Error).message });
+    }
+  });
+
+  // POST /api/agents/:name/terminal/resize — body {cols, rows}.
+  router.post("/api/agents/:name/terminal/resize", async (req, res) => {
+    const target = terminalTarget(String(req.params.name), res);
+    if (!target) return;
+    const raw = (req.body ?? {}) as Record<string, unknown>;
+    try {
+      await terminals!.resize(target.session, Number(raw.cols), Number(raw.rows));
+      res.json({ ok: true });
+    } catch (err) {
+      const status = err instanceof TerminalError ? err.status : 500;
+      res.status(status).json({ ok: false, error: (err as Error).message });
+    }
   });
 
   // POST /api/groups/:group/rename — body {name: "<newName>"}. Renames a group
