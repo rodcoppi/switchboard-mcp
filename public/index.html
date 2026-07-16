@@ -862,15 +862,17 @@
        always left over. Centred on a matching background that reads as margin;
        pinned top-left on the page's background it read as the terminal having
        fallen into the corner of a black hole. */
-    /* xterm fills this box: the server sizes the tmux window to fit it (native
-       font, no scaling), so the grid matches and there is nothing to centre. */
+    /* Exactly the container the working reference uses (claudinei's
+       .terminal-view__screen): flex:1, min-height:0, a little padding, and
+       NOTHING forcing the .xterm's dimensions — the FitAddon reads this box and
+       sizes the grid to it. Forcing width/height:100% on .xterm fought the
+       addon and was the source of the "gigante" mis-sizing. */
     .screen-term {
       flex: 1 1 auto;
       min-height: 0;
-      padding: 6px;
+      padding: 4px 8px;
       background: #070b10; /* xterm's own background (see the theme below) */
     }
-    .screen-term .xterm { width: 100%; height: 100%; }
 
     /* The Groups panel — the body of its lightbox now. It used to drop under
        the feed header and shove the transcript down, which is what a VIEW does;
@@ -2367,6 +2369,11 @@
       const fit = new FitAddon.FitAddon();
       term.loadAddon(fit);
       term.open($("#screen-term"));
+      // fit() APPLIES the container size to the local xterm right here (the
+      // working reference does exactly this on open) — the terminal is the
+      // right size immediately, no round-trip. pushScreenSize then tells the
+      // server to match the tmux window to it.
+      fit.fit();
       screenState.term = term;
       screenState.fit = fit;
 
@@ -2375,9 +2382,9 @@
       // base64 and reach tmux as those same bytes.
       term.onData((data) => sendScreenInput(name, data));
 
-      // The panel drives the size: measure what it can hold and tell the server
-      // to size the tmux window to it. Once now (so the first frame lands at the
-      // right grid), then on every panel resize.
+      // Panel resizes → refit locally, then tell the server. ResizeObserver
+      // instead of window "resize": the panel changes when the rail toggles,
+      // not only when the window does.
       const ro = new ResizeObserver(() => scheduleScreenFit());
       ro.observe($("#screen-term"));
       screenState.ro = ro;
@@ -2456,7 +2463,7 @@
     // wants and the server sizes the tmux window to match, so the terminal
     // renders at its true size — no scaling, no soft text. This is what the
     // earlier "mirror and scale" approach failed to be.
-    const SCREEN_FONT_PX = 14;
+    const SCREEN_FONT_PX = 13; // matches the working reference (claudinei)
 
     let fitTimer = null;
     function scheduleScreenFit() {
@@ -2467,21 +2474,21 @@
     }
 
     /**
-     * Measures the grid the panel can hold at the native font and asks the
-     * server to size the tmux window to it. proposeDimensions() is xterm's own
-     * fit computation; the window then reflows and echoes the grid back, which
-     * the stream handler applies with term.resize.
+     * fit() the local terminal to its container, then tell the server to size
+     * the tmux window to whatever grid that produced. This is the working
+     * reference's sendResize, verbatim in spirit: the local xterm is the size
+     * authority, the pty follows. No proposeDimensions round-trip.
      */
     async function pushScreenSize() {
       const { name, term, fit } = screenState;
       if (!name || !term || !fit) return;
-      const dims = fit.proposeDimensions();
-      if (!dims || !dims.cols || !dims.rows) return;
+      fit.fit();
+      if (!term.cols || !term.rows) return;
       try {
         await fetch(`/api/agents/${encodeURIComponent(name)}/terminal/resize`, {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ cols: dims.cols, rows: dims.rows }),
+          body: JSON.stringify({ cols: term.cols, rows: term.rows }),
         });
       } catch {
         /* the size is cosmetic; a failed resize must not break the stream */

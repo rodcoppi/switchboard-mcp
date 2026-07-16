@@ -206,26 +206,36 @@ export interface ControlClient {
 }
 
 /**
- * Decodes the payload of a `%output` line. tmux escapes every byte outside
- * printable ASCII (and the backslash itself) as \ooo octal — including each
- * byte of a UTF-8 sequence — so the wire text is pure ASCII and this returns
- * the pane's original bytes. Exported for direct unit testing.
+ * Decodes the payload of a `%output` line into the pane's original bytes.
+ *
+ * tmux escapes NON-PRINTABLE bytes as \ooo octal (ESC is \033, etc.) but sends
+ * printable UTF-8 RAW — so "código" arrives as the literal characters, already
+ * decoded to a JS string by the StringDecoder upstream. A non-escaped char must
+ * therefore be re-encoded as UTF-8 (Buffer.from(ch, "utf8")); the old
+ * charCodeAt(i) & 0xff turned "ó" (U+00F3) into the single latin-1 byte 0xf3,
+ * an invalid UTF-8 lead byte that xterm dropped — accents vanished from the
+ * live stream. Octal runs still decode to their exact byte.
  */
 export function decodeControlOutput(payload: string): Buffer {
-  const bytes: number[] = [];
+  const parts: Buffer[] = [];
+  let text = "";
+  const flush = (): void => {
+    if (text) {
+      parts.push(Buffer.from(text, "utf8"));
+      text = "";
+    }
+  };
   for (let i = 0; i < payload.length; i++) {
-    if (
-      payload[i] === "\\" &&
-      i + 3 < payload.length + 1 &&
-      /^[0-7]{3}$/.test(payload.slice(i + 1, i + 4))
-    ) {
-      bytes.push(parseInt(payload.slice(i + 1, i + 4), 8));
+    if (payload[i] === "\\" && /^[0-7]{3}$/.test(payload.slice(i + 1, i + 4))) {
+      flush();
+      parts.push(Buffer.from([parseInt(payload.slice(i + 1, i + 4), 8)]));
       i += 3;
     } else {
-      bytes.push(payload.charCodeAt(i) & 0xff);
+      text += payload[i];
     }
   }
-  return Buffer.from(bytes);
+  flush();
+  return Buffer.concat(parts);
 }
 
 export interface Tmux {

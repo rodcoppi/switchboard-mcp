@@ -106,11 +106,21 @@ describe("decodeControlOutput (pure)", () => {
   it("passes plain ASCII through and decodes octal escapes to bytes", () => {
     expect(decodeControlOutput("abc").toString()).toBe("abc");
     expect([...decodeControlOutput("a\\015\\012b")]).toEqual([0x61, 0x0d, 0x0a, 0x62]);
-    // tmux escapes the backslash itself as \134 — a raw backslash from the
-    // pane must come back as exactly one byte.
+    // A backslash escaped as \134 must come back as exactly one byte.
     expect(decodeControlOutput("\\134").toString()).toBe("\\");
-    // UTF-8 arrives one octal escape per BYTE; the pair below is "é".
-    expect(decodeControlOutput("\\303\\251").toString("utf8")).toBe("é");
+  });
+
+  it("re-encodes RAW printable UTF-8 correctly (the accent bug)", () => {
+    // tmux sends printable UTF-8 RAW in %output (verified on 3.4): "código"
+    // arrives as literal characters. The old charCodeAt & 0xff turned ó
+    // (U+00F3) into a lone 0xf3 byte and xterm dropped it. It must round-trip.
+    expect(decodeControlOutput("código-café").toString("utf8")).toBe("código-café");
+    expect([...decodeControlOutput("ó")]).toEqual([0xc3, 0xb3]);
+  });
+
+  it("handles octal escapes and raw UTF-8 mixed in one payload", () => {
+    // A real line: ESC sequence (octal) around accented text (raw).
+    expect(decodeControlOutput("\\033[1mção\\033[0m").toString("utf8")).toBe("\x1b[1mção\x1b[0m");
   });
 });
 
