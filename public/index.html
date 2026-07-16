@@ -696,6 +696,25 @@
       padding: 13px 18px 11px;
       border-bottom: 1px solid var(--border-soft);
     }
+    .feed-search {
+      margin-left: auto;
+      align-self: center;
+      width: 240px;
+      max-width: 34vw;
+      padding: 5px 11px;
+      background: var(--bg-inset);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-family: var(--sans);
+      font-size: var(--fs-sm);
+    }
+    .feed-search:focus { outline: none; border-color: var(--accent-line); }
+    .feed-search::placeholder { color: var(--text-faint); }
+    /* The group-tabs used to be pushed right by margin-auto; the search now
+       holds that slot, so the tabs sit next to it. */
+    .feed-head .group-tabs { margin-left: 0; }
+    mark.hit { background: var(--accent-wash); color: var(--accent); border-radius: 3px; padding: 0 1px; }
     .feed-head .sub {
       font-family: var(--sans);
       font-size: var(--fs-xs);
@@ -1759,6 +1778,8 @@
 
       <div class="feed-head">
         <span class="sub">what your agents said to each other — newest at the bottom</span>
+        <input class="feed-search" id="feed-search" type="search"
+          placeholder="Search the transcript…" autocomplete="off" spellcheck="false" />
         <div class="group-tabs" id="group-tabs"></div>
       </div>
 
@@ -1837,6 +1858,7 @@
       msgIds: new Set(),   // dedup guard for message_created vs bootstrap
       filter: null,        // active agent-name filter, or null
       group: null,         // active group tab, or null for "all groups"
+      search: "",          // free-text filter over the transcript, or ""
       sse: null,
       uptimeBase: null,    // { seconds, at }  — server uptime + local anchor
     };
@@ -3776,6 +3798,12 @@
     // it is walked backwards here. Day dividers are inserted on the way.
     function feedRows() {
       const filter = state.filter;
+      const q = (state.search || "").trim().toLowerCase();
+      const hits = (m) =>
+        !q ||
+        (m.body || "").toLowerCase().includes(q) ||
+        (m.from || "").toLowerCase().includes(q) ||
+        (m.to || "").toLowerCase().includes(q);
       const seen = new Set();
       const rows = [];
       let day = null;
@@ -3789,9 +3817,11 @@
           seen.add(m.broadcastId);
           const group = state.messages.filter((x) => x.broadcastId === m.broadcastId);
           if (filter && !group.some((x) => x.from === filter || x.to === filter)) continue;
+          if (q && !group.some(hits)) continue;
           row = { kind: "broadcast", group };
         } else {
           if (filter && m.from !== filter && m.to !== filter) continue;
+          if (q && !hits(m)) continue;
           row = { kind: "single", msg: m };
         }
         const stamp = startOfDay(new Date(m.createdAt));
@@ -3804,6 +3834,33 @@
       return rows;
     }
 
+    // Wraps every occurrence of the query in the feed's TEXT nodes with a
+    // <mark> — safe (text nodes only, no HTML), so a search shows WHERE it hit.
+    function highlightHits(container, query) {
+      const q = query.toLowerCase();
+      const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+      const targets = [];
+      let node;
+      while ((node = walker.nextNode())) {
+        if (node.parentElement && node.parentElement.closest("mark, script, style")) continue;
+        if (node.nodeValue.toLowerCase().includes(q)) targets.push(node);
+      }
+      for (const textNode of targets) {
+        const text = textNode.nodeValue;
+        const lower = text.toLowerCase();
+        const frag = document.createDocumentFragment();
+        let idx = 0;
+        let pos;
+        while ((pos = lower.indexOf(q, idx)) !== -1) {
+          if (pos > idx) frag.appendChild(document.createTextNode(text.slice(idx, pos)));
+          frag.appendChild(el("mark", "hit", text.slice(pos, pos + q.length)));
+          idx = pos + q.length;
+        }
+        if (idx < text.length) frag.appendChild(document.createTextNode(text.slice(idx)));
+        textNode.parentNode.replaceChild(frag, textNode);
+      }
+    }
+
     function renderFeed() {
       const feed = $("#feed");
       // A transcript must not yank itself out from under someone reading back
@@ -3814,13 +3871,16 @@
       feed.textContent = "";
       const rows = feedRows();
       if (rows.length === 0) {
+        const q = (state.search || "").trim();
         feed.appendChild(
           el(
             "div",
             "empty-hint",
-            state.filter
-              ? `No messages involving "${state.filter}".`
-              : "No messages yet. Anything your agents say to each other shows up here.",
+            q
+              ? `Nothing in the transcript matches “${q}”.`
+              : state.filter
+                ? `No messages involving "${state.filter}".`
+                : "No messages yet. Anything your agents say to each other shows up here.",
           ),
         );
         return;
@@ -3829,6 +3889,7 @@
         if (row.kind === "day") feed.appendChild(el("div", "day-divider", row.label));
         else feed.appendChild(row.kind === "broadcast" ? buildBroadcastRow(row.group) : buildMsgRow(row.msg));
       }
+      if ((state.search || "").trim()) highlightHits(feed, state.search.trim());
 
       clampOverflowingBodies(feed);
       if (atBottom) feed.scrollTop = feed.scrollHeight;
@@ -4542,6 +4603,17 @@
           if (paletteState.open) closePalette();
           else openPalette();
         }
+      });
+
+      // Free-text search over the transcript (debounced — one render per pause).
+      let searchTimer = null;
+      $("#feed-search").addEventListener("input", (e) => {
+        const v = e.target.value;
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(() => {
+          state.search = v;
+          renderFeed();
+        }, 120);
       });
 
       // Chat composer: type to the agent.
