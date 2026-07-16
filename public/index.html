@@ -886,6 +886,34 @@
     .screen-chat[hidden] { display: none; }
     .chat-empty { color: var(--text-faint); font-family: var(--sans); font-size: var(--fs-sm); margin: auto; }
 
+    /* Composer: type to the agent, like the reference chat. */
+    .chat-composer {
+      flex: 0 0 auto;
+      display: flex;
+      gap: 8px;
+      align-items: flex-end;
+      padding: 10px 14px 12px;
+      border-top: 1px solid var(--border);
+      background: var(--bg-elev);
+    }
+    .chat-composer[hidden] { display: none; }
+    #chat-input {
+      flex: 1 1 auto;
+      resize: none;
+      max-height: 200px;
+      padding: 9px 12px;
+      background: var(--bg-inset);
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      color: var(--text);
+      font-family: var(--sans);
+      font-size: var(--fs-body);
+      line-height: 1.5;
+    }
+    #chat-input:focus { outline: none; border-color: var(--accent-line); }
+    #chat-input:disabled { opacity: 0.5; }
+    .chat-send { flex: none; align-self: stretch; padding: 0 16px; }
+
     .chat-turn { display: flex; flex-direction: column; gap: 4px; max-width: 90ch; }
     .chat-turn.user { align-self: flex-end; align-items: flex-end; }
     .chat-role {
@@ -1520,6 +1548,15 @@
         </div>
         <!-- Chat view: rendered conversation. -->
         <div class="screen-chat" id="screen-chat"></div>
+        <!-- Chat composer: type to the agent. The text is sent into its pane
+             (send-keys, through the pane guard), so the agent answers as if you
+             typed in the terminal — and the reply shows up here, rendered,
+             because the chat tails the conversation log live. -->
+        <form class="chat-composer" id="chat-composer" hidden autocomplete="off">
+          <textarea id="chat-input" rows="1"
+            placeholder="Message this agent…  (Enter sends · Shift+Enter for a newline)"></textarea>
+          <button class="btn chat-send" id="chat-send" type="submit">send</button>
+        </form>
         <!-- Terminal view: xterm. Hidden until you toggle to it. -->
         <div class="screen-term" id="screen-term" hidden></div>
       </div>
@@ -2519,14 +2556,41 @@
       if (mode === "terminal") {
         teardownChat();
         $("#screen-chat").hidden = true;
+        $("#chat-composer").hidden = true;
         $("#screen-term").hidden = false;
         mountTerminal(name);
       } else {
         teardownTerminal();
         $("#screen-term").hidden = true;
         $("#screen-chat").hidden = false;
+        $("#chat-composer").hidden = false;
         mountChat(name);
       }
+    }
+
+    /**
+     * Sends a chat message to the agent by typing it into its pane — the same
+     * send-keys path the terminal uses, so the pane guard applies (you can only
+     * message a live agent pane). Text first, then Enter as a SEPARATE keystroke
+     * after a beat: Claude Code's TUI takes text+Enter in one write as typing
+     * without submitting (pitfall P1), exactly like the nudge.
+     */
+    async function sendChatMessage(name, text) {
+      const bytesOf = (s) => {
+        const b64 = btoa(unescape(encodeURIComponent(s)));
+        return fetch(`/api/agents/${encodeURIComponent(name)}/terminal/input`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ b64 }),
+        });
+      };
+      const res = await bytesOf(text);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `HTTP ${res.status}`);
+      }
+      await new Promise((r) => setTimeout(r, 400));
+      await bytesOf("\r"); // the separate Enter that submits
     }
 
     function mountTerminal(name) {
@@ -3754,6 +3818,38 @@
       for (const b of document.querySelectorAll(".screen-mode")) {
         b.addEventListener("click", () => setScreenMode(b.dataset.mode));
       }
+
+      // Chat composer: type to the agent.
+      const chatInput = $("#chat-input");
+      const autogrow = () => {
+        chatInput.style.height = "auto";
+        chatInput.style.height = Math.min(chatInput.scrollHeight, 200) + "px";
+      };
+      chatInput.addEventListener("input", autogrow);
+      chatInput.addEventListener("keydown", (ev) => {
+        // Enter sends; Shift+Enter is a newline.
+        if (ev.key === "Enter" && !ev.shiftKey) {
+          ev.preventDefault();
+          $("#chat-composer").requestSubmit();
+        }
+      });
+      $("#chat-composer").addEventListener("submit", async (ev) => {
+        ev.preventDefault();
+        const name = screenState.name;
+        const text = chatInput.value.trim();
+        if (!name || text === "") return;
+        chatInput.disabled = true;
+        try {
+          await sendChatMessage(name, text);
+          chatInput.value = "";
+          autogrow();
+        } catch (err) {
+          toast(`Could not send: ${err && err.message ? err.message : err}`, "warn");
+        } finally {
+          chatInput.disabled = false;
+          chatInput.focus();
+        }
+      });
 
       // Groups panel wiring.
       $("#groups-open").addEventListener("click", () => {
