@@ -1358,6 +1358,27 @@
     }
     .group-head:hover .group-swatch { opacity: 1; }
     .group-swatch:hover { transform: scale(1.18); }
+    .rail-group-name { color: inherit; }
+    /* Rename pencil: hidden until you hover the group, like the swatch. */
+    .group-rename {
+      flex: 0 0 auto;
+      font-size: 11px;
+      line-height: 1;
+      color: var(--text-faint);
+      cursor: pointer;
+      opacity: 0;
+      transition: opacity 0.12s var(--ease), color 0.12s var(--ease);
+    }
+    .group-head:hover .group-rename { opacity: 0.6; }
+    .group-rename:hover { opacity: 1; color: var(--accent); }
+    /* The rename input sits where the name was, inside the head. */
+    .group-head .agent-rename-input {
+      font-family: var(--mono);
+      font-size: var(--fs-eyebrow);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      max-width: 140px;
+    }
 
     /* Drag-to-reorder: the lifted card fades and shows a dashed berth so the gap
        it will leave is legible while you place it. */
@@ -2487,11 +2508,23 @@
         ? `Unfold ${group} (${members.length} agents, ${online} online)`
         : `Fold ${group} away`;
 
+      const nameSpan = el("span", "rail-group-name", group);
       head.append(
         el("span", "caret", "▾"),
-        el("span", null, group),
+        nameSpan,
         el("span", "tally", `${online}/${members.length}`),
       );
+      // Rename right here in the rail: a pencil that appears on hover turns the
+      // name into an input. `default` is not a room you rename.
+      if (group !== DEFAULT_GROUP) {
+        const pencil = el("span", "group-rename", "✎");
+        pencil.title = `Rename the ${group} group`;
+        pencil.addEventListener("click", (e) => {
+          e.stopPropagation(); // do not fold
+          startRailRename(group, nameSpan);
+        });
+        head.appendChild(pencil);
+      }
       // A recolour control living on the head: a swatch you click to open a
       // native colour picker. `default` is the non-room and stays neutral.
       if (group !== DEFAULT_GROUP) {
@@ -3130,6 +3163,42 @@
 
       trigger.hidden = true;
       nameEl.replaceWith(input);
+      input.focus();
+      input.select();
+    }
+
+    // Inline rename straight in the rail: the group name becomes an input in
+    // place. Enter confirms (real server rename via renameGroup), Esc/blur
+    // cancels. Events are stopped so editing never folds the group.
+    function startRailRename(group, nameSpan) {
+      const input = el("input", "agent-rename-input");
+      input.type = "text";
+      input.value = group;
+      input.spellcheck = false;
+      input.maxLength = 31;
+      input.title = "Group name — Enter to confirm, Esc to cancel";
+      let done = false;
+      const restore = () => {
+        if (done) return true;
+        done = true;
+        input.replaceWith(nameSpan);
+        return false;
+      };
+      const confirm = () => {
+        const next = sanitizeAgentNameInput(input.value, false);
+        if (restore()) return;
+        if (next === "" || next === group) return;
+        renameGroup(group, next);
+      };
+      input.addEventListener("keydown", (ev) => {
+        ev.stopPropagation();
+        if (ev.key === "Enter") confirm();
+        else if (ev.key === "Escape") restore();
+      });
+      input.addEventListener("click", (ev) => ev.stopPropagation());
+      input.addEventListener("blur", restore);
+      bindAgentNameSanitizer(input);
+      nameSpan.replaceWith(input);
       input.focus();
       input.select();
     }
@@ -4677,16 +4746,27 @@
         const name = screenState.name;
         const text = chatInput.value.trim();
         if (!name || text === "") return;
+        // A slash command drives the CLI's own interactive UI (the autocomplete
+        // menu, the model picker, /clear…) — and that UI lives on the terminal
+        // SCREEN, which the chat casca (a mirror of the JSONL log) cannot show.
+        // So a "/…" is sent and we FLIP to the terminal, where its menu is: the
+        // command actually does something you can see and finish, instead of
+        // vanishing into a view that will never render it.
+        const isSlash = text.startsWith("/");
         chatInput.disabled = true;
         try {
           await sendChatMessage(name, text);
           chatInput.value = "";
           autogrow();
+          if (isSlash) {
+            toast("Slash commands run in the terminal — switched you there.");
+            setScreenMode("terminal");
+          }
         } catch (err) {
           toast(`Could not send: ${err && err.message ? err.message : err}`, "warn");
         } finally {
           chatInput.disabled = false;
-          chatInput.focus();
+          if (!isSlash) chatInput.focus();
         }
       });
 
