@@ -33,6 +33,7 @@
 // not submit in TUIs.
 
 import { execFile, spawn } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 import { promisify } from "node:util";
 
 export interface ExecResult {
@@ -478,8 +479,15 @@ export function createTmux(options: TmuxOptions = {}): Tmux {
       // Every other notification (%session-changed, %exit, …): not our business.
     }
 
+    // StringDecoder, not d.toString("utf8"): capture-pane returns RAW UTF-8 in
+    // its command block, and a chunk boundary that falls inside a multi-byte
+    // char would turn "é" (c3 a9) into two replacement chars if each chunk were
+    // decoded on its own. The decoder holds the trailing partial byte for the
+    // next chunk. (%output is octal-escaped ASCII, so it never splits, but the
+    // first frame is raw and did — accents vanished from it.)
+    const decoder = new StringDecoder("utf8");
     child.stdout.on("data", (d: Buffer) => {
-      buf += d.toString("utf8");
+      buf += decoder.write(d);
       let i;
       while ((i = buf.indexOf("\n")) >= 0) {
         handleLine(buf.slice(0, i));

@@ -272,7 +272,7 @@ export interface Terminals {
   attachViewer(
     session: string,
     viewer: {
-      onGrid(grid: { cols: number; rows: number; attached: number }): void;
+      onGrid(grid: { cols: number; rows: number }): void;
       onBytes(bytes: Buffer): void;
       onEnd(reason: string): void;
     },

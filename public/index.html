@@ -862,15 +862,15 @@
        always left over. Centred on a matching background that reads as margin;
        pinned top-left on the page's background it read as the terminal having
        fallen into the corner of a black hole. */
+    /* xterm fills this box: the server sizes the tmux window to fit it (native
+       font, no scaling), so the grid matches and there is nothing to centre. */
     .screen-term {
       flex: 1 1 auto;
       min-height: 0;
       padding: 6px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
       background: #070b10; /* xterm's own background (see the theme below) */
     }
+    .screen-term .xterm { width: 100%; height: 100%; }
 
     /* The Groups panel — the body of its lightbox now. It used to drop under
        the feed header and shove the transcript down, which is what a VIEW does;
@@ -2273,7 +2273,7 @@
     // belongs to tmux, not to the dashboard.
     // =====================================================================
 
-    const screenState = { name: null, term: null, fit: null, sse: null, ro: null, owns: false };
+    const screenState = { name: null, term: null, fit: null, sse: null, ro: null };
 
     // Groups folded away in the rail. Page-local on purpose: which projects you
     // have collapsed right now is a view, not something the hub should store.
@@ -2367,10 +2367,6 @@
       const fit = new FitAddon.FitAddon();
       term.loadAddon(fit);
       term.open($("#screen-term"));
-      // NO fit() here. The stream's first message says what the grid must be
-      // (the pane's, when a window is attached), and fitting to the panel first
-      // meant the screen frame landed on a grid of the wrong width for a moment
-      // — which is a garbled paint, not a cosmetic flicker.
       screenState.term = term;
       screenState.fit = fit;
 
@@ -2379,12 +2375,13 @@
       // base64 and reach tmux as those same bytes.
       term.onData((data) => sendScreenInput(name, data));
 
-      // ResizeObserver instead of a window listener: the panel changes size
-      // when the rail does, not only when the window does. Whether a resize is
-      // even allowed is decided per-stream (see `attached` below).
+      // The panel drives the size: measure what it can hold and tell the server
+      // to size the tmux window to it. Once now (so the first frame lands at the
+      // right grid), then on every panel resize.
       const ro = new ResizeObserver(() => scheduleScreenFit());
       ro.observe($("#screen-term"));
       screenState.ro = ro;
+      pushScreenSize();
 
       const sse = new EventSource(`/api/agents/${encodeURIComponent(name)}/terminal`);
       sse.onmessage = (ev) => {
@@ -2398,29 +2395,15 @@
           setScreenHint(parsed.error, true);
           return;
         }
-        // The grid frame. WHO OWNS THE SIZE is decided here:
-        //   attached > 0 → a real terminal window is watching this pane and is
-        //     laid out for it, so we MIRROR. Fitting the grid to this panel
-        //     instead reflowed a live agent's TUI to 316 columns — in the
-        //     operator's own window too, because resize-window is the window's
-        //     size, not a per-viewer preference.
-        //   attached === 0 → nobody else is looking, so the panel may fit the
-        //     pane to itself. Closing the terminal windows is the point of all
-        //     this; it should be an upgrade, not a pane frozen at whatever size
-        //     the last window happened to have.
+        // The grid the server settled on. Match the local emulator to it — the
+        // server DICTATES the window size to fit our panel (see pushScreenSize),
+        // so this is the size we asked for, echoed back. Native font, no
+        // scaling: the terminal is exactly as crisp as a real one.
         if (typeof parsed.cols === "number") {
-          screenState.owns = parsed.attached === 0;
-          if (screenState.owns) {
-            scheduleScreenFit();
-            setScreenHint("live — type here to drive it", false);
-          } else {
+          if (term.cols !== parsed.cols || term.rows !== parsed.rows) {
             term.resize(parsed.cols, parsed.rows);
-            fitScreenToPanel();
-            setScreenHint(
-              `live — mirroring ${parsed.cols}×${parsed.rows} (a terminal window is attached; close it and this panel sets the size)`,
-              false,
-            );
           }
+          setScreenHint("live — type here to drive it", false);
           return;
         }
         // atob → bytes → xterm. The stream is raw terminal output, so it is
@@ -2469,65 +2452,36 @@
       hint.classList.toggle("stale", !!bad);
     }
 
-    /**
-     * Mirroring mode: the grid belongs to the pane and cannot be touched, so the
-     * terminal is SCALED to the panel — exactly how an image fits a frame with
-     * object-fit: contain.
-     *
-     * This replaces computing a font size, which could not stop being wrong:
-     * a font size is an integer (a grid that wants 31.4px settles for 31 and
-     * leaves a strip of dead space), it needs the rendered cell metrics read
-     * back at the right instant, and every clamp I put on it eventually became
-     * the bug — a 120x29 pane in a 2238px panel wanted 31px, hit a ceiling of
-     * 22, and sat in the corner of a black hole.
-     *
-     * A scale factor is a float, needs one measurement of a box that does not
-     * move, and cannot overflow: min() of the two ratios always fits. The font
-     * stays at SCREEN_FONT_PX forever. Text stays sharp because xterm renders
-     * DOM text and the browser rasterises transformed text at its final size.
-     */
+    // Native font, fixed. The dashboard tells the server what grid its panel
+    // wants and the server sizes the tmux window to match, so the terminal
+    // renders at its true size — no scaling, no soft text. This is what the
+    // earlier "mirror and scale" approach failed to be.
     const SCREEN_FONT_PX = 14;
-
-    function fitScreenToPanel() {
-      const { term } = screenState;
-      if (!term) return;
-      const wrap = $("#screen-term");
-      const inner = wrap.querySelector(".xterm");
-      if (!inner) return;
-      // Natural size = what the terminal is at font SCREEN_FONT_PX, untransformed.
-      inner.style.transform = "none";
-      const box = wrap.getBoundingClientRect();
-      const nat = inner.getBoundingClientRect();
-      if (nat.width < 10 || nat.height < 10 || box.width < 40) return;
-      const scale = Math.min(box.width / nat.width, box.height / nat.height);
-      inner.style.transformOrigin = "center center";
-      inner.style.transform = `scale(${scale})`;
-    }
 
     let fitTimer = null;
     function scheduleScreenFit() {
-      // Debounced: a drag fires ResizeObserver dozens of times, and in owning
-      // mode each fit is a tmux resize-window on the other end.
+      // Debounced: a drag fires ResizeObserver dozens of times, and each fit is
+      // a tmux resize-window on the other end.
       clearTimeout(fitTimer);
-      fitTimer = setTimeout(() => {
-        if (!screenState.term) return;
-        if (screenState.owns) {
-          screenState.fit.fit();
-          pushScreenSize();
-        } else {
-          fitScreenToPanel();
-        }
-      }, 120);
+      fitTimer = setTimeout(pushScreenSize, 120);
     }
 
+    /**
+     * Measures the grid the panel can hold at the native font and asks the
+     * server to size the tmux window to it. proposeDimensions() is xterm's own
+     * fit computation; the window then reflows and echoes the grid back, which
+     * the stream handler applies with term.resize.
+     */
     async function pushScreenSize() {
-      const { name, term } = screenState;
-      if (!name || !term) return;
+      const { name, term, fit } = screenState;
+      if (!name || !term || !fit) return;
+      const dims = fit.proposeDimensions();
+      if (!dims || !dims.cols || !dims.rows) return;
       try {
         await fetch(`/api/agents/${encodeURIComponent(name)}/terminal/resize`, {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ cols: term.cols, rows: term.rows }),
+          body: JSON.stringify({ cols: dims.cols, rows: dims.rows }),
         });
       } catch {
         /* the size is cosmetic; a failed resize must not break the stream */

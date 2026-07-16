@@ -57,10 +57,10 @@ function newBridge(): TerminalBridge {
 }
 
 interface Collected {
-  grids: Array<{ cols: number; rows: number; attached: number }>;
+  grids: Array<{ cols: number; rows: number }>;
   chunks: Buffer[];
   ends: string[];
-  onGrid(g: { cols: number; rows: number; attached: number }): void;
+  onGrid(g: { cols: number; rows: number }): void;
   onBytes(b: Buffer): void;
   onEnd(r: string): void;
   text(): string;
@@ -155,7 +155,6 @@ describe("TerminalBridge (real tmux, control mode)", () => {
       // Grid precedes bytes: the panel must size its emulator before painting.
       // The exact size is the tmux server's own default (80x24 asked for is not
       // guaranteed), so assert the SHAPE, not magic numbers.
-      expect(viewer.grids[0]).toMatchObject({ attached: 0 });
       expect(viewer.grids[0].cols).toBeGreaterThan(0);
       expect(viewer.grids[0].rows).toBeGreaterThan(0);
       const frame = viewer.chunks[0].toString("utf8");
@@ -217,7 +216,7 @@ describe("TerminalBridge (real tmux, control mode)", () => {
     );
   }, 20_000);
 
-  it("resizes through refresh-client when no real client is attached", async () => {
+  it("dictates the window size to fit the panel", async () => {
     if (!hasTmux) return;
     const session = sessionName("size");
     await newCatSession(session);

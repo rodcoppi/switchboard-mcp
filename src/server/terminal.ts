@@ -17,13 +17,14 @@
 // See the control-mode notes in tmux.ts for the protocol details and the
 // sizing-policy spike results.
 //
-// Sizing policy (spike-validated):
-//   - a REAL client attached (the Windows terminal) owns the size; our control
-//     client carries the `ignore-size` flag and the dashboard mirrors;
-//   - nobody real attached → the flag is cleared and the dashboard sizes the
-//     window through `refresh-client -C` (the panel becomes the terminal);
-//   - `resize-window` is NEVER used: it pins the window to window-size=manual,
-//     after which no client — real or ours — drives its size again.
+// Sizing: the dashboard DICTATES the window size to fit its panel, exactly as a
+// node-pty terminal would — `resize-window` to the panel's grid at the native
+// font, so every terminal is crisp and correctly sized. An earlier version
+// mirrored the pane and scaled it with CSS when a Windows terminal was attached;
+// that made the text big and soft and different from panel to panel, so it was
+// scrapped. While the dashboard watches it owns the size (a Windows terminal
+// attached alongside reflows to match — one window, one grid), and hands control
+// back on the last detach (set-window-option -u window-size). See resize().
 //
 // The pane guard (PRD 10.3) rules the input path, unchanged: bytes only ever
 // reach a pane running an agent, never a shell. A terminal here drives agents;
@@ -51,8 +52,8 @@ export class TerminalError extends Error {
 
 /** What a connected dashboard panel receives. */
 export interface TerminalViewer {
-  /** The pane's grid and how many REAL clients are attached (0 → panel owns the size). */
-  onGrid(grid: { cols: number; rows: number; attached: number }): void;
+  /** The pane's grid; the panel sizes its emulator to it. */
+  onGrid(grid: { cols: number; rows: number }): void;
   /** Terminal bytes: first a full synthesized frame, then the live deltas. */
   onBytes(bytes: Buffer): void;
   /** The stream is over (session killed, tmux gone). No more calls after this. */
@@ -182,14 +183,8 @@ export class TerminalBridge {
     const { cc } = entry;
     const t = `=${entry.session}:`;
 
-    // 1. Who owns the size? Count REAL clients (ours carries control-mode in
-    //    its flags) and set our ignore-size flag accordingly. Both idempotent.
-    const clients = await cc.command(`list-clients -t '${t}' -F '#{client_flags}'`);
-    const real = clients.out.filter((f) => !f.includes("control-mode")).length;
-    await cc.command(`refresh-client -f ${real > 0 ? "ignore-size" : "!ignore-size"}`);
-
-    // 2. Grid, pane id, cursor. Quoted: '#' starts a comment in a control-mode
-    //    command line (spike-verified parse error without quotes).
+    // Grid, pane id, cursor. Quoted: '#' starts a comment in a control-mode
+    // command line (spike-verified parse error without quotes).
     const info = await cc.command(
       `display-message -p -t '${t}' '#{pane_id} #{pane_width} #{pane_height} #{cursor_x} #{cursor_y} #{cursor_flag}'`,
     );
@@ -198,7 +193,7 @@ export class TerminalBridge {
       throw new Error(`could not read the pane state (${info.out.join(" ") || "no output"})`);
     }
     entry.paneId = m[1];
-    const grid = { cols: Number(m[2]), rows: Number(m[3]), attached: real };
+    const grid = { cols: Number(m[2]), rows: Number(m[3]) };
     const cursor = { x: Number(m[4]), y: Number(m[5]), visible: m[6] === "1" };
 
     // 3. The screen, colours included. The cursor query above is a hair older
@@ -235,6 +230,11 @@ export class TerminalBridge {
     if (entry.viewers.size > 0 || entry.closed) return;
     entry.closed = true;
     if (entry.reframeTimer) clearTimeout(entry.reframeTimer);
+    // Hand size control back before leaving: the dashboard dictated the window
+    // size while it was watching (resize()), so unset window-size or a Windows
+    // terminal that reattaches later would be stuck at the dashboard's size.
+    // Fire-and-forget: the kill right after closes the client regardless.
+    entry.cc.command("set-window-option -u window-size").catch(() => {});
     entry.cc.kill();
     this.live.delete(session);
     this.log.info(`[term] stopped streaming ${session} (last viewer left).`);
@@ -259,10 +259,20 @@ export class TerminalBridge {
   }
 
   /**
-   * The dashboard asks for a size. Honored only when no real client is
-   * attached — the Windows terminal is laid out for its grid, and resizing the
-   * shared window under it reflowed a live agent's TUI to 316 columns once.
-   * The refresh triggers %layout-change, which re-frames every viewer.
+   * The dashboard dictates the window size to fit its panel — exactly what a
+   * node-pty terminal does, and the reason the previous "mirror and scale it"
+   * approach was scrapped: scaling made the text look big, soft and different
+   * from panel to panel. `resize-window` gives the pane the panel's grid at the
+   * native font, so every terminal is crisp and correctly sized.
+   *
+   * While the dashboard watches, it OWNS the size, so a Windows terminal
+   * attached alongside reflows to match (one window, one grid — tmux's rule).
+   * The old 316-column disaster came from the SCALING path computing an absurd
+   * size, not from resize-window; the size here is a sane panel fit. Control is
+   * handed back on the last detach (set-window-option -u window-size).
+   *
+   * The resize triggers %layout-change → reframe, so every viewer repaints at
+   * the new grid.
    */
   async resize(session: string, cols: number, rows: number): Promise<void> {
     if (
@@ -282,13 +292,7 @@ export class TerminalBridge {
 
     entry.chain = entry.chain.then(async () => {
       if (entry.closed) return;
-      const clients = await entry.cc.command(
-        `list-clients -t '=${session}:' -F '#{client_flags}'`,
-      );
-      const real = clients.out.filter((f) => !f.includes("control-mode")).length;
-      if (real > 0) return; // mirroring: the real window owns the size
-      await entry.cc.command("refresh-client -f !ignore-size");
-      await entry.cc.command(`refresh-client -C ${cols}x${rows}`);
+      await entry.cc.command(`resize-window -x ${cols} -y ${rows}`);
     });
     await entry.chain;
   }
