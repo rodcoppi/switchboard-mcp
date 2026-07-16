@@ -918,8 +918,55 @@
     #chat-input:disabled { opacity: 0.5; }
     .chat-send { flex: none; align-self: stretch; padding: 0 16px; }
 
-    .chat-turn { display: flex; flex-direction: column; gap: 4px; max-width: 90ch; }
-    .chat-turn.user { align-self: flex-end; align-items: flex-end; }
+    /* A centred reading column — without it the turns fly to opposite edges of a
+       1300px panel and the middle is dead space. This is what makes it read as a
+       chat and not two lonely columns. */
+    .chat-thread {
+      width: 100%;
+      max-width: 880px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .chat-turn { display: flex; gap: 10px; align-items: flex-start; max-width: 100%; }
+    .chat-turn.user { flex-direction: row-reverse; }
+    /* Per-agent identity disc: initials on the signature amber. The operator's
+       own disc is quiet slate — you are not one of the agents. */
+    .chat-avatar {
+      flex: 0 0 auto;
+      width: 30px;
+      height: 30px;
+      margin-top: 2px;
+      border-radius: 9px;
+      display: grid;
+      place-items: center;
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      background: var(--accent-wash);
+      color: var(--accent);
+      border: 1px solid var(--accent-line);
+    }
+    .chat-avatar.you {
+      background: var(--bg-elev);
+      color: var(--text-dim);
+      border-color: var(--border);
+      font-size: 8.5px;
+      letter-spacing: 0;
+    }
+    .chat-turn-body {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      min-width: 0;
+      max-width: calc(100% - 42px);
+    }
+    .chat-turn.user .chat-turn-body { align-items: flex-end; }
+    .chat-meta { display: flex; gap: 8px; align-items: baseline; padding: 0 2px; }
+    .chat-turn.user .chat-meta { flex-direction: row-reverse; }
     .chat-role {
       font-family: var(--mono);
       font-size: var(--fs-eyebrow);
@@ -928,6 +975,12 @@
       color: var(--text-faint);
     }
     .chat-turn.user .chat-role { color: var(--accent); }
+    .chat-time {
+      font-family: var(--mono);
+      font-size: var(--fs-eyebrow);
+      color: var(--text-faint);
+      opacity: 0.7;
+    }
     .chat-bubble {
       padding: 9px 13px;
       border-radius: 12px;
@@ -985,7 +1038,8 @@
     /* Tool call: a compact chip that expands to input + result. */
     .chat-tool {
       align-self: stretch;
-      max-width: 90ch;
+      max-width: 100%;
+      margin-left: 40px;
       border: 1px solid var(--border-soft);
       border-radius: 8px;
       background: var(--bg-inset);
@@ -2738,7 +2792,11 @@
           view.appendChild(el("div", "chat-empty", parsed.error));
           return;
         }
-        if (parsed.initial) items.length = 0; // a fresh full dump replaces all
+        if (parsed.initial) {
+          items.length = 0; // a fresh full dump replaces all
+          const stale = view.querySelector(".chat-thread");
+          if (stale) stale.remove(); // rebuild, don't stack onto old turns
+        }
         const atBottom = view.scrollHeight - view.scrollTop - view.clientHeight < 120;
         for (const it of parsed.items || []) items.push(it);
         renderChat(view, items);
@@ -2846,24 +2904,61 @@
     // and assistant bubbles, and tool calls as collapsible chips.
     // =====================================================================
 
+    /**
+     * Incremental: the conversation SSE only ever APPENDS items (each pump
+     * forwards the newly-parsed lines and never mutates an earlier one), so the
+     * thread is grown by appending the tail rather than rebuilt from scratch —
+     * no re-parsing every markdown block on each nudge, and the scroll/selection
+     * survive. A shrink (a fresh `initial` dump replacing everything) rebuilds.
+     */
     function renderChat(view, items) {
-      view.textContent = "";
+      let thread = view.querySelector(".chat-thread");
       if (items.length === 0) {
+        view.textContent = "";
         view.appendChild(el("div", "chat-empty", "No conversation yet."));
         return;
       }
-      for (const it of items) {
-        if (it.kind === "tool") view.appendChild(buildToolChip(it));
-        else view.appendChild(buildChatTurn(it));
+      if (!thread) {
+        view.textContent = "";
+        thread = el("div", "chat-thread");
+        view.appendChild(thread);
+      }
+      let start = thread.childElementCount;
+      if (start > items.length) {
+        thread.textContent = ""; // items replaced wholesale — rebuild
+        start = 0;
+      }
+      const name = screenState.name;
+      for (let i = start; i < items.length; i++) {
+        const it = items[i];
+        thread.appendChild(it.kind === "tool" ? buildToolChip(it) : buildChatTurn(it, name));
       }
     }
 
-    function buildChatTurn(it) {
+    /** Two-letter identity mark for an agent — "ai-panorama" -> "AP". */
+    function initialsOf(name) {
+      if (!name) return "AI";
+      const parts = name.split(/[^a-zA-Z0-9]+/).filter(Boolean);
+      const s = parts.length >= 2 ? parts[0][0] + parts[1][0] : name.slice(0, 2);
+      return s.toUpperCase();
+    }
+
+    function buildChatTurn(it, agentName) {
+      const isUser = it.kind === "user";
       const turn = el("div", `chat-turn ${it.kind}`);
-      turn.appendChild(el("div", "chat-role", it.kind === "user" ? "you" : "agent"));
+      const avatar = el("div", `chat-avatar${isUser ? " you" : ""}`, isUser ? "you" : initialsOf(agentName));
+      const body = el("div", "chat-turn-body");
+      const meta = el("div", "chat-meta");
+      meta.appendChild(el("span", "chat-role", isUser ? "you" : agentName || "agent"));
+      if (it.ts) {
+        const t = el("span", "chat-time", fmtTime(it.ts));
+        t.title = fmtFull(it.ts);
+        meta.appendChild(t);
+      }
       const bubble = el("div", "chat-bubble");
       renderMarkdownInto(bubble, it.text);
-      turn.appendChild(bubble);
+      body.append(meta, bubble);
+      turn.append(avatar, body);
       return turn;
     }
 
