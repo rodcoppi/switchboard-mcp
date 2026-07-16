@@ -269,10 +269,14 @@ export interface ManualNudger {
  * undefined when the hub runs with a stubbed onMessage (no tmux, no terminals).
  */
 export interface Terminals {
-  firstFrame(
+  attachViewer(
     session: string,
-  ): Promise<{ frame: string; cols: number; rows: number; attached: number }>;
-  attach(session: string, onData: (chunk: Buffer) => void): Promise<() => void>;
+    viewer: {
+      onGrid(grid: { cols: number; rows: number; attached: number }): void;
+      onBytes(bytes: Buffer): void;
+      onEnd(reason: string): void;
+    },
+  ): Promise<() => void>;
   input(session: string, bytes: Buffer): Promise<void>;
   resize(session: string, cols: number, rows: number): Promise<void>;
 }
@@ -915,22 +919,27 @@ export function createApiRouter(options: ApiOptions): express.Router {
       Connection: "keep-alive",
     });
 
-    const send = (chunk: Buffer) => {
-      res.write(`data: ${JSON.stringify({ b64: chunk.toString("base64") })}\n\n`);
-    };
-
+    // The bridge drives everything: grid first (the panel sizes itself to the
+    // pane, never the reverse), then a full synthesized frame, then deltas —
+    // race-free by the control stream's ordering (see terminal.ts).
     let detach: (() => void) | undefined;
+    let ended = false;
     try {
-      const { frame, cols, rows, attached } = await terminals!.firstFrame(target.session);
-      // The grid first: the viewer sizes ITSELF to the pane (it must not size
-      // the pane to itself — see TerminalBridge.resize).
-      res.write(`data: ${JSON.stringify({ cols, rows, attached })}\n\n`);
-      // \x1b[2J\x1b[H: the viewer's emulator may hold an older paint of this
-      // pane (a reconnect), and the frame below is a full screen, not a diff.
-      send(Buffer.from(`\x1b[2J\x1b[H${frame}`, "utf8"));
-      detach = await terminals!.attach(target.session, send);
+      detach = await terminals!.attachViewer(target.session, {
+        onGrid: (grid) => res.write(`data: ${JSON.stringify(grid)}\n\n`),
+        onBytes: (bytes) =>
+          res.write(`data: ${JSON.stringify({ b64: bytes.toString("base64") })}\n\n`),
+        onEnd: (reason) => {
+          if (ended) return;
+          ended = true;
+          res.write(`data: ${JSON.stringify({ error: reason })}\n\n`);
+          res.end();
+        },
+      });
     } catch (err) {
-      log.warn(`[api] terminal stream failed for ${String(req.params.name)}: ${(err as Error).message}`);
+      log.warn(
+        `[api] terminal stream failed for ${String(req.params.name)}: ${(err as Error).message}`,
+      );
       res.write(`data: ${JSON.stringify({ error: (err as Error).message })}\n\n`);
       res.end();
       return;

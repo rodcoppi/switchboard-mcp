@@ -36,13 +36,22 @@ table, section 17).
 - `@xterm/xterm` is the ONE browser dependency, owner-approved, and it is a terminal
   EMULATOR — the thing you cannot sanely hand-roll (weeks of escape-sequence bugs). It is
   served by the hub from `node_modules` at `/vendor/*`, so the dashboard still fetches
-  nothing off this machine. It does NOT drag `node-pty` or websockets in with it: tmux is
-  already the pty (`pipe-pane` gives the raw output bytes, `send-keys -H` writes arbitrary
-  input bytes, `resize-window` sizes it) and SSE already carries a stream.
+  nothing off this machine. It does NOT drag `node-pty` or websockets in with it: the
+  dashboard terminal is a tmux CONTROL-MODE client (`tmux -C attach-session`, driven over
+  plain pipes — see `src/server/tmux.ts` / `terminal.ts`), input rides `send-keys -H`
+  (through the pane guard), and SSE already carries the stream. Control mode is what makes
+  the first frame race-free: command responses and `%output` share ONE ordered stream, so
+  the initial `capture-pane` and the live deltas cannot overlap or gap (the earlier
+  capture-pane snapshot + pipe-pane tee were two separate commands with an unclosable gap,
+  and Claude Code's cursor-relative repaints turned every lost/duplicated byte into text
+  written over text).
 - System prerequisites: tmux >= 3.2, claude >= 2.x, jq (debug).
 - **Forbidden in v1:** websockets, database, ORM, frontend framework, bundler, docker,
-  `node-pty` (tmux owns the ptys — a second pty layer would make us a wrapper, and an agent
-  would then die with the dashboard instead of outliving it).
+  `node-pty`. The `node-pty` ban is about NOT owning the agent's process: a pty running the
+  AGENT would make us a wrapper, and the agent would die with the dashboard. Control mode
+  sidesteps that entirely — tmux owns the agent's pty, our control client is just another
+  observer/driver of the session, and the agent outlives every viewer (test:
+  `terminal.integration.test.ts` "detach kills the client but NEVER the session").
 
 ## Commands
 

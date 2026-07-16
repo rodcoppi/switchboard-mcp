@@ -1,33 +1,36 @@
-// The agent's real screen, in the dashboard.
+// The agent's real screen, in the dashboard — control-mode edition.
 //
 // Why this exists: an agent is only visible through a terminal window attached
 // to its tmux session, so watching four agents means four Windows windows on
-// your taskbar. The owner's words: "eu tenho q ficar com 200 terminal na tela e
-// isso é caótico". The dashboard already lists the agents; it should be able to
-// show them too, and then the windows can be closed (the session lives in tmux
-// and outlives every viewer).
+// the taskbar. The dashboard lists the agents; it should show them too, and
+// then the windows can be closed (the session lives in tmux and outlives every
+// viewer).
 //
-// Why there is no node-pty here, unlike the wrapper this was inspired by: tmux
-// IS the pty, and it exposes the whole channel already —
-//   - output: `pipe-pane` tees the pane's raw bytes, escape sequences included;
-//   - input:  `send-keys -H` writes arbitrary bytes, so Escape and Ctrl-C land
-//             as real control characters;
-//   - size:   `resize-window`.
-// A second pty layer would make Switchboard a wrapper: it would own the agent's
-// process, and the agent would die with the dashboard instead of outliving it.
-// The browser side is xterm.js, the one thing that cannot be sanely hand-rolled.
+// Why CONTROL MODE and not capture-pane + pipe-pane (the first attempt): those
+// are two separate commands with an unclosable gap between snapshot and tee,
+// and no cursor or terminal modes in the snapshot. Claude Code's TUI repaints
+// relative to the cursor several times a second, so any byte lost or duplicated
+// in that gap skewed every following paint — the owner watched new text write
+// over old text. A control client (tmux -C) delivers command responses and
+// `%output` on ONE ordered stream, so "everything before the capture response
+// is in the capture; everything after follows as deltas" holds by construction.
+// See the control-mode notes in tmux.ts for the protocol details and the
+// sizing-policy spike results.
 //
-// The pane guard (PRD 10.3) still rules the input path, unchanged: bytes only
-// ever reach a pane running an agent, never a shell. A terminal here drives
-// agents; it is not a way to get a shell out of the hub.
+// Sizing policy (spike-validated):
+//   - a REAL client attached (the Windows terminal) owns the size; our control
+//     client carries the `ignore-size` flag and the dashboard mirrors;
+//   - nobody real attached → the flag is cleared and the dashboard sizes the
+//     window through `refresh-client -C` (the panel becomes the terminal);
+//   - `resize-window` is NEVER used: it pins the window to window-size=manual,
+//     after which no client — real or ours — drives its size again.
+//
+// The pane guard (PRD 10.3) rules the input path, unchanged: bytes only ever
+// reach a pane running an agent, never a shell. A terminal here drives agents;
+// it is not a way to get a shell out of the hub.
 
-import fs from "node:fs";
-import path from "node:path";
 import type { Logger } from "./log.js";
-import type { Tmux } from "./tmux.js";
-
-/** How often the tee file is checked for new bytes. */
-export const POLL_MS = 40;
+import type { ControlClient, Tmux } from "./tmux.js";
 
 /**
  * Refuses absurd sizes before they reach tmux. The upper bound is not a real
@@ -37,169 +40,204 @@ export const MAX_COLS = 500;
 export const MAX_ROWS = 200;
 
 export class TerminalError extends Error {
-  constructor(message: string, readonly status = 400) {
+  constructor(
+    message: string,
+    readonly status = 400,
+  ) {
     super(message);
     this.name = "TerminalError";
   }
 }
 
-export type TerminalListener = (chunk: Buffer) => void;
+/** What a connected dashboard panel receives. */
+export interface TerminalViewer {
+  /** The pane's grid and how many REAL clients are attached (0 → panel owns the size). */
+  onGrid(grid: { cols: number; rows: number; attached: number }): void;
+  /** Terminal bytes: first a full synthesized frame, then the live deltas. */
+  onBytes(bytes: Buffer): void;
+  /** The stream is over (session killed, tmux gone). No more calls after this. */
+  onEnd(reason: string): void;
+}
+
+interface InternalViewer extends TerminalViewer {
+  /** %output is forwarded only after this viewer's first frame went out. */
+  started: boolean;
+}
 
 interface Live {
-  /** Everyone watching this pane. The tee runs while at least one remains. */
-  listeners: Set<TerminalListener>;
-  file: string;
-  fd: number;
-  /** Bytes already forwarded — the read cursor into the tee file. */
-  offset: number;
-  timer: NodeJS.Timeout;
-  reading: boolean;
+  cc: ControlClient;
+  session: string;
+  paneId: string | null;
+  viewers: Set<InternalViewer>;
+  /** Serializes frames: a layout burst must not interleave two captures. */
+  chain: Promise<void>;
+  reframeTimer: NodeJS.Timeout | null;
+  closed: boolean;
 }
 
 export interface TerminalBridgeOptions {
   tmux: Tmux;
   log: Logger;
-  /** Where the tee files live (default: <baseDir>/term). */
-  dir: string;
-  pollMs?: number;
 }
 
-/**
- * One bridge per hub, holding one tee per WATCHED pane (not per viewer): tmux
- * pipes a pane to a single command, so a second viewer joins the same stream
- * instead of starting another.
- */
 export class TerminalBridge {
   private readonly live = new Map<string, Live>();
   private readonly tmux: Tmux;
   private readonly log: Logger;
-  private readonly dir: string;
-  private readonly pollMs: number;
 
   constructor(options: TerminalBridgeOptions) {
     this.tmux = options.tmux;
     this.log = options.log;
-    this.dir = options.dir;
-    this.pollMs = options.pollMs ?? POLL_MS;
   }
 
   /**
-   * The screen as it stands right now, escape sequences and all, plus the grid
-   * it is laid out for and whether a real terminal is attached to it. Sent as
-   * the viewer's first frame because the tee only carries what the pane does
-   * NEXT — without it you would watch a blank rectangle until the agent moved.
-   *
-   * No scrollback comes with it, and none is missing: Claude Code runs in the
-   * ALTERNATE SCREEN, which has no history by definition (tmux reports
-   * history_size 0 for these panes, and `capture-pane -S -` returns the visible
-   * screen and nothing more). The conversation you scroll inside Claude Code is
-   * drawn by Claude Code from its own memory; it never becomes terminal
-   * scrollback, so the operator's own window has no history there either. You
-   * scroll it by talking to the TUI, which the viewer can do — it is just keys.
-   *
-   * `attached` decides who owns the size: see resize().
+   * Connects a viewer to `session`'s screen: spawns (or joins) the control
+   * client, sends this viewer its first frame, then streams. Returns the
+   * detach function; the control client dies with its last viewer.
    */
-  async firstFrame(
-    session: string,
-  ): Promise<{ frame: string; cols: number; rows: number; attached: number }> {
-    const [raw, size] = await Promise.all([
-      this.tmux.capturePaneAnsi(session),
-      this.tmux.paneSize(session),
-    ]);
-    // capture-pane prints the screen as TEXT LINES, separated by \n. A terminal
-    // is not a text file: \n only moves DOWN, and \r is what returns to column
-    // 0. Written raw, every line started where the previous one ended and the
-    // paint walked off to the right. The live stream needs no such help — those
-    // are real terminal bytes, with their own \r\n.
-    const frame = raw.replace(/\r?\n/g, "\r\n");
-    return { frame, cols: size.cols, rows: size.rows, attached: size.attached };
-  }
+  async attachViewer(session: string, viewer: TerminalViewer): Promise<() => void> {
+    const internal = viewer as InternalViewer;
+    internal.started = false;
 
-  /**
-   * Starts (or joins) the tee for `session` and calls `onData` with every byte
-   * the pane emits from now on. Returns the detach function; the tee stops when
-   * the last viewer detaches.
-   */
-  async attach(session: string, onData: TerminalListener): Promise<() => void> {
     let entry = this.live.get(session);
-
     if (!entry) {
-      fs.mkdirSync(this.dir, { recursive: true });
-      const file = path.join(this.dir, `${session}.raw`);
-      // Truncate: a previous viewer's bytes are already on somebody's screen or
-      // gone, and replaying them would corrupt this session's paint.
-      fs.writeFileSync(file, "");
-      await this.tmux.pipePaneToFile(session, file);
-
-      const fd = fs.openSync(file, "r");
-      const created: Live = {
-        listeners: new Set(),
-        file,
-        fd,
-        offset: 0,
-        reading: false,
-        timer: setInterval(() => void this.drain(session), this.pollMs),
-      };
-      // Node keeps the process alive for a pending interval; a hub must be able
-      // to exit with a terminal open.
-      created.timer.unref?.();
-      this.live.set(session, created);
-      entry = created;
-      this.log.info(`[term] streaming ${session}.`);
+      entry = this.spawn(session);
+      this.live.set(session, entry);
     }
+    entry.viewers.add(internal);
 
-    entry.listeners.add(onData);
-    return () => this.detach(session, onData);
+    // Queue this viewer's first frame behind whatever frame work is running —
+    // two captures interleaved on one stream would cross their %output cuts.
+    const frame = (entry.chain = entry.chain.then(() =>
+      this.frame(entry!, [internal]).catch((err) => {
+        this.log.warn(`[term] first frame failed for ${session}: ${(err as Error).message}`);
+        internal.onEnd((err as Error).message);
+        this.detach(session, internal);
+      }),
+    ));
+    await frame;
+
+    return () => this.detach(session, internal);
   }
 
-  private detach(session: string, onData: TerminalListener): void {
+  private spawn(session: string): Live {
+    const entry: Live = {
+      session,
+      paneId: null,
+      viewers: new Set(),
+      chain: Promise.resolve(),
+      reframeTimer: null,
+      closed: false,
+      cc: this.tmux.attachControlClient(session, {
+        onOutput: (paneId, bytes) => {
+          // A session window holds ONE pane in this product; the filter is
+          // defense against a user splitting it by hand.
+          if (entry.paneId !== null && paneId !== entry.paneId) return;
+          for (const v of entry.viewers) if (v.started) v.onBytes(bytes);
+        },
+        onLayoutChange: () => this.scheduleReframe(entry),
+        onExit: (reason) => {
+          if (entry.closed) return;
+          entry.closed = true;
+          if (entry.reframeTimer) clearTimeout(entry.reframeTimer);
+          this.live.delete(session);
+          this.log.info(`[term] stream of ${session} ended: ${reason}`);
+          for (const v of [...entry.viewers]) v.onEnd(reason);
+          entry.viewers.clear();
+        },
+      }),
+    };
+    this.log.info(`[term] control client attached to ${session}.`);
+    return entry;
+  }
+
+  /**
+   * Window layout changed (Windows terminal resized, our own refresh-client,
+   * a manual tmux resize). Debounced re-frame of every viewer: a drag emits a
+   * burst of layout events, and each re-frame is a capture round-trip.
+   */
+  private scheduleReframe(entry: Live): void {
+    if (entry.closed) return;
+    if (entry.reframeTimer) clearTimeout(entry.reframeTimer);
+    entry.reframeTimer = setTimeout(() => {
+      entry.reframeTimer = null;
+      entry.chain = entry.chain.then(() =>
+        this.frame(entry, [...entry.viewers]).catch((err) => {
+          this.log.warn(`[term] reframe failed for ${entry.session}: ${(err as Error).message}`);
+        }),
+      );
+    }, 120);
+    entry.reframeTimer.unref?.();
+  }
+
+  /**
+   * Builds and delivers one full frame to `targets`: sizing policy, grid,
+   * synthesized screen. The stream-order contract that makes this race-free:
+   * a viewer's `started` flips true exactly when its capture block resolves,
+   * so every %output before that instant is IN the capture and every one
+   * after it reaches the viewer as a delta.
+   */
+  private async frame(entry: Live, targets: InternalViewer[]): Promise<void> {
+    if (entry.closed || targets.length === 0) return;
+    const { cc } = entry;
+    const t = `=${entry.session}:`;
+
+    // 1. Who owns the size? Count REAL clients (ours carries control-mode in
+    //    its flags) and set our ignore-size flag accordingly. Both idempotent.
+    const clients = await cc.command(`list-clients -t '${t}' -F '#{client_flags}'`);
+    const real = clients.out.filter((f) => !f.includes("control-mode")).length;
+    await cc.command(`refresh-client -f ${real > 0 ? "ignore-size" : "!ignore-size"}`);
+
+    // 2. Grid, pane id, cursor. Quoted: '#' starts a comment in a control-mode
+    //    command line (spike-verified parse error without quotes).
+    const info = await cc.command(
+      `display-message -p -t '${t}' '#{pane_id} #{pane_width} #{pane_height} #{cursor_x} #{cursor_y} #{cursor_flag}'`,
+    );
+    const m = /^(%\d+) (\d+) (\d+) (\d+) (\d+) (\d+)$/.exec(info.out[0] ?? "");
+    if (!info.ok || !m) {
+      throw new Error(`could not read the pane state (${info.out.join(" ") || "no output"})`);
+    }
+    entry.paneId = m[1];
+    const grid = { cols: Number(m[2]), rows: Number(m[3]), attached: real };
+    const cursor = { x: Number(m[4]), y: Number(m[5]), visible: m[6] === "1" };
+
+    // 3. The screen, colours included. The cursor query above is a hair older
+    //    than this capture; both writes land back-to-back on the control
+    //    stream, and a mismatch would need pane output in between — microseconds
+    //    — and self-heals on the app's next repaint.
+    const cap = await cc.command(`capture-pane -p -e -t '${t}'`);
+    if (!cap.ok) throw new Error(`capture-pane failed (${cap.out.join(" ")})`);
+
+    // 4. Synthesize. \r\n, not \n: capture prints text LINES, and on a terminal
+    //    \n only moves down — \r is what returns to column 0 (a frame without
+    //    it painted as a staircase). Cursor hidden while painting, restored per
+    //    the pane's own flag, positioned absolutely (ANSI is 1-based).
+    const frame = Buffer.from(
+      "\x1b[?25l\x1b[0m\x1b[2J\x1b[H" +
+        cap.out.join("\r\n") +
+        `\x1b[${cursor.y + 1};${cursor.x + 1}H` +
+        (cursor.visible ? "\x1b[?25h" : ""),
+      "utf8",
+    );
+
+    for (const v of targets) {
+      if (entry.closed) return;
+      v.onGrid(grid);
+      v.onBytes(frame);
+      v.started = true;
+    }
+  }
+
+  private detach(session: string, viewer: InternalViewer): void {
     const entry = this.live.get(session);
     if (!entry) return;
-    entry.listeners.delete(onData);
-    if (entry.listeners.size > 0) return;
-
-    clearInterval(entry.timer);
-    try {
-      fs.closeSync(entry.fd);
-    } catch {
-      /* already gone */
-    }
-    // Stop the tee FIRST: an orphaned pipe-pane would grow this file for the
-    // rest of the pane's life with nobody reading it.
-    void this.tmux.pipePaneToFile(session, null).catch((err) => {
-      this.log.warn(`[term] could not stop the stream of ${session}: ${(err as Error).message}`);
-    });
-    try {
-      fs.rmSync(entry.file, { force: true });
-    } catch {
-      /* best effort */
-    }
+    entry.viewers.delete(viewer);
+    if (entry.viewers.size > 0 || entry.closed) return;
+    entry.closed = true;
+    if (entry.reframeTimer) clearTimeout(entry.reframeTimer);
+    entry.cc.kill();
     this.live.delete(session);
-    this.log.info(`[term] stopped streaming ${session}.`);
-  }
-
-  /** Forwards whatever the pane appended since the last pass. */
-  private async drain(session: string): Promise<void> {
-    const entry = this.live.get(session);
-    // reading: a slow read must not overlap the next tick and deliver the same
-    // bytes twice.
-    if (!entry || entry.reading) return;
-    entry.reading = true;
-    try {
-      const { size } = fs.fstatSync(entry.fd);
-      if (size <= entry.offset) return;
-      const length = size - entry.offset;
-      const buf = Buffer.allocUnsafe(length);
-      const read = fs.readSync(entry.fd, buf, 0, length, entry.offset);
-      if (read <= 0) return;
-      entry.offset += read;
-      const chunk = buf.subarray(0, read);
-      for (const listener of entry.listeners) listener(chunk);
-    } catch (err) {
-      this.log.warn(`[term] read failed for ${session}: ${(err as Error).message}`);
-    } finally {
-      entry.reading = false;
-    }
+    this.log.info(`[term] stopped streaming ${session} (last viewer left).`);
   }
 
   /**
@@ -221,13 +259,10 @@ export class TerminalBridge {
   }
 
   /**
-   * Sizes the pane. Deliberate action only — the dashboard MIRRORS instead.
-   *
-   * A viewer that fits the grid to its own panel and pushes that size here
-   * reflows the agent's TUI for everyone attached to it: a wide browser panel
-   * at a small font asked for 316x80 and the agent's terminal became 316
-   * columns wide, for the operator's real window too. tmux resize-window is not
-   * a per-viewer preference, it is THE window's size.
+   * The dashboard asks for a size. Honored only when no real client is
+   * attached — the Windows terminal is laid out for its grid, and resizing the
+   * shared window under it reflowed a live agent's TUI to 316 columns once.
+   * The refresh triggers %layout-change, which re-frames every viewer.
    */
   async resize(session: string, cols: number, rows: number): Promise<void> {
     if (
@@ -242,13 +277,31 @@ export class TerminalBridge {
         `Invalid terminal size ${cols}x${rows} (expected 1..${MAX_COLS} by 1..${MAX_ROWS}).`,
       );
     }
-    await this.tmux.resizeWindow(session, cols, rows);
+    const entry = this.live.get(session);
+    if (!entry || entry.closed) return; // no viewer, nothing to size
+
+    entry.chain = entry.chain.then(async () => {
+      if (entry.closed) return;
+      const clients = await entry.cc.command(
+        `list-clients -t '=${session}:' -F '#{client_flags}'`,
+      );
+      const real = clients.out.filter((f) => !f.includes("control-mode")).length;
+      if (real > 0) return; // mirroring: the real window owns the size
+      await entry.cc.command("refresh-client -f !ignore-size");
+      await entry.cc.command(`refresh-client -C ${cols}x${rows}`);
+    });
+    await entry.chain;
   }
 
   /** Stops every stream — the hub is going down. */
   closeAll(): void {
     for (const [session, entry] of [...this.live]) {
-      for (const listener of [...entry.listeners]) this.detach(session, listener);
+      entry.closed = true;
+      if (entry.reframeTimer) clearTimeout(entry.reframeTimer);
+      entry.cc.kill();
+      this.live.delete(session);
+      for (const v of [...entry.viewers]) v.onEnd("the hub is shutting down");
+      entry.viewers.clear();
     }
   }
 }

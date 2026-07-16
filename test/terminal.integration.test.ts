@@ -1,15 +1,12 @@
-// TerminalBridge against REAL tmux: the bridge exists to prove tmux can be the
-// pty, so a mocked tmux would test nothing worth testing here.
-// Skipped automatically when tmux is absent (same rule as the other integration
-// suites).
+// TerminalBridge (control mode) against REAL tmux: the bridge exists to prove
+// tmux control mode can be the terminal's backbone, so a mocked tmux would test
+// nothing worth testing here. Skipped automatically when tmux is absent (same
+// rule as the other integration suites).
 
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
-import { createTmux } from "../src/server/tmux.js";
+import { createTmux, decodeControlOutput } from "../src/server/tmux.js";
 import { TerminalBridge, TerminalError } from "../src/server/terminal.js";
 
 const execFileAsync = promisify(execFile);
@@ -32,7 +29,6 @@ const silentLog = {
 } as any;
 
 const sessions: string[] = [];
-const dirs: string[] = [];
 
 function sessionName(tag: string): string {
   const name = `zz-term-${tag}-${process.pid}-${Date.now()}`;
@@ -40,80 +36,106 @@ function sessionName(tag: string): string {
   return name;
 }
 
-function newDir(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "switchboard-term-"));
-  dirs.push(dir);
-  return dir;
+async function newCatSession(name: string, cols = 80, rows = 24): Promise<void> {
+  // `cat` echoes its input and interprets nothing: inert (the pane guard
+  // allows it) and enough to prove bytes make the round trip.
+  await execFileAsync("tmux", [
+    "new-session",
+    "-d",
+    "-s",
+    name,
+    "-x",
+    String(cols),
+    "-y",
+    String(rows),
+    "cat",
+  ]);
 }
 
-function newBridge(dir = newDir()) {
-  return new TerminalBridge({ tmux: createTmux(), log: silentLog, dir, pollMs: 20 });
+function newBridge(): TerminalBridge {
+  return new TerminalBridge({ tmux: createTmux(), log: silentLog });
 }
 
-async function waitFor(predicate: () => boolean, ms = 4000): Promise<void> {
+interface Collected {
+  grids: Array<{ cols: number; rows: number; attached: number }>;
+  chunks: Buffer[];
+  ends: string[];
+  onGrid(g: { cols: number; rows: number; attached: number }): void;
+  onBytes(b: Buffer): void;
+  onEnd(r: string): void;
+  text(): string;
+}
+
+function makeViewer(): Collected {
+  return {
+    grids: [],
+    chunks: [],
+    ends: [],
+    onGrid(g) {
+      this.grids.push(g);
+    },
+    onBytes(b) {
+      this.chunks.push(b);
+    },
+    onEnd(r) {
+      this.ends.push(r);
+    },
+    text() {
+      return Buffer.concat(this.chunks).toString("utf8");
+    },
+  };
+}
+
+async function waitFor(predicate: () => boolean, ms = 5000): Promise<void> {
   const deadline = Date.now() + ms;
   while (Date.now() < deadline) {
     if (predicate()) return;
-    await new Promise((r) => setTimeout(r, 20));
+    await new Promise((r) => setTimeout(r, 25));
   }
 }
+
+const countOf = (haystack: string, needle: string): number => haystack.split(needle).length - 1;
 
 afterEach(async () => {
   for (const s of sessions.splice(0)) {
     await execFileAsync("tmux", ["kill-session", "-t", `=${s}`]).catch(() => {});
   }
-  for (const d of dirs.splice(0)) fs.rmSync(d, { recursive: true, force: true });
 });
 
-describe.runIf(true)("TerminalBridge (real tmux)", () => {
-  it("streams what the pane prints, as raw bytes", async () => {
+describe("decodeControlOutput (pure)", () => {
+  it("passes plain ASCII through and decodes octal escapes to bytes", () => {
+    expect(decodeControlOutput("abc").toString()).toBe("abc");
+    expect([...decodeControlOutput("a\\015\\012b")]).toEqual([0x61, 0x0d, 0x0a, 0x62]);
+    // tmux escapes the backslash itself as \134 — a raw backslash from the
+    // pane must come back as exactly one byte.
+    expect(decodeControlOutput("\\134").toString()).toBe("\\");
+    // UTF-8 arrives one octal escape per BYTE; the pair below is "é".
+    expect(decodeControlOutput("\\303\\251").toString("utf8")).toBe("é");
+  });
+});
+
+describe("TerminalBridge (real tmux, control mode)", () => {
+  it("streams what the pane prints, as raw bytes, and input reaches it", async () => {
     if (!hasTmux) return;
     const session = sessionName("stream");
-    // `cat` echoes its input back: inert (the pane guard allows it) and enough
-    // to prove bytes make the round trip.
-    await execFileAsync("tmux", ["new-session", "-d", "-s", session, "-x", "80", "-y", "24", "cat"]);
+    await newCatSession(session);
     const bridge = newBridge();
+    const viewer = makeViewer();
 
-    let seen = Buffer.alloc(0);
-    const detach = await bridge.attach(session, (chunk) => {
-      seen = Buffer.concat([seen, chunk]);
-    });
+    const detach = await bridge.attachViewer(session, viewer);
     try {
-      await bridge.input(session, Buffer.from("hello\n"));
-      await waitFor(() => seen.toString().includes("hello"));
-      expect(seen.toString()).toContain("hello");
+      await bridge.input(session, Buffer.from("hello-bridge\n"));
+      await waitFor(() => viewer.text().includes("hello-bridge"));
+      expect(viewer.text()).toContain("hello-bridge");
+      expect(viewer.ends).toEqual([]);
     } finally {
       detach();
     }
   }, 20_000);
 
-  it("delivers control bytes as control characters, not as words", async () => {
-    if (!hasTmux) return;
-    const session = sessionName("ctrl");
-    await execFileAsync("tmux", ["new-session", "-d", "-s", session, "-x", "80", "-y", "24", "cat"]);
-    const bridge = newBridge();
-    const detach = await bridge.attach(session, () => {});
-    try {
-      // 0x04 = Ctrl-D = EOF. If tmux typed the LETTERS "C-d" instead, `cat`
-      // would echo them and live on; the session dying IS the proof the byte
-      // arrived as a real control character.
-      await bridge.input(session, Buffer.from([0x04]));
-      let alive = true;
-      const deadline = Date.now() + 4000;
-      while (Date.now() < deadline && alive) {
-        await new Promise((r) => setTimeout(r, 50));
-        alive = await createTmux().hasSession(session);
-      }
-      expect(alive).toBe(false);
-    } finally {
-      detach();
-    }
-  }, 20_000);
-
-  it("the first frame is the screen as it stands, with its colours", async () => {
+  it("first frame: grid, screen content, CRLF, absolute cursor", async () => {
     if (!hasTmux) return;
     const session = sessionName("frame");
-    // printf writes red text, then cat holds the pane open.
     await execFileAsync("tmux", [
       "new-session",
       "-d",
@@ -127,59 +149,56 @@ describe.runIf(true)("TerminalBridge (real tmux)", () => {
     ]);
     await new Promise((r) => setTimeout(r, 500));
     const bridge = newBridge();
-    const first = await bridge.firstFrame(session);
-    expect(first.frame).toContain("REDTEXT");
-    // The colour has to survive, or the dashboard paints a grey wall.
-    expect(first.frame).toContain("[");
-    // The grid ships with the frame because a viewer MIRRORS the pane. It must
-    // never size the pane to its own panel: doing that reflowed a real agent's
-    // TUI to 316 columns, for the operator's own window too. Asserted against
-    // what tmux actually reports rather than the size we asked for at creation:
-    // the server has its own say, and the invariant is "the bridge tells the
-    // truth about the pane", not a magic number.
-    const { stdout: real } = await execFileAsync("tmux", [
-      "display-message", "-p", "-t", `=${session}:`, "#{pane_width}x#{pane_height}",
-    ]);
-    expect(`${first.cols}x${first.rows}`).toBe(real.trim());
-    // Nobody is attached to a session created with -d, so the viewer is free to
-    // size this pane to its own panel. With a real terminal window attached the
-    // count is > 0 and the viewer must mirror instead — that is the whole rule.
-    expect(first.attached).toBe(0);
-    // Every line break must be CRLF. capture-pane prints text lines separated
-    // by \n, but \n on a terminal only moves DOWN — \r is what returns to
-    // column 0. Written raw, each line started where the previous ended and the
-    // whole paint walked off to the right.
-    expect(first.frame).not.toMatch(/[^\r]\n/);
+    const viewer = makeViewer();
+    const detach = await bridge.attachViewer(session, viewer);
+    try {
+      // Grid precedes bytes: the panel must size its emulator before painting.
+      // The exact size is the tmux server's own default (80x24 asked for is not
+      // guaranteed), so assert the SHAPE, not magic numbers.
+      expect(viewer.grids[0]).toMatchObject({ attached: 0 });
+      expect(viewer.grids[0].cols).toBeGreaterThan(0);
+      expect(viewer.grids[0].rows).toBeGreaterThan(0);
+      const frame = viewer.chunks[0].toString("utf8");
+      expect(frame).toContain("REDTEXT");
+      expect(frame).toContain("\x1b[2J"); // full screen, not a diff
+      // The whole reason for the rebuild: the frame must END with an absolute
+      // cursor position — relative repaints (Claude Code repaints constantly)
+      // land wherever the cursor is, and without this they wrote text over
+      // other text.
+      expect(frame).toMatch(/\x1b\[\d+;\d+H/);
+      // \r\n, never bare \n: capture yields text LINES, and \n alone only
+      // moves down — the first attempt painted a staircase.
+      expect(frame).not.toMatch(/[^\r]\n/);
+    } finally {
+      detach();
+    }
   }, 20_000);
 
-  it("stops the tee when the last viewer leaves, and cleans the file up", async () => {
+  it("a byte from before the attach is delivered EXACTLY once (the race)", async () => {
     if (!hasTmux) return;
-    const session = sessionName("detach");
-    const dir = newDir();
-    await execFileAsync("tmux", ["new-session", "-d", "-s", session, "-x", "80", "-y", "24", "cat"]);
-    const bridge = newBridge(dir);
+    const session = sessionName("race");
+    await newCatSession(session);
+    // The marker lands on the screen before any viewer exists.
+    await execFileAsync("tmux", ["send-keys", "-t", `=${session}:`, "-l", "--", "once-marker-77"]);
+    await new Promise((r) => setTimeout(r, 400));
 
-    const detachA = await bridge.attach(session, () => {});
-    const detachB = await bridge.attach(session, () => {});
-    const file = path.join(dir, `${session}.raw`);
-    expect(fs.existsSync(file)).toBe(true);
-
-    // One viewer leaving must NOT cut the other one off.
-    detachA();
-    expect(fs.existsSync(file)).toBe(true);
-
-    detachB();
-    await waitFor(() => !fs.existsSync(file));
-    // An orphaned pipe-pane would grow this file for the rest of the pane's
-    // life with nobody reading it.
-    expect(fs.existsSync(file)).toBe(false);
+    const bridge = newBridge();
+    const viewer = makeViewer();
+    const detach = await bridge.attachViewer(session, viewer);
+    try {
+      await new Promise((r) => setTimeout(r, 800));
+      // capture-pane + pipe-pane had an unclosable gap here: the marker either
+      // vanished (gap) or painted twice (overlap). The control stream's
+      // ordering is the entire reason this rebuild exists.
+      expect(countOf(viewer.text(), "once-marker-77")).toBe(1);
+    } finally {
+      detach();
+    }
   }, 20_000);
 
   it("REFUSES to type into a shell pane — the guard rules this path too", async () => {
     if (!hasTmux) return;
     const session = sessionName("guard");
-    // A bash pane: exactly what the guard exists for. Typed bytes here would be
-    // executed as commands.
     await execFileAsync("tmux", [
       "new-session",
       "-d",
@@ -198,23 +217,64 @@ describe.runIf(true)("TerminalBridge (real tmux)", () => {
     );
   }, 20_000);
 
-  it("resizes the pane, and refuses a size that is not one", async () => {
+  it("resizes through refresh-client when no real client is attached", async () => {
     if (!hasTmux) return;
     const session = sessionName("size");
-    await execFileAsync("tmux", ["new-session", "-d", "-s", session, "-x", "80", "-y", "24", "cat"]);
+    await newCatSession(session);
     const bridge = newBridge();
+    const viewer = makeViewer();
+    const detach = await bridge.attachViewer(session, viewer);
+    try {
+      await bridge.resize(session, 100, 30);
+      // The resize lands via tmux and comes back as a layout change → reframe
+      // with the new grid.
+      await waitFor(() => viewer.grids.some((g) => g.cols === 100 && g.rows === 30));
+      expect(viewer.grids.some((g) => g.cols === 100 && g.rows === 30)).toBe(true);
+      const { stdout } = await execFileAsync("tmux", [
+        "display-message",
+        "-p",
+        "-t",
+        `=${session}:`,
+        "#{pane_width}x#{pane_height}",
+      ]);
+      expect(stdout.trim()).toBe("100x30");
 
-    await bridge.resize(session, 120, 30);
-    const { stdout } = await execFileAsync("tmux", [
-      "display-message",
-      "-p",
-      "-t",
-      `=${session}:`,
-      "#{pane_width}x#{pane_height}",
-    ]);
-    expect(stdout.trim()).toBe("120x30");
+      await expect(bridge.resize(session, 0, 30)).rejects.toBeInstanceOf(TerminalError);
+      await expect(bridge.resize(session, 99999, 30)).rejects.toBeInstanceOf(TerminalError);
+    } finally {
+      detach();
+    }
+  }, 20_000);
 
-    await expect(bridge.resize(session, 0, 30)).rejects.toBeInstanceOf(TerminalError);
-    await expect(bridge.resize(session, 99999, 30)).rejects.toBeInstanceOf(TerminalError);
+  it("the last viewer's detach kills the control client but NEVER the session", async () => {
+    if (!hasTmux) return;
+    const session = sessionName("detach");
+    await newCatSession(session);
+    const bridge = newBridge();
+    const a = makeViewer();
+    const b = makeViewer();
+    const detachA = await bridge.attachViewer(session, a);
+    const detachB = await bridge.attachViewer(session, b);
+
+    const clientCount = async (): Promise<number> => {
+      const { stdout } = await execFileAsync("tmux", ["list-clients", "-t", `=${session}`]);
+      return stdout.split("\n").filter((l) => l.trim() !== "").length;
+    };
+    expect(await clientCount()).toBe(1); // one control client, shared
+
+    // One viewer leaving must NOT cut the other one off.
+    detachA();
+    await new Promise((r) => setTimeout(r, 300));
+    expect(await clientCount()).toBe(1);
+
+    detachB();
+    const deadline = Date.now() + 4000;
+    while (Date.now() < deadline && (await clientCount()) > 0) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    expect(await clientCount()).toBe(0);
+    // The dashboard closing must never take the agent down with it — that is
+    // the architectural line between "a terminal" and "a wrapper".
+    expect(await createTmux().hasSession(session)).toBe(true);
   }, 20_000);
 });

@@ -143,11 +143,7 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
     // The agent's screen in the dashboard. Same real tmux layer: tmux is the
     // pty, so this needs no second one (see terminal.ts). A hub with a stubbed
     // onMessage has no tmux and therefore no terminals — the routes answer 501.
-    terminals = new TerminalBridge({
-      tmux,
-      log,
-      dir: path.join(store.baseDir, "term"),
-    });
+    terminals = new TerminalBridge({ tmux, log });
     // Dashboard "Launch agent": same real tmux layer as the dispatcher. Tests
     // that stub onMessage get NO launcher (endpoint answers 501). The Windows
     // terminal opener rides WSL interop and is null on non-WSL hosts.

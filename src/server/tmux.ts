@@ -32,7 +32,7 @@
 // validated in spike 0.2/0.3): text + Enter in one command types but does
 // not submit in TUIs.
 
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 
 export interface ExecResult {
@@ -151,6 +151,82 @@ export function quoteShellArg(arg: string): string {
   return `'${arg.replaceAll("'", `'\\''`)}'`;
 }
 
+// ---------------------------------------------------------------------------
+// Control mode (tmux -C) — the terminal view's backbone.
+//
+// Control mode is tmux's OWN protocol for embedding sessions in a GUI (it is
+// how iTerm2 does it): a client whose stdio is plain line-based text, safe to
+// drive through pipes from Node. What it buys over the previous approach
+// (capture-pane snapshot + pipe-pane tee, both separate commands):
+//
+//   RACE-FREE FIRST FRAME. `%output` notifications and command responses
+//   (%begin/%end blocks) arrive on ONE ordered stream: every byte the pane
+//   emitted before a `capture-pane` response is already IN that capture, and
+//   everything after follows as deltas. capture+pipe had an unclosable gap
+//   between the snapshot and the tee — and Claude Code's TUI repaints
+//   relative to the cursor several times a second, so any lost or duplicated
+//   byte skewed the whole paint (the owner watched text write over other
+//   text). There is no atomic snapshot+subscribe outside control mode.
+//
+//   SIZE AS POLICY, NOT FIGHTS. A control client has a real size
+//   (`refresh-client -C WxH`) and a per-client `ignore-size` flag, so "the
+//   Windows terminal owns the size while it is attached; the dashboard owns
+//   it when alone" is two flag flips. Spike-validated (scratchpad
+//   spike-cm2.cjs): with ignore-size set, a real client attaching takes the
+//   window; with it cleared, refresh-client -C takes it back. NEVER
+//   resize-window on a shared window: it pins the window to window-size
+//   manual, after which no client (real or control) drives its size again.
+//
+// Two protocol gotchas, both spike-verified:
+//   - `-CC` DIES when stdio is a pipe (it wants the iTerm2 DCS handshake);
+//     plain `-C` works and does not echo commands.
+//   - `#` starts a COMMENT in a control-mode command line, so any #{format}
+//     argument must be single-quoted.
+// ---------------------------------------------------------------------------
+
+export interface ControlClientHandlers {
+  /** Raw bytes the pane emitted (decoded from %output's octal escapes). */
+  onOutput(paneId: string, bytes: Buffer): void;
+  /** The window's layout/size changed (client resize, refresh-client, …). */
+  onLayoutChange(): void;
+  /** The client died: session killed, server gone, spawn failure. */
+  onExit(reason: string): void;
+}
+
+export interface ControlClient {
+  /**
+   * Runs one tmux command through the control stream and resolves with its
+   * %begin/%end (ok) or %begin/%error block. Commands are serialized: control
+   * mode answers strictly in submission order, so a queue keeps responses
+   * matched to their commands without trusting block numbers.
+   */
+  command(cmd: string): Promise<{ ok: boolean; out: string[] }>;
+  kill(): void;
+}
+
+/**
+ * Decodes the payload of a `%output` line. tmux escapes every byte outside
+ * printable ASCII (and the backslash itself) as \ooo octal — including each
+ * byte of a UTF-8 sequence — so the wire text is pure ASCII and this returns
+ * the pane's original bytes. Exported for direct unit testing.
+ */
+export function decodeControlOutput(payload: string): Buffer {
+  const bytes: number[] = [];
+  for (let i = 0; i < payload.length; i++) {
+    if (
+      payload[i] === "\\" &&
+      i + 3 < payload.length + 1 &&
+      /^[0-7]{3}$/.test(payload.slice(i + 1, i + 4))
+    ) {
+      bytes.push(parseInt(payload.slice(i + 1, i + 4), 8));
+      i += 3;
+    } else {
+      bytes.push(payload.charCodeAt(i) & 0xff);
+    }
+  }
+  return Buffer.from(bytes);
+}
+
 export interface Tmux {
   /** `tmux has-session -t =<s>` — true/false via exit code, never throws. */
   hasSession(session: string): Promise<boolean>;
@@ -175,38 +251,17 @@ export interface Tmux {
   /** `tmux capture-pane -t =<s>: -p -S -<lines>` (default 200 lines back). */
   capturePane(session: string, lines?: number): Promise<string>;
   /**
-   * `tmux capture-pane -t =<s>: -p -e` — the VISIBLE screen WITH its SGR escape
-   * sequences, i.e. what the pane looks like right now, colours and all. The
-   * terminal view paints this as its first frame: pipe-pane only carries what
-   * happens NEXT, so without it a viewer stares at a blank screen until the
-   * agent moves.
-   */
-  capturePaneAnsi(session: string): Promise<string>;
-  /**
-   * `tmux pipe-pane -o -t =<s>: 'cat >> <file>'` — tees everything the pane
-   * OUTPUTS, raw bytes and escape sequences included, into a file. This is the
-   * stream a terminal emulator needs, and it is why no second pty layer
-   * (node-pty) has to exist: tmux already owns one. Passing no file turns the
-   * tee off, which is the only way to stop it.
-   */
-  pipePaneToFile(session: string, filePath: string | null): Promise<void>;
-  /**
    * `tmux send-keys -t =<s>: -H <hex bytes>` — writes ARBITRARY bytes into the
    * pane, so Escape (1b) and Ctrl-C (03) arrive as real control characters
    * rather than as the words "Escape" and "C-c". LOW-LEVEL: no pane guard here;
    * the caller runs it (see terminal.ts).
    */
   sendKeysHex(session: string, bytes: Buffer): Promise<void>;
-  /** `tmux resize-window -t =<s>: -x <cols> -y <rows>`. */
-  resizeWindow(session: string, cols: number, rows: number): Promise<void>;
   /**
-   * `tmux display-message -p -t =<s>: '#{pane_width}x#{pane_height}'` — the
-   * pane's real grid. The dashboard MIRRORS this instead of imposing its own
-   * size: the pane is laid out for whatever is attached to it, and a viewer
-   * that resized it to fit a browser panel reflowed the agent's TUI to 316
-   * columns for everyone.
+   * `tmux -C attach-session -t =<s>` — a long-lived CONTROL MODE client (see
+   * the ControlClient docs below). This is the terminal view's backbone.
    */
-  paneSize(session: string): Promise<{ cols: number; rows: number; attached: number }>;
+  attachControlClient(session: string, handlers: ControlClientHandlers): ControlClient;
   /** `tmux kill-session -t =<s>`. */
   killSession(session: string): Promise<void>;
   /** Session names starting with prefix; [] when the tmux server is down. */
@@ -343,39 +398,6 @@ export function createTmux(options: TmuxOptions = {}): Tmux {
     return stdout;
   }
 
-  async function capturePaneAnsi(session: string): Promise<string> {
-    assertValidSession(session);
-    const { stdout } = await exec("tmux", [
-      "capture-pane",
-      "-t",
-      paneTarget(session),
-      "-p",
-      "-e", // keep the SGR sequences: this frame IS the coloured screen
-    ]);
-    return stdout;
-  }
-
-  async function pipePaneToFile(session: string, filePath: string | null): Promise<void> {
-    assertValidSession(session);
-    // No command argument = stop teeing. tmux has no other "off" switch.
-    if (filePath === null) {
-      await exec("tmux", ["pipe-pane", "-t", paneTarget(session)]);
-      return;
-    }
-    // -o toggles the pipe ONLY if it is not already running the same command,
-    // which keeps a second viewer from doubling the stream. The path is ours
-    // (~/.switchboard/term/<name>.raw, name already matched against
-    // AGENT_NAME_RE), never user text, but it is quoted anyway because tmux
-    // hands this string to sh.
-    await exec("tmux", [
-      "pipe-pane",
-      "-o",
-      "-t",
-      paneTarget(session),
-      `cat >> ${quoteShellArg(filePath)}`,
-    ]);
-  }
-
   async function sendKeysHex(session: string, bytes: Buffer): Promise<void> {
     assertValidSession(session);
     if (bytes.length === 0) return;
@@ -383,40 +405,125 @@ export function createTmux(options: TmuxOptions = {}): Tmux {
     await exec("tmux", ["send-keys", "-t", paneTarget(session), "-H", ...hex]);
   }
 
-  async function resizeWindow(session: string, cols: number, rows: number): Promise<void> {
+  function attachControlClient(session: string, handlers: ControlClientHandlers): ControlClient {
     assertValidSession(session);
-    if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols < 1 || rows < 1) {
-      throw new Error(`Invalid terminal size: ${cols}x${rows}.`);
-    }
-    await exec("tmux", [
-      "resize-window",
-      "-t",
-      sessionTarget(session),
-      "-x",
-      String(cols),
-      "-y",
-      String(rows),
-    ]);
-  }
+    // Direct spawn, not the ExecFn: a control client is a LONG-LIVED process
+    // with a duplex stream, not a run-to-completion command. It is still this
+    // file's job — tmux.ts is the only layer of the codebase executing tmux.
+    const child = spawn("tmux", ["-C", "attach-session", "-t", sessionTarget(session)], {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
 
-  async function paneSize(
-    session: string,
-  ): Promise<{ cols: number; rows: number; attached: number }> {
-    assertValidSession(session);
-    // `attached` rides along because it decides who owns the size: a real
-    // terminal window is watching this pane and laid out for it, or nobody is
-    // and the dashboard may fit it to its own panel (verified: resize-window
-    // sticks on a session with no clients).
-    const { stdout } = await exec("tmux", [
-      "display-message",
-      "-p",
-      "-t",
-      paneTarget(session),
-      "#{pane_width}x#{pane_height}x#{session_attached}",
-    ]);
-    const match = /^(\d+)x(\d+)x(\d+)$/.exec(stdout.trim());
-    if (!match) throw new Error(`Could not read the pane size of "${session}".`);
-    return { cols: Number(match[1]), rows: Number(match[2]), attached: Number(match[3]) };
+    let buf = "";
+    let exited = false;
+    let bannerDone = false;
+    let stderrTail = "";
+
+    // Commands resolve strictly in submission order (control mode answers in
+    // order), so a FIFO of pending resolvers is enough — no block-number
+    // bookkeeping, no interleaving headaches.
+    interface Pending {
+      resolve(result: { ok: boolean; out: string[] }): void;
+      out: string[];
+    }
+    const pending: Pending[] = [];
+    // True between a %begin and its %end/%error. Load-bearing: INSIDE a block,
+    // EVERY line is command output — including lines that start with "%".
+    // A pane id is "%19", so `list-panes -F '#{pane_id} …'` answers with lines
+    // a notification filter would swallow; that exact bug shipped once and
+    // returned empty results for any format starting with #{pane_id}.
+    let inBlock = false;
+
+    function fail(reason: string): void {
+      if (exited) return;
+      exited = true;
+      for (const p of pending.splice(0)) p.resolve({ ok: false, out: [reason] });
+      handlers.onExit(reason);
+    }
+
+    function handleLine(line: string): void {
+      if (inBlock) {
+        if (line.startsWith("%end") || line.startsWith("%error")) {
+          inBlock = false;
+          // The very first block is the attach BANNER — no command behind it.
+          // Crediting it to the queue would shift every response one command
+          // over (the first frame would read list-clients output as a pane
+          // state and die).
+          if (!bannerDone) {
+            bannerDone = true;
+            return;
+          }
+          const p = pending.shift();
+          if (p) p.resolve({ ok: line.startsWith("%end"), out: p.out });
+          return;
+        }
+        if (bannerDone && pending[0]) pending[0].out.push(line);
+        return;
+      }
+      if (line.startsWith("%begin")) {
+        inBlock = true;
+        return;
+      }
+      if (line.startsWith("%output ")) {
+        // "%output %<pane-id> <payload>"
+        const space = line.indexOf(" ", 8);
+        if (space === -1) return;
+        handlers.onOutput(line.slice(8, space), decodeControlOutput(line.slice(space + 1)));
+        return;
+      }
+      if (line.startsWith("%layout-change")) {
+        handlers.onLayoutChange();
+        return;
+      }
+      // Every other notification (%session-changed, %exit, …): not our business.
+    }
+
+    child.stdout.on("data", (d: Buffer) => {
+      buf += d.toString("utf8");
+      let i;
+      while ((i = buf.indexOf("\n")) >= 0) {
+        handleLine(buf.slice(0, i));
+        buf = buf.slice(i + 1);
+      }
+    });
+    child.stderr.on("data", (d: Buffer) => {
+      stderrTail = (stderrTail + d.toString("utf8")).slice(-300);
+    });
+    child.on("error", (err) => fail(`tmux control client failed to spawn: ${err.message}`));
+    child.on("exit", (code) => {
+      fail(
+        `tmux control client exited (code ${code ?? "signal"})` +
+          (stderrTail.trim() ? `: ${stderrTail.trim()}` : ""),
+      );
+    });
+
+    return {
+      command(cmd: string): Promise<{ ok: boolean; out: string[] }> {
+        if (exited) return Promise.resolve({ ok: false, out: ["control client is gone"] });
+        // One line per command; a stray newline would submit a second, queue-
+        // desyncing command — same defense-in-depth reasoning as sendKeysLiteral.
+        if (/[\r\n]/.test(cmd)) {
+          return Promise.resolve({ ok: false, out: ["command must be a single line"] });
+        }
+        return new Promise((resolve) => {
+          pending.push({ resolve, out: [] });
+          child.stdin.write(cmd + "\n");
+        });
+      },
+      kill(): void {
+        if (exited) return;
+        // detach-client is the polite exit; the hard kill is the backstop for
+        // a wedged client (SIGKILL after a beat, if still alive).
+        try {
+          child.stdin.write("detach-client\n");
+        } catch {
+          /* stdin already gone */
+        }
+        setTimeout(() => {
+          if (child.exitCode === null) child.kill("SIGKILL");
+        }, 500).unref?.();
+      },
+    };
   }
 
   async function killSession(session: string): Promise<void> {
@@ -511,11 +618,8 @@ export function createTmux(options: TmuxOptions = {}): Tmux {
     sendEnter,
     newSession,
     capturePane,
-    capturePaneAnsi,
-    pipePaneToFile,
     sendKeysHex,
-    resizeWindow,
-    paneSize,
+    attachControlClient,
     killSession,
     listSessions,
     isPaneSafeToNudge,
