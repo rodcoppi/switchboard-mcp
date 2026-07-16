@@ -317,6 +317,10 @@
     }
     .agent-card:hover { background: var(--bg-hover); border-color: var(--border); }
     .agent-card:hover::before { background: var(--border); }
+    /* A recoloured chat: its cable-end carries the chosen colour at all times,
+       so the chat is identifiable in the rail at a glance. */
+    .agent-card.tinted::before,
+    .agent-card.tinted:hover::before { background: var(--chat-color); }
     .agent-card.active {
       border-color: var(--accent-line);
       background: linear-gradient(90deg, var(--accent-wash), transparent 82%), var(--bg-elev);
@@ -1971,8 +1975,20 @@
       renderAgents();
     }
 
+    // Per-chat colour: tints the card's left cable-end. Unset => no tint (the
+    // cable stays the default patchbay behaviour). Also a viewer preference.
+    function chatColor(name) {
+      return localStorage.getItem("sb.chatColor." + name) || null;
+    }
+    function setChatColor(name, color) {
+      if (color) localStorage.setItem("sb.chatColor." + name, color);
+      else localStorage.removeItem("sb.chatColor." + name);
+      renderAgents();
+    }
+
     // --- Drag to reorder chats (and drop into another room) --------------
     let dragName = null;
+    let dragGroup = null;
     function cardAfterY(box, y) {
       const cards = [...box.querySelectorAll(":scope > .agent-card:not(.dragging)")];
       for (const c of cards) {
@@ -1980,6 +1996,20 @@
         if (y < r.top + r.height / 2) return c;
       }
       return null;
+    }
+    function boxAfterY(container, y, exclude) {
+      const boxes = [...container.querySelectorAll(":scope > .rail-group")].filter((b) => b !== exclude);
+      for (const b of boxes) {
+        const r = b.getBoundingClientRect();
+        if (y < r.top + r.height / 2) return b;
+      }
+      return null;
+    }
+    function commitGroupOrder() {
+      const container = $("#agents");
+      const groups = [...container.querySelectorAll(":scope > .rail-group")].map((b) => b.dataset.group);
+      saveGroupOrder(groups);
+      renderAgents();
     }
     // Read the arrangement out of the DOM and persist it. If the card ended in a
     // different room's box, that is also a move-to-group. Never falls back to
@@ -2001,6 +2031,17 @@
     function initDragReorder() {
       const container = $("#agents");
       container.addEventListener("dragover", (e) => {
+        // Group reorder takes precedence: dragging a head moves whole boxes.
+        if (dragGroup) {
+          const box = container.querySelector(`.rail-group[data-group="${CSS.escape(dragGroup)}"]`);
+          if (!box) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "move";
+          const after = boxAfterY(container, e.clientY, box);
+          if (after == null) container.appendChild(box);
+          else container.insertBefore(box, after);
+          return;
+        }
         if (!dragName) return;
         const dragging = container.querySelector(".agent-card.dragging");
         if (!dragging) return;
@@ -2019,7 +2060,7 @@
       });
       // drop only has to ACCEPT the gesture; dragend commits (it always fires).
       container.addEventListener("drop", (e) => {
-        if (dragName) e.preventDefault();
+        if (dragName || dragGroup) e.preventDefault();
       });
     }
 
@@ -2038,9 +2079,32 @@
       return recipient ? groupOf(recipient) : null;
     }
 
-    /** Every group that has an agent, sorted — the rooms that exist. */
+    // Group order is a viewer preference too (drag the group heads). Arranged
+    // groups lead, in the saved order; the rest stay alphabetical behind them.
+    function loadGroupOrder() {
+      try {
+        const v = JSON.parse(localStorage.getItem("sb.groupOrder") || "[]");
+        return Array.isArray(v) ? v : [];
+      } catch {
+        return [];
+      }
+    }
+    function saveGroupOrder(groups) {
+      localStorage.setItem("sb.groupOrder", JSON.stringify(groups));
+    }
+
+    /** Every group that has an agent, in the operator's order (else sorted). */
     function allGroups() {
-      return [...new Set([...state.agents.values()].map(groupOf))].sort();
+      const present = [...new Set([...state.agents.values()].map(groupOf))];
+      const rank = new Map(loadGroupOrder().map((g, i) => [g, i]));
+      return present.sort((a, b) => {
+        const ia = rank.has(a) ? rank.get(a) : -1;
+        const ib = rank.has(b) ? rank.get(b) : -1;
+        if (ia !== -1 && ib !== -1) return ia - ib;
+        if (ia !== -1) return -1;
+        if (ib !== -1) return 1;
+        return a < b ? -1 : a > b ? 1 : 0;
+      });
     }
 
     function renderAgents() {
@@ -2102,6 +2166,23 @@
       const collapsed = collapsedGroups.has(group);
       const head = el("button", `group-head${collapsed ? " collapsed" : ""}`);
       head.type = "button";
+      // Drag a group head to reorder the rooms in the rail.
+      if (group !== DEFAULT_GROUP) {
+        head.draggable = true;
+        head.addEventListener("dragstart", (e) => {
+          dragGroup = group;
+          e.dataTransfer.effectAllowed = "move";
+          try {
+            e.dataTransfer.setData("text/plain", "group:" + group);
+          } catch {
+            /* payload unused */
+          }
+        });
+        head.addEventListener("dragend", () => {
+          if (dragGroup) commitGroupOrder();
+          dragGroup = null;
+        });
+      }
       const online = members.filter((a) => a.status === "online").length;
       const unread = members.reduce((n, a) => n + (a.unreadCount || 0), 0);
       head.title = collapsed
@@ -2201,6 +2282,11 @@
       });
       if (state.filter === agent.name) card.classList.add("active");
       card.dataset.name = agent.name;
+      const tint = chatColor(agent.name);
+      if (tint) {
+        card.classList.add("tinted");
+        card.style.setProperty("--chat-color", tint);
+      }
 
       const dot = el("span", `status-dot ${agent.status === "online" ? "online" : "offline"}`);
       dot.title = agent.status;
@@ -2301,6 +2387,33 @@
           },
         ),
       );
+      // Recolour this chat's cable — a native picker, no blocking dialog. A
+      // hidden colour input lives on the item; the item click opens it.
+      const colourItem = menuItem(
+        "colour-btn",
+        chatColor(agent.name) ? "recolour…" : "colour…",
+        `Give "${agent.name}" a cable colour in the rail`,
+        () => colourPicker.click(),
+      );
+      const colourPicker = el("input");
+      colourPicker.type = "color";
+      colourPicker.value = chatColor(agent.name) || "#e0a326";
+      colourPicker.style.cssText = "position:absolute;width:0;height:0;opacity:0;pointer-events:none;";
+      colourPicker.addEventListener("input", (e) => {
+        closeMenus();
+        setChatColor(agent.name, e.target.value);
+      });
+      colourPicker.addEventListener("click", (e) => e.stopPropagation());
+      colourItem.appendChild(colourPicker);
+      menu.appendChild(colourItem);
+      if (chatColor(agent.name)) {
+        menu.appendChild(
+          menuItem("colour-reset-btn", "clear colour", `Remove "${agent.name}"'s cable colour`, () => {
+            closeMenus();
+            setChatColor(agent.name, null);
+          }),
+        );
+      }
       menu.appendChild(
         menuItem(
           `mute-toggle${agent.muted ? " muted" : ""}`,
