@@ -38,6 +38,7 @@ import { PickError, pickWindowsFolder } from "./winpicker.js";
 import { TerminalError } from "./terminal.js";
 import { PreviewError, readPreview, resolveInScope } from "./filepreview.js";
 import { isOpenable, refusalFor, type FileOpener } from "./fileopen.js";
+import { MAX_STT_BYTES, SttError, type SttProxy } from "./stt.js";
 import { parseConversation, projectDirForCwd } from "./conversation.js";
 import { codexTokensToday, findCodexRolloutForCwd, parseCodexRollout, type CodexTokens } from "./codexlog.js";
 import type { UsageProbe } from "./usage.js";
@@ -328,6 +329,11 @@ export interface ApiOptions {
    * 501, like launcher/terminals.
    */
   fileOpener?: FileOpener | null;
+  /**
+   * Speech-to-text proxy for POST /api/stt (the composer's dictation mic).
+   * Undefined/null → the route answers 501 with configuration instructions.
+   */
+  stt?: SttProxy | null;
   /** Hub start timestamp (epoch ms) for /api/health uptime. */
   startedAt: number;
   /** Hub version string for /api/health (from package.json). */
@@ -377,7 +383,7 @@ function hasClaudeConversation(claudeProjectsDir: string, absPath: string): bool
 }
 
 export function createApiRouter(options: ApiOptions): express.Router {
-  const { store, config, log, bus, onMessage, nudger, launcher, terminals, usage, stopper, fileOpener, startedAt, version } =
+  const { store, config, log, bus, onMessage, nudger, launcher, terminals, usage, stopper, fileOpener, stt, startedAt, version } =
     options;
   const heartbeatMs = options.heartbeatMs ?? 25_000;
   const claudeProjectsDir =
@@ -998,6 +1004,42 @@ export function createApiRouter(options: ApiOptions): express.Router {
           ok: false,
           error: `Could not store the upload: ${(err as Error).message}.`,
         });
+      }
+    },
+  );
+
+  // POST /api/stt — the dictation mic's transcription. Raw audio bytes in the
+  // body (audio/webm from MediaRecorder; the hub relays whatever MIME the
+  // recorder produced), text back. Proxied through Groq Whisper (stt.ts) —
+  // Chrome's own Web Speech API needed Google's speech endpoint, which this
+  // network blocks. Same parser interplay as /api/uploads above.
+  router.post(
+    "/api/stt",
+    express.raw({ type: "*/*", limit: MAX_STT_BYTES }),
+    async (req, res) => {
+      if (!stt || !stt.available()) {
+        res.status(501).json({
+          ok: false,
+          error:
+            "Dictation needs a Groq API key: set GROQ_API_KEY in the hub's environment " +
+            "(or in ~/.config/watch/.env) and try again — no restart needed.",
+        });
+        return;
+      }
+      if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+        res.status(400).json({
+          ok: false,
+          error: "Empty or non-binary audio: send the recording's raw bytes as the request body.",
+        });
+        return;
+      }
+      try {
+        const text = await stt.transcribe(req.body, req.headers["content-type"] ?? "audio/webm");
+        log.info(`[stt] transcribed ${req.body.length} bytes -> ${text.length} chars.`);
+        res.json({ ok: true, text });
+      } catch (err) {
+        const status = err instanceof SttError ? err.status : 502;
+        res.status(status).json({ ok: false, error: (err as Error).message });
       }
     },
   );

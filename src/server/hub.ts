@@ -28,6 +28,7 @@ import {
   type LauncherTuning,
 } from "./launcher.js";
 import { createWindowsFileOpener, type FileOpener } from "./fileopen.js";
+import { createSttProxy, type SttProxy } from "./stt.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -66,6 +67,12 @@ export interface HubOptions {
   sessionSweepIntervalMs?: number;
   /** SSE heartbeat interval — injectable for tests. */
   heartbeatMs?: number;
+  /**
+   * Speech-to-text proxy override. Omitted (production) → the hub builds the
+   * Groq-backed proxy (stt.ts, key from the environment). Tests pass null so
+   * POST /api/stt answers a deterministic 501 regardless of the machine's env.
+   */
+  stt?: SttProxy | null;
 }
 
 export interface Hub {
@@ -182,6 +189,10 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
   // HTTP GET, safe on any machine (unlike the ccusage log-parse that OOM'd).
   const usage: UsageProbe = createUsageProbe({ log });
 
+  // Dictation transcription (POST /api/stt). Unlike launcher/terminals this
+  // needs no tmux — it exists on every hub unless a test explicitly nulls it.
+  const stt: SttProxy | null = options.stt !== undefined ? options.stt : createSttProxy({ log });
+
   const version = readVersion();
   const startedAt = Date.now();
 
@@ -221,6 +232,7 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
       usage,
       stopper,
       fileOpener,
+      stt,
       claudeProjectsDir: options.claudeProjectsDir,
       startedAt,
       version,
