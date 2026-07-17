@@ -4296,7 +4296,11 @@
             dir: agent.cwd,
             name: agent.name,
             continue: true,
-            openTerminal: true,
+            // openTerminal:false — reopening puts the agent back on the rail, it
+            // does NOT ask for a Windows window. A window is only ever what you
+            // click "window" for. (Same rule as launching; reopen used to pop one
+            // and that was the annoyance, not the feedback it was meant to be.)
+            openTerminal: false,
             // Relaunch with the SAME CLI it was launched with: reopening a
             // codex agent as claude would resume the wrong conversation with
             // the wrong binary. Legacy records (no agentType) → claude.
@@ -4311,13 +4315,7 @@
         const conv = body.fallback
           ? "with a FRESH conversation (no resumable one found)"
           : "continuing its conversation";
-        toast(
-          body.terminalOpened
-            ? `Agent "${agent.name}" reopened ${conv} — its window is opening.`
-            : `Agent "${agent.name}" reopened ${conv}. No window could open — ` +
-                `use the card's "open" button or: tmux attach -t ${agent.tmuxSession}`,
-          body.terminalOpened ? "ok" : "warn",
-        );
+        toast(`Agent "${agent.name}" reopened ${conv}.`, "ok");
       } catch (err) {
         toast(`Reopen failed: ${err && err.message ? err.message : err}`, "warn");
       } finally {
