@@ -684,6 +684,51 @@ export function createApiRouter(options: ApiOptions): express.Router {
     res.status(409).json({ ok: false, error: result.reason ?? "Could not open a window." });
   });
 
+  // POST /api/agents/:name/folder — open the agent's PROJECT FOLDER (its cwd) in
+  // Windows Explorer. Unlike /api/files/open this needs no allowlist and no
+  // scope check: the path is the agent's cwd from the STORE, which the operator
+  // set at launch — trusted input, not a message body. It is strictly less than
+  // launch, which already spawns a process in exactly that directory.
+  router.post("/api/agents/:name/folder", async (req, res) => {
+    const name = req.params.name;
+    const agent = store.getAgent(name);
+    if (!agent) {
+      res.status(404).json({ ok: false, error: `Unknown agent: "${name}".` });
+      return;
+    }
+    const cwd = typeof agent.cwd === "string" ? agent.cwd.trim() : "";
+    if (cwd === "") {
+      res.status(400).json({ ok: false, error: `"${name}" has no recorded folder.` });
+      return;
+    }
+    if (!fileOpener) {
+      res.status(501).json({
+        ok: false,
+        error: "Opening a folder needs the hub to run under WSL (it hands the path to Windows Explorer).",
+      });
+      return;
+    }
+    try {
+      const stat = fs.statSync(cwd);
+      if (!stat.isDirectory()) {
+        res.status(400).json({ ok: false, error: `Not a folder: ${cwd}` });
+        return;
+      }
+    } catch {
+      res.status(404).json({ ok: false, error: `Folder not found: ${cwd}` });
+      return;
+    }
+    try {
+      await fileOpener.open(cwd);
+      log.info(`[files] opened project folder for ${name}: ${cwd}`);
+      res.json({ ok: true, path: cwd });
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      log.warn(`[files] could not open folder for ${name}: ${reason}`);
+      res.status(500).json({ ok: false, error: `Could not open the folder (${reason}).` });
+    }
+  });
+
   // GET /api/fs/dirs?path=<abs> — the dashboard's folder browser (backs the
   // "Browse…" panel of the Launch agent form). Answers the SUBDIRECTORY NAMES
   // POST /api/fs/pick — opens the NATIVE Windows folder dialog and answers with

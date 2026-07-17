@@ -112,6 +112,25 @@ describe("Phase 6 — static dashboard serving", () => {
     expect(body.error).toMatch(/launcher unavailable/i);
   });
 
+  it("POST /api/agents/:name/folder — 404 unknown, 501 without the WSL opener", async () => {
+    // Unknown agent is refused before anything else…
+    const unknown = await fetch(url("/api/agents/ghost/folder"), { method: "POST" });
+    expect(unknown.status).toBe(404);
+
+    // …and a real one has no opener in this tmux-less hub, so it answers 501
+    // in-protocol (like launch), never touching the Windows side.
+    await fetch(url("/api/agents/register"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "beta", role: "x", cwd: "/tmp" }),
+    });
+    const res = await fetch(url("/api/agents/beta/folder"), { method: "POST" });
+    expect(res.status).toBe(501);
+    const body = (await res.json()) as { ok: boolean; error: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toMatch(/WSL/i);
+  });
+
   it("does NOT leak a capability token in the /api/agents listing the dashboard reads", async () => {
     // Register an agent (which mints a token) then confirm the shape the
     // dashboard bootstraps from never carries it (v1.1 addendum, PRD 15).

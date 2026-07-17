@@ -3994,6 +3994,7 @@
         "nudge-btn": "📣", "group-btn": "🚪", "codex-btn": "◆", "colour-btn": "🎨",
         "colour-reset-btn": "⭕", "mute-toggle": "🔇", "rename-btn": "✏️", "remove-btn": "🗑",
         "display-btn": "🏷", "leader-btn": "👑", "stop-btn": "⏹", "desc-btn": "📄",
+        "folder-btn": "📂",
       };
       function menuItem(cls, label, title, onClick) {
         const item = el("button", `agent-menu-item ${cls}`);
@@ -4021,6 +4022,20 @@
           },
         ),
       );
+      // Open the agent's project folder (its cwd) in Windows Explorer.
+      if (agent.cwd) {
+        menu.appendChild(
+          menuItem(
+            "folder-btn",
+            "open folder",
+            `Open ${agent.cwd} in Windows Explorer`,
+            (item) => {
+              closeMenus();
+              openAgentFolder(agent.name, item);
+            },
+          ),
+        );
+      }
       // Opens the Groups panel rather than editing here: a group is a container
       // holding several agents, so it is managed where you can see all of them
       // at once. (This used to turn the NAME cell into a group field, which put
@@ -5861,6 +5876,24 @@
       } finally {
         btn.disabled = false;
         btn.textContent = prev;
+      }
+    }
+
+    /** Opens the agent's project folder (its cwd) in Windows Explorer. */
+    async function openAgentFolder(name, item) {
+      if (item) item.disabled = true;
+      try {
+        const res = await fetch(`/api/agents/${encodeURIComponent(name)}/folder`, { method: "POST" });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.ok) {
+          toast(data.error || `Could not open the folder (HTTP ${res.status}).`, "warn", 8000);
+          return;
+        }
+        toast(`Opening ${data.path} in Explorer.`, "ok");
+      } catch (err) {
+        toast(`Could not open the folder: ${err && err.message ? err.message : err}`, "warn");
+      } finally {
+        if (item) item.disabled = false;
       }
     }
 
