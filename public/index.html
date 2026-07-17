@@ -338,6 +338,33 @@
       cursor: pointer;
       transition: border-color 0.14s var(--ease), background 0.14s var(--ease), transform 0.14s var(--ease);
     }
+    /* Engine siblings (claude + its codex on the same folder) read as ONE
+       project: joined vertically (no gap, shared rounded corners) with a
+       "linked" bracket down the left so it is clear they are two engines of the
+       same thing. */
+    .agent-card.pair-top {
+      margin-bottom: 0;
+      border-bottom-left-radius: 0;
+      border-bottom-right-radius: 0;
+      border-bottom: 1px dashed var(--border);
+    }
+    .agent-card.pair-bottom {
+      border-top-left-radius: 0;
+      border-top-right-radius: 0;
+      border-top: none;
+    }
+    .agent-card.pair-top::after,
+    .agent-card.pair-bottom::after {
+      content: "";
+      position: absolute;
+      left: 0; top: -1px; bottom: -1px;
+      width: 2px;
+      background: var(--accent-line);
+      opacity: 0.6;
+    }
+    .agent-card.pair-top::after { border-radius: 2px 0 0 0; }
+    .agent-card.pair-bottom::after { border-radius: 0 0 0 2px; }
+
     /* Drag handle — the ONLY reorder grip, revealed on hover on the left edge. */
     .card-grab {
       position: absolute;
@@ -3505,7 +3532,7 @@
       // it had vanished.
       const groups = allGroups();
       if (groups.length === 1 && groups[0] === DEFAULT_GROUP) {
-        for (const agent of agents) container.appendChild(buildAgentCard(agent));
+        appendAgentCards(container, agents);
       } else {
         for (const group of groups) {
           const inGroup = agents.filter((a) => groupOf(a) === group);
@@ -3515,7 +3542,7 @@
           box.style.setProperty("--group-color", groupColor(group));
           box.appendChild(buildGroupHead(group, inGroup));
           if (!collapsedGroups.has(group)) {
-            for (const agent of inGroup) box.appendChild(buildAgentCard(agent));
+            appendAgentCards(box, inGroup);
           }
           container.appendChild(box);
         }
@@ -3637,6 +3664,33 @@
       tabs.appendChild(mk("all", null));
       for (const group of groups) {
         tabs.appendChild(mk(groupLabelOf(group), group, [...state.agents.values()].filter((a) => groupOf(a) === group).length));
+      }
+    }
+
+    // Appends cards, keeping engine SIBLINGS (a claude + its "-codex" in the
+    // same cwd) adjacent and visually joined — same project, two engines. No
+    // wrapper element: they stay DIRECT children of the box so drag-reorder
+    // (which walks ":scope > .agent-card") still works; the join is CSS via
+    // .pair-top/.pair-bottom classes.
+    function appendAgentCards(box, list) {
+      const done = new Set();
+      for (const agent of list) {
+        if (done.has(agent.name)) continue;
+        const pair = enginePairOf(agent.name);
+        const bothHere =
+          pair && list.some((a) => a.name === pair.claude.name) && list.some((a) => a.name === pair.codex.name);
+        if (bothHere) {
+          const top = buildAgentCard(pair.claude);
+          top.classList.add("pair-top");
+          const bottom = buildAgentCard(pair.codex);
+          bottom.classList.add("pair-bottom");
+          box.append(top, bottom);
+          done.add(pair.claude.name);
+          done.add(pair.codex.name);
+        } else {
+          box.appendChild(buildAgentCard(agent));
+          done.add(agent.name);
+        }
       }
     }
 
