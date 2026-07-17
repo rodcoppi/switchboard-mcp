@@ -93,10 +93,13 @@ describe("resolveInScope (the security boundary)", () => {
     expect(() => resolveInScope(root, [root])).toThrow(/directory/i);
   });
 
-  it("refuses a file above the size cap", () => {
+  it("does NOT judge size — that is readPreview's call, not the scope gate's", () => {
+    // A big file is still a legitimate, in-scope file: it just cannot be shown
+    // here. Refusing it at the gate also refused opening it in a system app,
+    // which reads nothing (see fileopen.ts).
     const big = path.join(root, "big.txt");
     fs.writeFileSync(big, Buffer.alloc(MAX_PREVIEW_BYTES + 1, 0x61));
-    expect(() => resolveInScope(big, [root])).toThrow(/large/i);
+    expect(resolveInScope(big, [root])).toBe(fs.realpathSync(big));
   });
 
   it("empty path is rejected", () => {
@@ -106,6 +109,18 @@ describe("resolveInScope (the security boundary)", () => {
 });
 
 describe("readPreview", () => {
+  it("reports a file over the cap as 'toolarge' WITHOUT reading it", () => {
+    // The case that drove this: a 9 MB video. It is not previewable, but it is
+    // openable — so this has to be a describable result, not an error.
+    const big = path.join(root, "clip.mp4");
+    fs.writeFileSync(big, Buffer.alloc(MAX_PREVIEW_BYTES + 1, 0x61));
+    const r = readPreview(fs.realpathSync(big));
+    expect(r.kind).toBe("toolarge");
+    expect(r.content).toBeNull();
+    expect(r.size).toBe(MAX_PREVIEW_BYTES + 1);
+    expect(r.name).toBe("clip.mp4");
+  });
+
   it("reads text/markdown/code as UTF-8, accents intact", () => {
     const f = path.join(root, "a.md");
     fs.writeFileSync(f, "# café código ação");

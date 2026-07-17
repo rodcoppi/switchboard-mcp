@@ -27,6 +27,7 @@ import {
   type Launcher,
   type LauncherTuning,
 } from "./launcher.js";
+import { createWindowsFileOpener, type FileOpener } from "./fileopen.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -135,6 +136,7 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
   let launcher: Launcher | undefined;
   let terminals: TerminalBridge | undefined;
   let stopper: ((session: string) => Promise<void>) | undefined;
+  let fileOpener: FileOpener | null | undefined;
   let onMessage: OnMessage;
   if (options.onMessage) {
     onMessage = options.onMessage;
@@ -163,6 +165,17 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
     });
     // Dashboard "stop this agent": the same killSession the CLI's stop uses.
     stopper = (session) => tmux.killSession(session);
+    // The preview's "open" button: same WSL interop as the terminal opener, and
+    // null on a non-WSL host for the same reason (no Windows side to open on).
+    fileOpener = createWindowsFileOpener({
+      // execFile types stdout as string|Buffer (it is a Buffer only with an
+      // encoding of "buffer", which is not used here) — the opener wants the
+      // wslpath line, so settle it at the boundary.
+      exec: async (file, args, opts) => {
+        const { stdout } = await execFileAsync(file, args, opts);
+        return { stdout: String(stdout) };
+      },
+    });
   }
 
   // Claude /usage bars: a thin OAuth-endpoint proxy, cached — a single small
@@ -207,6 +220,7 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
       terminals,
       usage,
       stopper,
+      fileOpener,
       claudeProjectsDir: options.claudeProjectsDir,
       startedAt,
       version,

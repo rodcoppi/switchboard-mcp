@@ -25,10 +25,11 @@ export class PreviewError extends Error {
   }
 }
 
-/** Above this a preview is refused: it is a glance, not a download. */
+/** Above this nothing is READ: a preview is a glance, not a download. */
 export const MAX_PREVIEW_BYTES = 2 * 1024 * 1024;
 
-export type PreviewKind = "image" | "markdown" | "code" | "text" | "pdf" | "binary";
+/** "toolarge": a real file, over the cap — shown as such, never read. */
+export type PreviewKind = "image" | "markdown" | "code" | "text" | "pdf" | "binary" | "toolarge";
 
 const IMAGE_EXT = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg", ".ico"]);
 const MARKDOWN_EXT = new Set([".md", ".markdown", ".mdx"]);
@@ -77,6 +78,12 @@ function expandHome(p: string): string {
  *
  * `allowedRoots` are themselves realpath-normalized so a symlinked home
  * (common on macOS: /var → /private/var) still matches.
+ *
+ * This is the SCOPE gate and nothing else. The size cap deliberately lives in
+ * readPreview: "too big to show" is a preview policy about reading bytes, not a
+ * statement that the file is off-limits. Enforcing it here once meant a 9 MB
+ * video was refused outright — so the one thing you CAN do with it (open it in
+ * a system app, which reads nothing) was refused along with the preview.
  */
 export function resolveInScope(rawPath: string, allowedRoots: string[]): string {
   if (typeof rawPath !== "string" || rawPath.trim() === "") {
@@ -115,11 +122,6 @@ export function resolveInScope(rawPath: string, allowedRoots: string[]): string 
   if (stat.isDirectory()) {
     throw new PreviewError(`That is a directory, not a file: ${abs}`);
   }
-  if (stat.size > MAX_PREVIEW_BYTES) {
-    throw new PreviewError(
-      `Too large to preview (${stat.size} bytes; limit ${MAX_PREVIEW_BYTES}). Open it in your editor.`,
-    );
-  }
   return real;
 }
 
@@ -134,15 +136,24 @@ export interface PreviewResult {
 
 /**
  * Reads a scope-resolved file into a preview payload. Text kinds come back as
- * UTF-8; images as a data: URL small enough to inline (the size cap already
- * ran); a file whose bytes are not valid text is downgraded to "binary" so the
- * modal says so instead of printing mojibake.
+ * UTF-8; images as a data: URL; a file whose bytes are not valid text is
+ * downgraded to "binary" so the modal says so instead of printing mojibake.
+ *
+ * Over the cap the file is NOT read — it comes back as "toolarge", which is a
+ * fact about this view, not about the file: the caller may still offer to open
+ * it in a system app.
  */
 export function readPreview(realPath: string): PreviewResult {
   const kind = kindOfPath(realPath);
   const name = path.basename(realPath);
+  const size = fs.statSync(realPath).size;
+  const base = { name, path: realPath, size };
+
+  // Checked BEFORE the read, which is the whole point of a cap.
+  if (size > MAX_PREVIEW_BYTES) {
+    return { ...base, kind: "toolarge", content: null };
+  }
   const buf = fs.readFileSync(realPath);
-  const base = { name, path: realPath, size: buf.length };
 
   if (kind === "image") {
     const mime = IMAGE_MIME[path.extname(realPath).toLowerCase()] ?? "application/octet-stream";

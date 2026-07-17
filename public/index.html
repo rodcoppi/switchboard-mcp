@@ -1944,6 +1944,17 @@
     }
     .preview-status { font-family: var(--sans); font-size: var(--fs-sm); color: var(--text-dim); padding: 20px; text-align: center; }
     .preview-status.stale { color: var(--danger); }
+    /* "Cannot render this" is a door, not a dead end: the reason, then the way out. */
+    .preview-blocked {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      padding: 8px 0 24px;
+    }
+    .preview-blocked .preview-status { padding-bottom: 4px; }
+    .preview-open { border-color: var(--accent-line); color: var(--accent); }
+    .preview-open:hover:not(:disabled) { background: var(--accent-wash); }
     .preview-image { max-width: 100%; height: auto; display: block; margin: 0 auto; image-rendering: auto; }
     .preview-text {
       margin: 0;
@@ -5791,16 +5802,29 @@
         body.appendChild(img);
         return;
       }
-      if (data.kind === "pdf" || data.kind === "binary" || data.content === null) {
-        body.appendChild(
+      if (data.kind === "pdf" || data.kind === "binary" || data.kind === "toolarge" || data.content === null) {
+        // Nothing to render here — but the machine can almost certainly play or
+        // show it, so this is a door, not a dead end (see fileopen.ts).
+        const wrap = el("div", "preview-blocked");
+        wrap.appendChild(
           el(
             "div",
             "preview-status",
-            data.kind === "pdf"
-              ? "PDF — open it in your editor to view."
-              : "Binary file — nothing to show as text.",
+            data.kind === "toolarge"
+              ? `${fmtBytes(data.size)} — too big to preview here.`
+              : data.kind === "pdf"
+                ? "PDF — the dashboard cannot render one."
+                : "Not text — nothing to show here.",
           ),
         );
+        if (data.openable) {
+          const open = el("button", "btn preview-open", "open in a system app");
+          open.type = "button";
+          open.title = `Hand ${data.name} to Windows and let it open with the default app`;
+          open.addEventListener("click", () => openInSystemApp(data.path, open));
+          wrap.appendChild(open);
+        }
+        body.appendChild(wrap);
         return;
       }
       // text / markdown / code: monospace, as-is. No markdown rendering and no
@@ -5809,6 +5833,35 @@
       const pre = el("pre", "preview-text");
       pre.textContent = data.content; // textContent: server data never touches innerHTML
       body.appendChild(pre);
+    }
+
+    /**
+     * Hands a file to the Windows default app. The hub is the gate (scope +
+     * an allowlist — it RUNS what it opens), so a refusal comes back as a plain
+     * reason to show, not something to argue with here.
+     */
+    async function openInSystemApp(filePath, btn) {
+      const prev = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = "opening…";
+      try {
+        const res = await fetch("/api/files/open", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ path: filePath }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.ok) {
+          toast(data.error || `Could not open it (HTTP ${res.status}).`, "warn", 8000);
+          return;
+        }
+        toast(`Opening ${filePath.split("/").pop()} in your system app.`, "ok");
+      } catch (err) {
+        toast(`Could not open it: ${err && err.message ? err.message : err}`, "warn");
+      } finally {
+        btn.disabled = false;
+        btn.textContent = prev;
+      }
     }
 
     function closePreview() {

@@ -37,6 +37,7 @@ import { LaunchError, normalizeIncomingPath, type Launcher } from "./launcher.js
 import { PickError, pickWindowsFolder } from "./winpicker.js";
 import { TerminalError } from "./terminal.js";
 import { PreviewError, readPreview, resolveInScope } from "./filepreview.js";
+import { isOpenable, refusalFor, type FileOpener } from "./fileopen.js";
 import { parseConversation, projectDirForCwd } from "./conversation.js";
 import { codexTokensToday, findCodexRolloutForCwd, parseCodexRollout, type CodexTokens } from "./codexlog.js";
 import type { UsageProbe } from "./usage.js";
@@ -320,6 +321,13 @@ export interface ApiOptions {
    * onMessage) → the endpoint answers 501, like launcher/terminals.
    */
   stopper?: (session: string) => Promise<void>;
+  /**
+   * Opens a file in the Windows default app (POST /api/files/open — the
+   * preview's "open" button, for what the dashboard cannot render: video,
+   * archives, PDFs). Null off WSL and undefined in tests → the route answers
+   * 501, like launcher/terminals.
+   */
+  fileOpener?: FileOpener | null;
   /** Hub start timestamp (epoch ms) for /api/health uptime. */
   startedAt: number;
   /** Hub version string for /api/health (from package.json). */
@@ -369,7 +377,7 @@ function hasClaudeConversation(claudeProjectsDir: string, absPath: string): bool
 }
 
 export function createApiRouter(options: ApiOptions): express.Router {
-  const { store, config, log, bus, onMessage, nudger, launcher, terminals, usage, stopper, startedAt, version } =
+  const { store, config, log, bus, onMessage, nudger, launcher, terminals, usage, stopper, fileOpener, startedAt, version } =
     options;
   const heartbeatMs = options.heartbeatMs ?? 25_000;
   const claudeProjectsDir =
@@ -729,11 +737,11 @@ export function createApiRouter(options: ApiOptions): express.Router {
   // working dir or the operator's home, resolved with realpath so `..`/symlinks
   // cannot escape, because a message body is untrusted (an agent could plant a
   // sensitive path). Everything else is refused, never read.
-  router.get("/api/files/preview", (req, res) => {
-    const rawPath = typeof req.query.path === "string" ? req.query.path : "";
-    // Scope = every agent's cwd (an agent may run outside home) + the operator's
-    // home. Empty cwds (legacy records) are dropped.
-    const roots = [
+  // Scope = every agent's cwd (an agent may run outside home) + the operator's
+  // home. Empty cwds (legacy records) are dropped. Shared by preview and open:
+  // both read a path a MESSAGE named, so both answer to the same boundary.
+  function fileScopeRoots(): string[] {
+    return [
       ...new Set(
         store
           .listAgents()
@@ -742,12 +750,58 @@ export function createApiRouter(options: ApiOptions): express.Router {
       ),
       os.homedir(),
     ];
+  }
+
+  router.get("/api/files/preview", (req, res) => {
+    const rawPath = typeof req.query.path === "string" ? req.query.path : "";
     try {
-      const real = resolveInScope(rawPath, roots);
-      res.json({ ok: true, ...readPreview(real) });
+      const real = resolveInScope(rawPath, fileScopeRoots());
+      res.json({ ok: true, ...readPreview(real), openable: isOpenable(real) });
     } catch (err) {
       const status = err instanceof PreviewError ? err.status : 500;
       res.status(status).json({ ok: false, error: (err as Error).message });
+    }
+  });
+
+  // POST /api/files/open { path } — hand a file to the Windows default app, for
+  // what the dashboard cannot render (a video above all; also archives, PDFs).
+  //
+  // The scope check ALONE is not enough here, unlike the preview: previewing
+  // only reads bytes, but Windows RUNS what it opens, and an agent can write a
+  // .bat inside its own working dir — which is in scope. So the allowlist
+  // (fileopen.ts) is the second, independent gate, and both must pass.
+  router.post("/api/files/open", async (req, res) => {
+    if (!fileOpener) {
+      res.status(501).json({
+        ok: false,
+        error:
+          "Opening files in a system app needs the hub to run under WSL " +
+          "(it hands the path to the Windows shell).",
+      });
+      return;
+    }
+    const raw = req.body as { path?: unknown };
+    const rawPath = typeof raw?.path === "string" ? raw.path : "";
+    let real: string;
+    try {
+      real = resolveInScope(rawPath, fileScopeRoots());
+    } catch (err) {
+      const status = err instanceof PreviewError ? err.status : 500;
+      res.status(status).json({ ok: false, error: (err as Error).message });
+      return;
+    }
+    if (!isOpenable(real)) {
+      res.status(403).json({ ok: false, error: refusalFor(real) });
+      return;
+    }
+    try {
+      await fileOpener.open(real);
+      log.info(`[files] opened in a system app: ${real}`);
+      res.json({ ok: true, path: real });
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      log.warn(`[files] could not open ${real}: ${reason}`);
+      res.status(500).json({ ok: false, error: `Could not open it (${reason}).` });
     }
   });
 
