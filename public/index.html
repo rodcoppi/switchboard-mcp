@@ -350,17 +350,16 @@
     }
 
     /* --- the JACK ROW: an agent patched into the board ------------------- */
+    /* One card = one channel strip. Each thing gets its OWN full-width line so
+       nothing fights for horizontal room: the name reads first, a quiet signal
+       line (engine · state) reads second, the description reads third. Actions
+       are not in the flow at all — they surface top-right on hover/selection. */
     .agent-card {
       position: relative;
-      display: grid;
-      grid-template-columns: auto 1fr auto;
-      grid-template-areas:
-        "dot name badges"
-        "dot role actions";
-      column-gap: 11px;
-      row-gap: 3px;
-      align-items: center;
-      padding: 11px 12px 11px 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      padding: 10px 12px 11px 22px;
       margin-bottom: 8px;
       background: var(--bg-elev);
       border: 1px solid var(--border-soft);
@@ -368,6 +367,15 @@
       cursor: pointer;
       transition: border-color 0.14s var(--ease), background 0.14s var(--ease), transform 0.14s var(--ease);
     }
+    /* Name line: the lamp, then the label, filling the width. */
+    .agent-name-row {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      min-width: 0;
+    }
+    /* Signal line + description line align under the NAME, past the lamp. */
+    .agent-meta, .agent-role { padding-left: 16px; }
     /* Engine siblings (claude + its codex on the same folder) read as ONE
        project: joined vertically (no gap, shared rounded corners) with a
        "linked" bracket down the left so it is clear they are two engines of the
@@ -436,29 +444,29 @@
     .agent-card.active::before { background: var(--accent); box-shadow: 0 0 8px rgba(245, 166, 35, 0.6); }
     .agent-card.offline { opacity: 0.66; }
 
-    /* the LAMP: a glowing phosphor jack indicator, not a flat circle */
+    /* the LAMP: a glowing phosphor jack indicator, not a flat circle. Now inline
+       at the head of the name line, so its working-halo rings right by the name. */
     .status-dot {
-      grid-area: dot;
+      flex: none;
       width: 9px; height: 9px; border-radius: 50%;
       background: var(--offline);
-      align-self: start;
-      margin-top: 5px;
     }
     .status-dot.online  { background: var(--online); box-shadow: var(--led-online); }
     .status-dot.offline { background: var(--offline); box-shadow: var(--led-offline); }
 
     .agent-name {
-      grid-area: name;
+      flex: 1 1 auto;
+      min-width: 0;
       font-family: var(--mono);
       font-weight: 600;
       font-size: var(--fs-name);
       color: var(--text);
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
-    /* Inline rename: the name cell itself becomes the input (same grid area,
+    /* Inline rename: the name cell itself becomes the input (same flex slot,
        so the card never reflows while editing). */
     .agent-rename-input {
-      grid-area: name;
+      flex: 1 1 auto;
       width: 100%;
       min-width: 0;
       background: var(--bg-inset);
@@ -472,19 +480,48 @@
     }
     .agent-rename-input:focus { outline: none; box-shadow: 0 0 0 3px var(--accent-wash); }
 
+    /* The signal line — engine · state, quiet mono, the way a console labels a
+       channel. The unread count rides its far right, a lit signal-present LED. */
+    .agent-meta {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+      font-family: var(--mono);
+      font-size: 10px;
+      letter-spacing: 0.3px;
+      color: var(--text-faint);
+    }
+    .agent-meta .engine { color: var(--text-dim); text-transform: lowercase; }
+    .agent-meta .sep { opacity: 0.5; }
+    .agent-meta .activity { text-transform: lowercase; }
+    .agent-meta .activity.working { color: var(--accent); }
+    .agent-meta .unread-badge { margin-left: auto; }
+
     .agent-role {
-      grid-area: role;
       color: var(--text-dim);
       font-size: var(--fs-xs);
-      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      line-height: 1.35;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
     }
-    .agent-badges {
-      grid-area: badges;
-      display: flex; align-items: center; gap: 7px; justify-self: end;
-    }
+    /* Actions live OUT of the flow — a top-right cluster that fades in only when
+       the card is hovered or is the selected one, so a resting card is calm. */
     .agent-actions {
-      grid-area: actions;
-      display: flex; align-items: center; gap: 6px; justify-self: end;
+      position: absolute;
+      top: 9px; right: 10px;
+      display: flex; align-items: center; gap: 6px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.12s var(--ease);
+    }
+    .agent-card:hover .agent-actions,
+    .agent-card.active .agent-actions,
+    .agent-card.menu-open .agent-actions {
+      opacity: 1;
+      pointer-events: auto;
     }
 
     .mcp-icon {
@@ -625,31 +662,6 @@
       cursor: pointer;
     }
     .toast-action:hover { background: var(--accent-wash); }
-    .activity-chip {
-      font-family: var(--mono);
-      font-size: 9px;
-      font-weight: 600;
-      letter-spacing: 0.5px;
-      text-transform: lowercase;
-      padding: 2px 7px;
-      border-radius: 4px;
-      border: 1px solid var(--border);
-      color: var(--text-faint);
-      display: inline-flex;
-      align-items: center;
-      gap: 5px;
-    }
-    .activity-chip::before {
-      content: "";
-      width: 5px; height: 5px; border-radius: 50%;
-      background: currentColor;
-    }
-    .activity-chip.working {
-      color: var(--accent);
-      border-color: var(--accent-line);
-      background: var(--accent-wash);
-    }
-    .activity-chip.working::before { animation: pulse-work 1.15s ease-in-out infinite; }
     @keyframes pulse-work {
       0%, 100% { opacity: 1; box-shadow: 0 0 0 0 var(--accent-line); }
       50% { opacity: 0.45; box-shadow: 0 0 6px 1px var(--accent-line); }
@@ -670,23 +682,6 @@
     @keyframes halo-work {
       0% { transform: scale(0.7); opacity: 0.9; }
       100% { transform: scale(1.5); opacity: 0; }
-    }
-    /* Which agent CLI the card's agent runs — same chip metrics as .mcp-icon
-       so the two sit as one badge row. Deliberately NOT accent-colored: the
-       accent means "connected/active", and the type is neutral information. */
-    .agent-type-chip {
-      display: inline-flex;
-      align-items: center;
-      gap: 4px;
-      font-family: var(--mono);
-      font-size: 9px;
-      font-weight: 600;
-      letter-spacing: 1px;
-      padding: 2px 6px;
-      border-radius: 4px;
-      border: 1px solid var(--border);
-      color: var(--text-dim);
-      background: var(--bg-inset);
     }
     .unread-badge {
       min-width: 19px;
@@ -892,7 +887,7 @@
        inherit currentColor, so a segment's dim/amber state carries the logo
        with it instead of fighting the console palette. */
     .agent-logo { width: 13px; height: 13px; flex: none; display: block; }
-    .agent-type-chip .agent-logo { width: 10px; height: 10px; }
+    .agent-meta .agent-logo { width: 11px; height: 11px; opacity: 0.85; }
     .launcher-segment + .launcher-segment { border-left: 1px solid var(--border); }
     .launcher-segment:hover { color: var(--text-dim); }
     .launcher-segmented input:checked + .launcher-segment {
@@ -3806,9 +3801,11 @@
       const dot = el("span", `status-dot ${online ? "online" : "offline"}${working ? " working" : ""}`);
       dot.title = online ? (working ? "online · working" : "online · idle") : "offline";
 
-      const name = el("div", "agent-name");
-      // Leader crown sits BEFORE the name (not lost among the badges), and the
+      // NAME LINE: lamp, then the label filling the width. The leader crown
+      // sits BEFORE the name (its own thing, never lost among metadata), and the
       // whole card gets a gold rim. Purely visual; never on the no-group bucket.
+      const nameRow = el("div", "agent-name-row");
+      const name = el("div", "agent-name");
       const grp = groupOf(agent);
       const isLeader = grp !== DEFAULT_GROUP && groupLeaderOf(grp) === agent.name;
       if (isLeader) {
@@ -3819,33 +3816,35 @@
       }
       name.appendChild(document.createTextNode(displayOf(agent)));
       name.title = agent.displayName ? `${agent.displayName} (${agent.name})` : agent.name;
-      const role = el("div", "agent-role", agent.role || "—");
-      role.title = agent.role || "";
+      nameRow.append(dot, name);
 
-      // Badges: agent-type chip + activity + unread count.
-      const badges = el("div", "agent-badges");
+      // SIGNAL LINE: engine · state — quiet mono, the way a console labels a
+      // channel. (The old "MCP" chip is gone: whether an agent had joined was hub
+      // plumbing nobody needed on the card; a message queued for a not-yet-joined
+      // agent still surfaces as the unread count.) The unread count rides the far
+      // right of this line as a lit "signal present" LED.
+      const meta = el("div", "agent-meta");
       const type = agentTypeOf(agent);
-      const typeChip = el("span", "agent-type-chip");
-      typeChip.appendChild(agentLogo(type));
-      typeChip.appendChild(document.createTextNode(AGENT_TYPE_LABELS[type]));
-      typeChip.title = `This agent runs ${AGENT_TYPE_TITLES[type]}`;
-      badges.appendChild(typeChip);
-      // Idle vs working — what the operator actually watches. (The old "MCP"
-      // chip is gone: whether an agent had joined was hub plumbing nobody needed
-      // on the card. Its one real use — a queued message waiting for a not-yet-
-      // joined agent — surfaces as the unread count regardless.)
+      const logo = agentLogo(type);
+      const engine = el("span", "engine", AGENT_TYPE_LABELS[type].toLowerCase());
+      engine.title = `This agent runs ${AGENT_TYPE_TITLES[type]}`;
+      meta.append(logo, engine);
       if (online) {
-        const act = el("span", `activity-chip${working ? " working" : " idle"}`, working ? "working" : "idle");
+        meta.appendChild(el("span", "sep", "·"));
+        const act = el("span", `activity${working ? " working" : ""}`, working ? "working" : "idle");
         act.title = working
           ? "Mid-turn — this agent is generating or running a tool right now."
           : "Idle — this agent is up and waiting for input.";
-        badges.appendChild(act);
+        meta.appendChild(act);
       }
       if (agent.unreadCount > 0) {
         const badge = el("span", "unread-badge", String(agent.unreadCount));
         badge.title = `${agent.unreadCount} unread`;
-        badges.appendChild(badge);
+        meta.appendChild(badge);
       }
+
+      const role = el("div", "agent-role", agent.role || "—");
+      role.title = agent.role || "";
 
       // Actions (owner UX feedback: one PRIMARY action per state, the rest in
       // a compact ⋯ menu — four inline buttons crowded the card):
@@ -4125,6 +4124,10 @@
         const wasHidden = menu.hidden;
         closeMenus();
         menu.hidden = !wasHidden;
+        // Keep the actions cluster pinned open while the menu is: its items
+        // can render past the card's edge, and losing :hover there would yank
+        // the whole cluster (and the open menu) out from under the cursor.
+        card.classList.toggle("menu-open", !menu.hidden);
       });
       menuWrap.append(kebab, menu);
 
@@ -4134,7 +4137,7 @@
       const pulseTarget = menu.querySelector(".nudge-btn");
       if (pulseTarget) pulseTarget.dataset.nudgeFor = agent.name;
 
-      card.append(dot, name, badges, role, actions);
+      card.append(nameRow, meta, role, actions);
       // Clicking the agent shows the AGENT — its screen, live. The rail is the
       // tab bar and a card is the tab, so making you click a second button to
       // see the thing you just selected was friction for nothing.
@@ -4154,6 +4157,7 @@
       document.querySelectorAll(".agent-menu").forEach((m) => {
         m.hidden = true;
       });
+      document.querySelectorAll(".agent-card.menu-open").forEach((c) => c.classList.remove("menu-open"));
     }
     document.addEventListener("click", closeMenus);
     document.addEventListener("keydown", (ev) => {
