@@ -85,6 +85,28 @@ export interface SttProxy {
   transcribe(audio: Buffer, mime: string): Promise<string>;
 }
 
+/**
+ * The engine the /api/stt route actually talks to: LOCAL first (sherpa-onnx —
+ * no cloud, no key, no bill; the owner's requirement), the Groq proxy only as
+ * a fallback for a machine without the model. A local failure is surfaced,
+ * never silently retried in the cloud — audio leaves this machine only when
+ * local transcription is not installed at all.
+ */
+export function createSttEngine(deps: {
+  local: { installed(): boolean; transcribe(audio: Buffer, mime: string): Promise<string> };
+  groq: SttProxy;
+}): SttProxy {
+  return {
+    available(): boolean {
+      return deps.local.installed() || deps.groq.available();
+    },
+    async transcribe(audio: Buffer, mime: string): Promise<string> {
+      if (deps.local.installed()) return deps.local.transcribe(audio, mime);
+      return deps.groq.transcribe(audio, mime);
+    },
+  };
+}
+
 export interface SttOptions {
   log: Logger;
   env?: NodeJS.ProcessEnv;

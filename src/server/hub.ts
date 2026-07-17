@@ -28,7 +28,8 @@ import {
   type LauncherTuning,
 } from "./launcher.js";
 import { createWindowsFileOpener, type FileOpener } from "./fileopen.js";
-import { createSttProxy, type SttProxy } from "./stt.js";
+import { createSttEngine, createSttProxy, type SttProxy } from "./stt.js";
+import { createLocalStt, type LocalStt } from "./sttlocal.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -191,7 +192,15 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
 
   // Dictation transcription (POST /api/stt). Unlike launcher/terminals this
   // needs no tmux — it exists on every hub unless a test explicitly nulls it.
-  const stt: SttProxy | null = options.stt !== undefined ? options.stt : createSttProxy({ log });
+  // LOCAL sherpa-onnx first (no cloud), Groq key only as fallback (stt.ts).
+  let localStt: LocalStt | null = null;
+  let stt: SttProxy | null;
+  if (options.stt !== undefined) {
+    stt = options.stt;
+  } else {
+    localStt = createLocalStt({ log });
+    stt = createSttEngine({ local: localStt, groq: createSttProxy({ log }) });
+  }
 
   const version = readVersion();
   const startedAt = Date.now();
@@ -354,6 +363,7 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
     log.info(`[hub] shutting down…`);
     dispatcher?.stop();
     launcher?.stop(); // cancel pending kickoff timers/polls
+    localStt?.stop(); // free the speech model's RAM / kill the worker
     // Stops every pipe-pane tee: an orphan would grow its file for the rest of
     // the pane's life with nobody reading it.
     terminals?.closeAll();

@@ -1021,8 +1021,9 @@ export function createApiRouter(options: ApiOptions): express.Router {
         res.status(501).json({
           ok: false,
           error:
-            "Dictation needs a Groq API key: set GROQ_API_KEY in the hub's environment " +
-            "(or in ~/.config/watch/.env) and try again — no restart needed.",
+            "Dictation engine not installed. Local (recommended, no cloud): download the " +
+            "speech model into ~/.switchboard/speech — see src/server/sttlocal.ts. " +
+            "Cloud fallback: set GROQ_API_KEY in the hub environment. No restart needed.",
         });
         return;
       }
