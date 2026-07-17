@@ -955,21 +955,29 @@
     .screen-chat[hidden] { display: none; }
     .chat-empty { color: var(--text-faint); font-family: var(--sans); font-size: var(--fs-sm); margin: auto; }
 
-    /* Composer: type to the agent, like the reference chat. */
+    /* Composer: the bar spans the panel (border + background), but its CONTENT
+       lines up with the centred message column above — same 880px, same centre.
+       That alignment was the ask: read and write in the same column. */
     .chat-composer {
       flex: 0 0 auto;
-      display: flex;
-      gap: 8px;
-      align-items: flex-end;
-      padding: 10px 14px 12px;
+      display: block;
+      padding: 10px 18px 12px;
       border-top: 1px solid var(--border);
       background: var(--bg-elev);
     }
     .chat-composer[hidden] { display: none; }
+    .chat-composer-inner {
+      display: flex;
+      gap: 8px;
+      align-items: flex-end;
+      width: 100%;
+      max-width: 880px;
+      margin: 0 auto;
+    }
     #chat-input {
       flex: 1 1 auto;
       resize: none;
-      max-height: 200px;
+      max-height: 140px;
       padding: 9px 12px;
       background: var(--bg-inset);
       border: 1px solid var(--border);
@@ -983,9 +991,9 @@
     #chat-input:disabled { opacity: 0.5; }
     .chat-send { flex: none; align-self: stretch; padding: 0 16px; }
 
-    /* A centred reading column — without it the turns fly to opposite edges of a
-       1300px panel and the middle is dead space. This is what makes it read as a
-       chat and not two lonely columns. */
+    /* A centred reading column — the messages the operator liked. The composer
+       below is constrained to the SAME column so the place you type lines up
+       with the place you read (that mismatch was the complaint). */
     .chat-thread {
       width: 100%;
       max-width: 880px;
@@ -996,6 +1004,25 @@
     }
     .chat-turn { display: flex; gap: 10px; align-items: flex-start; max-width: 100%; }
     .chat-turn.user { flex-direction: row-reverse; }
+    /* Optimistic-echo lane: your just-sent message, same column as the thread,
+       dimmed with a dashed bubble until the agent logs it for real. */
+    .chat-pending {
+      width: 100%;
+      max-width: 880px;
+      margin: 16px auto 0;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .chat-pending:empty { display: none; }
+    .chat-turn.pending { opacity: 0.72; }
+    .chat-turn.pending .chat-bubble { border-style: dashed; }
+    .chat-sending {
+      font-family: var(--mono);
+      font-size: var(--fs-eyebrow);
+      color: var(--text-faint);
+      font-style: italic;
+    }
     /* Per-agent identity disc: initials on the signature amber. The operator's
        own disc is quiet slate — you are not one of the agents. */
     .chat-avatar {
@@ -1875,9 +1902,11 @@
              typed in the terminal — and the reply shows up here, rendered,
              because the chat tails the conversation log live. -->
         <form class="chat-composer" id="chat-composer" hidden autocomplete="off">
-          <textarea id="chat-input" rows="1"
-            placeholder="Message this agent…  (Enter sends · Shift+Enter for a newline)"></textarea>
-          <button class="btn chat-send" id="chat-send" type="submit">send</button>
+          <div class="chat-composer-inner">
+            <textarea id="chat-input" rows="1"
+              placeholder="Message this agent…  (Enter sends · Shift+Enter for a newline)"></textarea>
+            <button class="btn chat-send" id="chat-send" type="submit">send</button>
+          </div>
         </form>
         <!-- Terminal view: xterm. Hidden until you toggle to it. -->
         <div class="screen-term" id="screen-term" hidden></div>
@@ -3616,6 +3645,45 @@
         const it = items[i];
         thread.appendChild(it.kind === "tool" ? buildToolChip(it) : buildChatTurn(it, name));
       }
+      reconcilePending(view);
+    }
+
+    /**
+     * Optimistic echo: the operator's just-sent message, shown immediately in a
+     * separate pending lane (kept OUT of .chat-thread so the thread's
+     * append-by-index stays intact). Reconciled away by reconcilePending once
+     * the agent logs it and the real bubble arrives.
+     */
+    function echoUserMessage(text) {
+      const view = $("#screen-chat");
+      // If the view still shows the empty/loading placeholder, start a thread so
+      // the echo has somewhere consistent to live beneath.
+      let pend = view.querySelector(".chat-pending");
+      if (!pend) {
+        pend = el("div", "chat-pending");
+        view.appendChild(pend);
+      }
+      const turn = buildChatTurn({ kind: "user", text, ts: new Date().toISOString() }, screenState.name);
+      turn.classList.add("pending");
+      turn.dataset.echo = text.trim();
+      const meta = turn.querySelector(".chat-meta");
+      if (meta) meta.appendChild(el("span", "chat-sending", "sending…"));
+      pend.appendChild(turn);
+      view.scrollTop = view.scrollHeight;
+    }
+
+    /** Drops any pending echo whose text now appears as a real user bubble. */
+    function reconcilePending(view) {
+      const pend = view.querySelector(".chat-pending");
+      if (!pend || !pend.children.length) return;
+      const thread = view.querySelector(".chat-thread");
+      if (!thread) return;
+      const realTexts = new Set(
+        [...thread.querySelectorAll(".chat-turn.user .chat-bubble")].map((b) => b.textContent.trim()),
+      );
+      for (const node of [...pend.children]) {
+        if (realTexts.has(node.dataset.echo)) node.remove();
+      }
     }
 
     /** Two-letter identity mark for an agent — "ai-panorama" -> "AP". */
@@ -4754,6 +4822,11 @@
         // vanishing into a view that will never render it.
         const isSlash = text.startsWith("/");
         chatInput.disabled = true;
+        // Echo the message into the chat AT ONCE — the agent may be mid-turn and
+        // won't log it (so won't mirror it back) until it finishes, and a chat
+        // where your own message vanishes for 30s reads as broken. The optimistic
+        // bubble is reconciled away when the real one arrives from the log.
+        if (!isSlash) echoUserMessage(text);
         try {
           await sendChatMessage(name, text);
           chatInput.value = "";
