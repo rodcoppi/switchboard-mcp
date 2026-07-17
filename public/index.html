@@ -294,6 +294,7 @@
 
     /* ----------------------------- Sidebar (PATCHBAY) -------------------- */
     .sidebar {
+      position: relative;
       flex: 0 0 var(--sidebar-w);
       width: var(--sidebar-w);
       border-right: 1px solid var(--border);
@@ -302,6 +303,25 @@
       flex-direction: column;
       min-height: 0;
     }
+    /* Drag the right edge to widen/narrow the rail; double-click resets. */
+    .sidebar-resizer {
+      position: absolute;
+      top: 0; bottom: 0; right: -3px;
+      width: 7px;
+      z-index: 6;
+      cursor: col-resize;
+      touch-action: none;
+    }
+    .sidebar-resizer::after {
+      content: "";
+      position: absolute;
+      top: 0; bottom: 0; left: 3px;
+      width: 1px;
+      background: transparent;
+      transition: background 0.14s var(--ease);
+    }
+    .sidebar-resizer:hover::after,
+    .sidebar-resizer.dragging::after { background: var(--accent-line); }
     .sidebar-head {
       flex: 0 0 auto;
       display: flex; align-items: center; gap: 8px;
@@ -2530,6 +2550,8 @@
 
   <div class="layout">
     <aside class="sidebar">
+      <div class="sidebar-resizer" id="sidebar-resizer" role="separator"
+        aria-orientation="vertical" title="Drag to resize · double-click to reset"></div>
       <div class="sidebar-head">
         <span class="eyebrow">Patchbay</span>
         <span id="sidebar-count" class="rail-count">0</span>
@@ -5777,6 +5799,53 @@
       });
     }
 
+    // Drag the sidebar's right edge to widen/narrow the rail. Width is a viewer
+    // preference (localStorage), applied as the --sidebar-w custom property;
+    // double-click resets to the default.
+    const SIDEBAR_KEY = "sb.sidebarWidth";
+    const SIDEBAR_DEFAULT = 322;
+    const clampSidebar = (w) => Math.min(560, Math.max(220, w));
+    function savedSidebarWidth() {
+      const v = Number(localStorage.getItem(SIDEBAR_KEY));
+      return Number.isFinite(v) && v > 0 ? clampSidebar(v) : SIDEBAR_DEFAULT;
+    }
+    function applySidebarWidth(w) {
+      document.documentElement.style.setProperty("--sidebar-w", `${w}px`);
+    }
+    function wireSidebarResize() {
+      applySidebarWidth(savedSidebarWidth());
+      const handle = $("#sidebar-resizer");
+      let drag = null;
+      handle.addEventListener("pointerdown", (ev) => {
+        ev.preventDefault();
+        const w = savedSidebarWidth();
+        drag = { startX: ev.clientX, startW: w, w };
+        handle.setPointerCapture(ev.pointerId);
+        handle.classList.add("dragging");
+        document.body.style.cursor = "col-resize";
+        document.body.style.userSelect = "none";
+      });
+      handle.addEventListener("pointermove", (ev) => {
+        if (!drag) return;
+        drag.w = clampSidebar(drag.startW + (ev.clientX - drag.startX));
+        applySidebarWidth(drag.w);
+      });
+      const end = () => {
+        if (!drag) return;
+        try { localStorage.setItem(SIDEBAR_KEY, String(Math.round(drag.w))); } catch { /* not persisted */ }
+        drag = null;
+        handle.classList.remove("dragging");
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+      };
+      handle.addEventListener("pointerup", end);
+      handle.addEventListener("pointercancel", end);
+      handle.addEventListener("dblclick", () => {
+        localStorage.removeItem(SIDEBAR_KEY);
+        applySidebarWidth(SIDEBAR_DEFAULT);
+      });
+    }
+
     async function moveAgentToGroup(name, group) {
       try {
         const res = await fetch(`/api/agents/${encodeURIComponent(name)}/group`, {
@@ -6616,6 +6685,7 @@
       // Inline file dock (chat): close button + drag-resize handle.
       $("#inline-file-close").addEventListener("click", closeInlineFile);
       wireInlineFileResize();
+      wireSidebarResize();
 
       // Launch agent (lightbox).
       $("#launcher-open").addEventListener("click", () => {
