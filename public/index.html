@@ -6438,12 +6438,14 @@
       btn.disabled = true;
       btn.textContent = "launching…";
       try {
-        // openTerminal: a launched agent should be VISIBLE — a Windows window
-        // pops attached to its session (owner feedback; best-effort hub-side).
+        // openTerminal:false — launching no longer pops a Windows window on its
+        // own. The agent comes up in tmux and on the rail; a window is something
+        // you ask for, by clicking "window" on its card. (Owner's call: an
+        // auto-window on every launch was noise you had to close.)
         const payload = {
           dir,
           continue: $("#launch-continue").checked,
-          openTerminal: true,
+          openTerminal: false,
           agentType: selectedAgentType(),
         };
         if (name) payload.name = name;
@@ -6469,9 +6471,8 @@
         }
         toast(
           `Agent ${agentName} launched` +
-            `${data.replaced ? " (replaced its previous session)" : ""}` +
-            `${data.terminalOpened ? " — its window is opening" : ""}. ` +
-            `The kickoff will instruct it to join.`,
+            `${data.replaced ? " (replaced its previous session)" : ""}. ` +
+            `It'll join on its own — open a terminal window from its card if you want one.`,
           "ok",
         );
         closeLauncher(); // it launched; the form has nothing left to say
