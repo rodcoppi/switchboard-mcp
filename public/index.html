@@ -430,7 +430,17 @@
     /* Idle vs working — the thing the operator actually watches for. Same chip
        metrics as .mcp-icon so it drops into the same badge slot. Working glows
        and breathes; idle is quiet. */
-    .leader-badge { font-size: 12px; line-height: 1; cursor: default; }
+    /* Group leader: a gold rim + glow on the card, a crown before the name. */
+    .leader-crown { font-size: 12px; line-height: 1; margin-right: 5px; }
+    .agent-card.leader {
+      border-color: #d9a521;
+      background:
+        linear-gradient(90deg, color-mix(in srgb, #d9a521 12%, transparent), transparent 70%),
+        var(--bg-elev);
+      box-shadow: 0 0 0 1px color-mix(in srgb, #d9a521 35%, transparent), 0 0 14px -4px #d9a521;
+    }
+    .agent-card.leader::before { background: #f2c14e; box-shadow: 0 0 8px rgba(217, 165, 33, 0.7); }
+    .agent-card.leader:hover { border-color: #f2c14e; }
     .info-card {
       width: min(460px, 92vw);
       background: var(--bg-elev);
@@ -451,6 +461,12 @@
       color: var(--accent);
     }
     .info-card-head .dirpicker-close { margin-left: 0; }
+    .confirm-foot {
+      display: flex;
+      justify-content: flex-end;
+      gap: 9px;
+      padding: 12px 16px 16px;
+    }
     .info-card-body {
       padding: 16px;
       font-family: var(--sans);
@@ -2688,10 +2704,48 @@
       document.body.appendChild(bd);
     }
 
+    // A centred confirm dialog (title + message + Cancel/Confirm). Non-blocking,
+    // backdrop/Esc cancels — for the few YES/NO moments a corner toast is too
+    // small or too easy to miss.
+    function showConfirmDialog(title, message, confirmLabel, onConfirm) {
+      document.getElementById("confirm-dialog")?.remove();
+      const bd = el("div", "palette-backdrop");
+      bd.id = "confirm-dialog";
+      const card = el("div", "info-card");
+      const head = el("div", "info-card-head");
+      head.appendChild(el("span", "info-card-title", title));
+      card.appendChild(head);
+      card.appendChild(el("div", "info-card-body", message));
+      const foot = el("div", "confirm-foot");
+      const cancel = el("button", "btn ghost", "cancel");
+      cancel.type = "button";
+      cancel.addEventListener("click", () => bd.remove());
+      const ok = el("button", "btn", confirmLabel);
+      ok.type = "button";
+      ok.addEventListener("click", () => {
+        bd.remove();
+        onConfirm();
+      });
+      foot.append(cancel, ok);
+      card.appendChild(foot);
+      bd.appendChild(card);
+      bd.addEventListener("click", (e) => { if (e.target === bd) bd.remove(); });
+      const onEsc = (e) => { if (e.key === "Escape") { bd.remove(); document.removeEventListener("keydown", onEsc); } };
+      document.addEventListener("keydown", onEsc);
+      document.body.appendChild(bd);
+      ok.focus();
+    }
+
     // "You named a leader — tell the group?" (the operator's optional signal).
     function openLeaderAnnouncePrompt(group, leaderName) {
-      toastAction(
-        `${displayOf(leaderName)} is now the leader (visual).`,
+      const peers = [...state.agents.values()].filter(
+        (a) => groupOf(a) === group && a.name !== leaderName && a.status === "online",
+      );
+      if (peers.length === 0) return; // nobody to tell; the badge is enough
+      showConfirmDialog(
+        `${displayOf(leaderName)} is now the leader 👑`,
+        `This badge is visual only. Want to tell the ${peers.length} other online agent(s) in this group ` +
+          `— in your voice — that ${displayOf(leaderName)} leads and their instructions carry the same weight as yours?`,
         "announce to the group",
         () => announceLeader(group, leaderName),
       );
@@ -3478,21 +3532,24 @@
       const dot = el("span", `status-dot ${online ? "online" : "offline"}${working ? " working" : ""}`);
       dot.title = online ? (working ? "online · working" : "online · idle") : "offline";
 
-      const name = el("div", "agent-name", displayOf(agent));
+      const name = el("div", "agent-name");
+      // Leader crown sits BEFORE the name (not lost among the badges), and the
+      // whole card gets a gold rim. Purely visual; never on the no-group bucket.
+      const grp = groupOf(agent);
+      const isLeader = grp !== DEFAULT_GROUP && groupLeaderOf(grp) === agent.name;
+      if (isLeader) {
+        card.classList.add("leader");
+        const crown = el("span", "leader-crown", "👑");
+        crown.title = "Leader of this group (set by you — visual only)";
+        name.appendChild(crown);
+      }
+      name.appendChild(document.createTextNode(displayOf(agent)));
       name.title = agent.displayName ? `${agent.displayName} (${agent.name})` : agent.name;
       const role = el("div", "agent-role", agent.role || "—");
       role.title = agent.role || "";
 
-      // Badges: agent-type chip + MCP chip + unread count.
+      // Badges: agent-type chip + activity + unread count.
       const badges = el("div", "agent-badges");
-      // Leader crown — purely visual, marks who the operator named as this
-      // group's lead. Never on the no-group bucket.
-      const grp = groupOf(agent);
-      if (grp !== DEFAULT_GROUP && groupLeaderOf(grp) === agent.name) {
-        const crown = el("span", "leader-badge", "👑");
-        crown.title = `Leader of this group (set by you — visual only)`;
-        badges.appendChild(crown);
-      }
       const type = agentTypeOf(agent);
       const typeChip = el("span", "agent-type-chip");
       typeChip.appendChild(agentLogo(type));
