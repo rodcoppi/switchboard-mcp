@@ -447,11 +447,25 @@
        so the chat is identifiable in the rail at a glance. */
     .agent-card.tinted::before,
     .agent-card.tinted:hover::before { background: var(--chat-color); }
+    /* Selected: the one you're looking at. It reads as "patched in" — an amber
+       tint that fades left→right, a full amber border, a soft lift, and the
+       cable-end swelling into a solid full-height bar down the left edge. */
     .agent-card.active {
-      border-color: var(--accent-line);
-      background: linear-gradient(90deg, var(--accent-wash), transparent 82%), var(--bg-elev);
+      border-color: var(--accent);
+      background:
+        linear-gradient(90deg, var(--accent-wash), color-mix(in srgb, var(--accent-wash) 32%, transparent) 58%, transparent),
+        var(--bg-elev);
+      box-shadow: 0 0 0 1px var(--accent-line), 0 6px 18px -10px rgba(245, 166, 35, 0.55);
     }
-    .agent-card.active::before { background: var(--accent); box-shadow: 0 0 8px rgba(245, 166, 35, 0.6); }
+    .agent-card.active::before {
+      top: 3px; bottom: 3px;
+      width: 3px;
+      border-radius: 0 3px 3px 0;
+      background: var(--accent);
+      box-shadow: 0 0 10px 1px rgba(245, 166, 35, 0.65);
+    }
+    /* The selected card wins its left bar even when the chat is recoloured. */
+    .agent-card.active.tinted::before { background: var(--accent); }
     .agent-card.offline { opacity: 0.66; }
 
     /* the LAMP: a glowing phosphor jack indicator, not a flat circle. Now inline
@@ -3829,7 +3843,12 @@
       });
       grab.addEventListener("click", (e) => e.stopPropagation()); // never open the screen
       card.appendChild(grab);
-      if (state.filter === agent.name) card.classList.add("active");
+      // Selected = the agent whose screen is open, or (in the Messages view) the
+      // one the transcript is filtered to. Either way its rail card lights up, so
+      // "which one am I looking at" is never a guess.
+      if (screenState.name === agent.name || (screenState.name === null && state.filter === agent.name)) {
+        card.classList.add("active");
+      }
       card.dataset.name = agent.name;
       const tint = chatColor(agent.name);
       if (tint) {
