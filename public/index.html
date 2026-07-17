@@ -374,6 +374,16 @@
       gap: 7px;
       min-width: 0;
     }
+    /* Unseen reply: a small amber pip at the name's end + a brighter name, the
+       familiar "unread" pairing. Quiet and static — no pulse to add to the din. */
+    .unseen-pip {
+      flex: none;
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 7px 1px rgba(245, 166, 35, 0.65);
+    }
+    .agent-card.unseen .agent-name { color: var(--accent-bright); font-weight: 700; }
     /* Signal line + description line align under the NAME, past the lamp. */
     .agent-meta, .agent-role { padding-left: 16px; }
     /* Engine siblings (claude + its codex on the same folder) read as ONE
@@ -2716,6 +2726,7 @@
       filter: null,        // active agent-name filter, or null
       group: null,         // active group tab, or null for "all groups"
       search: "",          // free-text filter over the transcript, or ""
+      unseen: new Set(),   // agents that finished a turn you haven't opened yet
       sse: null,
       uptimeBase: null,    // { seconds, at }  — server uptime + local anchor
     };
@@ -2982,7 +2993,37 @@
           : prev
             ? prev.unreadCount
             : 0;
+      // "Unseen output": the instant an agent finishes a turn (working → idle) it
+      // has just written a reply. Flag it so the rail shows an amber pip — UNLESS
+      // its screen is the one you're already looking at (then you saw it live).
+      // Only a live transition counts: on the first sight of an agent (no prev)
+      // or a plain refresh there is nothing new to surface.
+      if (
+        prev &&
+        prev.activity === "working" &&
+        incoming.activity === "idle" &&
+        incoming.status === "online" &&
+        screenState.name !== incoming.name
+      ) {
+        markUnseen(incoming.name);
+      }
       state.agents.set(incoming.name, { ...prev, ...incoming, unreadCount });
+    }
+
+    // "Unseen output" is viewer state, persisted so an unread reply survives a
+    // reload — it clears only when you actually open the agent. (Stale names for
+    // vanished agents are harmless: a pip renders only for a card that exists.)
+    const UNSEEN_KEY = "sb.unseen";
+    function persistUnseen() {
+      try { localStorage.setItem(UNSEEN_KEY, JSON.stringify([...state.unseen])); } catch { /* private mode */ }
+    }
+    function markUnseen(name) { state.unseen.add(name); persistUnseen(); }
+    function clearUnseen(name) { if (state.unseen.delete(name)) persistUnseen(); }
+    function loadUnseen() {
+      try {
+        const v = JSON.parse(localStorage.getItem(UNSEEN_KEY) || "[]");
+        if (Array.isArray(v)) for (const n of v) if (typeof n === "string") state.unseen.add(n);
+      } catch { /* malformed — start clean */ }
     }
 
     // Manual order (drag-to-reorder) is a viewer preference in localStorage: a
@@ -3817,6 +3858,14 @@
       name.appendChild(document.createTextNode(displayOf(agent)));
       name.title = agent.displayName ? `${agent.displayName} (${agent.name})` : agent.name;
       nameRow.append(dot, name);
+      // Unseen output: a glowing amber pip at the name's end. Set when the agent
+      // finished a turn (working → idle) and cleared the moment you open it.
+      if (state.unseen.has(agent.name)) {
+        card.classList.add("unseen");
+        const pip = el("span", "unseen-pip");
+        pip.title = "New reply you haven't opened yet";
+        nameRow.appendChild(pip);
+      }
 
       // SIGNAL LINE: engine · state — quiet mono, the way a console labels a
       // channel. (The old "MCP" chip is gone: whether an agent had joined was hub
@@ -4668,6 +4717,7 @@
       if (screenState.name === name) return;
       closeScreen({ keepTabs: true });
       screenState.name = name;
+      clearUnseen(name); // opening its screen IS reading it
       if (!openTabs.includes(name)) openTabs.push(name);
 
       // The whole Messages panel steps aside, header and filter bar included.
@@ -7265,6 +7315,8 @@
         else if (!$("#launcher-box").hidden) closeLauncher();
         else if (!$("#groups-box").hidden) closeGroups();
       });
+
+      loadUnseen(); // restore "unread reply" pips before the first rail render
 
       // Bootstrap snapshot (agents + messages + health) BEFORE the live stream,
       // so the SSE only ever adds to a populated view (PRD Phase 6 behavior).
