@@ -1092,6 +1092,13 @@
     }
     .slash-item.active { background: var(--accent-wash); color: var(--text); }
     .slash-item.active .slash-item__name { color: var(--accent); }
+    /* "@" file-mention rows reuse .slash-item; the icon is textContent (📄/📁),
+       and a long path truncates instead of pushing the popover wide. */
+    .slash-item__icon { flex: 0 0 auto; font-size: var(--fs-sm); line-height: 1; }
+    #mention-menu .slash-item__name {
+      flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      font-weight: 400;
+    }
     #chat-input {
       flex: 1 1 auto;
       resize: none;
@@ -1107,6 +1114,11 @@
     }
     #chat-input:focus { outline: none; border-color: var(--accent-line); }
     #chat-input:disabled { opacity: 0.5; }
+    /* Drop target feedback: dashed accent ring while a file is dragged over. */
+    #chat-input.drag-over {
+      border: 1px dashed var(--accent);
+      background: var(--accent-wash);
+    }
     .chat-send { flex: none; align-self: stretch; padding: 0 16px; }
     /* Interrupt the open agent mid-turn — a danger square beside send, shown
        only while that agent is working. */
@@ -1346,6 +1358,89 @@
     .chat-edit-btn svg { display: block; }
     .chat-turn.user:hover .chat-edit-btn { opacity: 1; pointer-events: auto; }
     .chat-edit-btn:hover { color: var(--accent); }
+
+    /* Forward arrow — hover-reveal beside the bubble (next to the edit pencil
+       on user turns), same no-reflow trick as .chat-edit-btn. The wrap is the
+       positioning anchor for the popover. */
+    .chat-fwd-wrap {
+      position: relative;
+      flex: 0 0 auto;
+      align-self: center;
+      display: inline-flex;
+    }
+    .chat-fwd-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 4px;
+      line-height: 0;
+      background: transparent;
+      border: none;
+      border-radius: 7px;
+      color: var(--text-faint);
+      cursor: pointer;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.15s var(--ease), color 0.15s var(--ease);
+    }
+    .chat-fwd-btn svg { display: block; }
+    .chat-turn:hover .chat-fwd-btn,
+    .chat-fwd-btn[aria-expanded="true"] { opacity: 1; pointer-events: auto; }
+    .chat-fwd-btn:hover { color: var(--accent); }
+
+    /* The popover: same recipe as .agent-menu (hidden must beat display:flex). */
+    .fwd-menu {
+      position: absolute;
+      top: calc(100% + 5px);
+      z-index: 30;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .fwd-menu[hidden] { display: none; }
+    .fwd-menu:not([hidden]) {
+      padding: 6px;
+      background: var(--bg-elev-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      box-shadow: 0 10px 26px rgba(0, 0, 0, 0.55);
+      min-width: 148px;
+    }
+    /* Opens INTO the column, never past its edge. */
+    .chat-turn.assistant .fwd-menu { right: 0; }
+    .chat-turn.user .fwd-menu { left: 0; }
+    .fwd-menu.up { top: auto; bottom: calc(100% + 5px); }
+    .fwd-menu-label {
+      font-family: var(--mono);
+      font-size: var(--fs-eyebrow);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--text-faint);
+      padding: 2px 4px 0;
+      white-space: nowrap;
+    }
+    .fwd-menu-item {
+      text-align: left;
+      white-space: nowrap;
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text-dim);
+      font-family: var(--mono);
+      font-size: var(--fs-xs);
+      padding: 3px 9px;
+      line-height: 1.3;
+      cursor: pointer;
+      transition: border-color 0.12s var(--ease), color 0.12s var(--ease), background 0.12s var(--ease);
+    }
+    .fwd-menu-item:hover { color: var(--text); border-color: var(--accent); background: var(--accent-wash); }
+    .fwd-menu-empty {
+      font-family: var(--mono);
+      font-size: var(--fs-xs);
+      color: var(--text-faint);
+      padding: 3px 4px;
+      white-space: nowrap;
+    }
     .chat-turn.assistant .chat-bubble { border-radius: 12px 12px 12px 3px; }
     /* Minimal markdown: inline code, code fences, bold. */
     .chat-bubble code { font-family: var(--mono); font-size: 0.92em; background: var(--bg-inset); padding: 1px 5px; border-radius: 4px; }
@@ -1553,6 +1648,64 @@
       color: var(--text);
       white-space: pre;
       tab-size: 2;
+    }
+
+    /* Inline file dock — sits between the chat and the composer (markup order
+       does the docking; .screen is a flex column). OPAQUE on purpose —
+       readability first. */
+    .inline-file {
+      flex: 0 0 auto;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+      min-height: 0;
+      border-top: 1px solid var(--border);
+      background: var(--bg);
+    }
+    .inline-file[hidden] { display: none; }
+    /* The TOP border is the handle: a thin invisible strip straddling it. */
+    .inline-file-resizer {
+      position: absolute;
+      top: -4px; left: 0; right: 0;
+      height: 8px;
+      z-index: 5;
+      cursor: row-resize;
+      background: transparent;
+      transition: background 0.15s var(--ease);
+      touch-action: none;
+    }
+    .inline-file-resizer:hover { background: var(--accent-line); }
+    .inline-file-head {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+      padding: 7px 14px;
+      border-bottom: 1px solid var(--border-soft);
+    }
+    .inline-file-name {
+      font-family: var(--mono);
+      font-size: var(--fs-sm);
+      font-weight: 600;
+      color: var(--text);
+      white-space: nowrap;
+    }
+    .inline-file-path {
+      font-family: var(--mono);
+      font-size: var(--fs-xs);
+      color: var(--text-faint);
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .inline-file-body {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow: auto;
+      padding: 12px 14px;
     }
     .groups-head {
       display: flex;
@@ -2232,9 +2385,25 @@
              (send-keys, through the pane guard), so the agent answers as if you
              typed in the terminal — and the reply shows up here, rendered,
              because the chat tails the conversation log live. -->
+        <!-- Inline file dock: a path clicked in the chat opens HERE, between
+             the transcript and the composer, so you read the file while you
+             keep typing. The lightbox stays for the Messages feed. The top
+             border is a drag handle: up = taller, double-click = reset. -->
+        <div class="inline-file" id="inline-file" hidden>
+          <div class="inline-file-resizer" id="inline-file-resizer" role="separator"
+            aria-orientation="horizontal" title="Drag to resize · double-click to reset"></div>
+          <div class="inline-file-head">
+            <span class="inline-file-name" id="inline-file-name"></span>
+            <span class="inline-file-path" id="inline-file-path"></span>
+            <button class="dirpicker-close" id="inline-file-close" type="button"
+              title="Close the file (keep chatting)">✕</button>
+          </div>
+          <div class="inline-file-body" id="inline-file-body"></div>
+        </div>
         <form class="chat-composer" id="chat-composer" hidden autocomplete="off">
           <div class="chat-composer-inner">
             <div class="slash-menu" id="slash-menu" hidden></div>
+            <div class="slash-menu" id="mention-menu" hidden></div>
             <textarea id="chat-input" rows="1"
               placeholder="Message this agent…  (Enter sends · Shift+Enter for a newline)"></textarea>
             <button class="btn chat-send" id="chat-send" type="submit">send</button>
@@ -3964,6 +4133,7 @@
       if (screenState.chatSse) screenState.chatSse.close();
       screenState.chatSse = null;
       $("#screen-chat").textContent = "";
+      closeInlineFile(); // the file belonged to THIS chat; the next view starts clean
     }
 
     /**
@@ -4099,6 +4269,7 @@
       thread.__count = items.length;
       groupActions(thread);
       markEditableUserTurns(thread);
+      markForwardableTurns(thread);
       reconcilePending(view);
     }
 
@@ -4435,6 +4606,106 @@
       }
     }
 
+    // The forward arrow glyph (corner-up-right), via createElementNS to match
+    // editPencilSvg / agentLogo — never innerHTML.
+    function fwdArrowSvg() {
+      const ns = "http://www.w3.org/2000/svg";
+      const svg = document.createElementNS(ns, "svg");
+      for (const [k, v] of Object.entries({ viewBox: "0 0 24 24", width: "13", height: "13", fill: "none", stroke: "currentColor", "stroke-width": "2", "stroke-linecap": "round", "stroke-linejoin": "round" })) svg.setAttribute(k, v);
+      const poly = document.createElementNS(ns, "polyline");
+      poly.setAttribute("points", "15 14 20 9 15 4");
+      const path = document.createElementNS(ns, "path");
+      path.setAttribute("d", "M4 20v-7a4 4 0 0 1 4-4h12");
+      svg.append(poly, path);
+      return svg;
+    }
+
+    /** One forward popover open at a time; outside click / Esc close. */
+    function closeFwdMenus() {
+      document.querySelectorAll(".fwd-menu").forEach((m) => {
+        m.hidden = true;
+        const btn = m.previousElementSibling;
+        if (btn) btn.setAttribute("aria-expanded", "false");
+      });
+    }
+    document.addEventListener("click", closeFwdMenus);
+    document.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape") closeFwdMenus();
+    });
+
+    // The target list is rebuilt on every OPEN, not at render time: who is
+    // online changes while the transcript sits still.
+    function fillFwdMenu(menu, text) {
+      menu.textContent = "";
+      menu.appendChild(el("div", "fwd-menu-label", "forward to"));
+      const targets = [...state.agents.values()].filter(
+        (a) => a.status === "online" && a.name !== screenState.name,
+      );
+      if (targets.length === 0) {
+        menu.appendChild(el("div", "fwd-menu-empty", "no other agent online"));
+        return;
+      }
+      for (const a of targets) {
+        const item = el("button", "fwd-menu-item", a.name);
+        item.type = "button";
+        item.title = `Type this message into ${a.name}'s pane (with a "forwarded from" prefix)`;
+        item.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          closeFwdMenus();
+          forwardChatText(a.name, text);
+        });
+        menu.appendChild(item);
+      }
+    }
+
+    // Optimistic: the toast fires as the send starts; a failure follows up.
+    function forwardChatText(target, text) {
+      const prefixed = `[forwarded from ${screenState.name}] ${text}`;
+      toast(`Forwarded to "${target}".`);
+      sendChatMessage(target, prefixed).catch((err) => {
+        toast(`Forward to "${target}" failed: ${err && err.message ? err.message : err}`, "warn");
+      });
+    }
+
+    // After each render, the LAST 8 turns — user AND assistant — carry a
+    // forward arrow. Same remove-and-recreate pass as markEditableUserTurns.
+    function markForwardableTurns(threadEl) {
+      if (!threadEl) return;
+      for (const w of threadEl.querySelectorAll(".chat-fwd-wrap")) w.remove();
+      const turns = threadEl.querySelectorAll(".chat-turn.user, .chat-turn.assistant");
+      for (let i = Math.max(0, turns.length - 8); i < turns.length; i++) {
+        const turn = turns[i];
+        if (typeof turn.__text !== "string") continue;
+        const wrap = el("div", "chat-fwd-wrap");
+        const btn = el("button", "chat-fwd-btn");
+        btn.type = "button";
+        btn.title = "Forward — send this message to another agent";
+        btn.setAttribute("aria-expanded", "false");
+        btn.appendChild(fwdArrowSvg());
+        const menu = el("div", "fwd-menu");
+        menu.hidden = true;
+        btn.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          const wasHidden = menu.hidden;
+          closeMenus(); // the card kebab menus
+          closeFwdMenus(); // any other forward popover
+          if (!wasHidden) return; // this one was open — the closes above shut it
+          fillFwdMenu(menu, turn.__text);
+          menu.hidden = false;
+          btn.setAttribute("aria-expanded", "true");
+          // The casca scrolls: flip the menu up when the space below is short.
+          menu.classList.remove("up");
+          const view = $("#screen-chat");
+          if (view) {
+            const spaceBelow = view.getBoundingClientRect().bottom - btn.getBoundingClientRect().bottom;
+            if (menu.getBoundingClientRect().height + 10 > spaceBelow) menu.classList.add("up");
+          }
+        });
+        wrap.append(btn, menu);
+        turn.appendChild(wrap);
+      }
+    }
+
     // A glyph per tool, like the reference app's transcript — so the eye reads
     // the KIND of action before the name.
     const TOOL_ICON = {
@@ -4620,7 +4891,9 @@
         if (match.index > last) container.appendChild(document.createTextNode(text.slice(last, match.index)));
         const link = el("span", "path-link", p);
         link.title = `Preview ${p}`;
-        link.addEventListener("click", (ev) => { ev.stopPropagation(); openPreview(p); });
+        // Chat links open the inline DOCK (read the file while chatting); the
+        // Messages feed's links keep the lightbox.
+        link.addEventListener("click", (ev) => { ev.stopPropagation(); openInlineFile(p); });
         container.appendChild(link);
         last = match.index + p.length;
       }
@@ -4695,6 +4968,106 @@
       if (n < 1024) return `${n} B`;
       if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
       return `${(n / 1024 / 1024).toFixed(1)} MB`;
+    }
+
+    // =====================================================================
+    // Inline file dock. A path clicked in the CHAT opens here, docked between
+    // the transcript and the composer — read the file, keep typing. Height is
+    // a WINDOW FRACTION persisted in localStorage, so the size you like
+    // survives reloads. The lightbox stays for the Messages feed.
+    // =====================================================================
+
+    const INLINE_FRAC_KEY = "sb.inlineFileFrac";
+    const INLINE_FRAC_DEFAULT = 0.42;
+    const clampInlineFrac = (f) => Math.min(0.8, Math.max(0.15, f));
+
+    function inlineFileFrac() {
+      try {
+        const v = Number(localStorage.getItem(INLINE_FRAC_KEY));
+        if (Number.isFinite(v) && v > 0) return clampInlineFrac(v);
+      } catch { /* storage unavailable: just use the default */ }
+      return INLINE_FRAC_DEFAULT;
+    }
+
+    function applyInlineFrac(f) {
+      $("#inline-file").style.maxHeight = `${(f * 100).toFixed(1)}vh`;
+    }
+
+    async function openInlineFile(filePath) {
+      // The dock only makes sense over an open chat; anywhere else, fall back
+      // to the lightbox.
+      if (screenState.name === null || screenState.mode !== "chat") {
+        openPreview(filePath);
+        return;
+      }
+      $("#inline-file").hidden = false;
+      applyInlineFrac(inlineFileFrac());
+      $("#inline-file-name").textContent = filePath.split("/").pop() || filePath;
+      $("#inline-file-path").textContent = filePath;
+      const body = $("#inline-file-body");
+      body.textContent = "";
+      body.appendChild(el("div", "preview-status", "Loading…"));
+      try {
+        const res = await fetch(`/api/files/preview?path=${encodeURIComponent(filePath)}`);
+        const data = await res.json();
+        body.textContent = "";
+        if (!data.ok) {
+          body.appendChild(el("div", "preview-status stale", data.error || `HTTP ${res.status}`));
+          return;
+        }
+        $("#inline-file-name").textContent = data.name;
+        $("#inline-file-path").textContent = `${data.path} · ${fmtBytes(data.size)}`;
+        renderPreview(body, data); // the lightbox's renderer: text/image/pdf/binary
+      } catch (err) {
+        body.textContent = "";
+        body.appendChild(
+          el("div", "preview-status stale", `Could not load: ${err && err.message ? err.message : err}`),
+        );
+      }
+    }
+
+    function closeInlineFile() {
+      const dock = $("#inline-file");
+      if (dock.hidden) return;
+      dock.hidden = true;
+      $("#inline-file-body").textContent = ""; // a data: URL image can be MBs — drop it
+    }
+
+    // Drag the dock's top border: up = taller, down = shorter. Pointer capture
+    // keeps the drag alive outside the 8px strip; double-click resets.
+    function wireInlineFileResize() {
+      const handle = $("#inline-file-resizer");
+      let drag = null; // { startY, startF, frac }
+      const persist = (f) => {
+        try { localStorage.setItem(INLINE_FRAC_KEY, f.toFixed(3)); } catch { /* not persisted */ }
+      };
+      handle.addEventListener("pointerdown", (ev) => {
+        ev.preventDefault();
+        const f = inlineFileFrac();
+        drag = { startY: ev.clientY, startF: f, frac: f };
+        handle.setPointerCapture(ev.pointerId);
+        document.body.style.cursor = "row-resize";
+        document.body.style.userSelect = "none";
+      });
+      handle.addEventListener("pointermove", (ev) => {
+        if (!drag) return;
+        // Moving UP (smaller clientY) = taller panel.
+        drag.frac = clampInlineFrac(drag.startF + (drag.startY - ev.clientY) / window.innerHeight);
+        applyInlineFrac(drag.frac);
+      });
+      const endDrag = () => {
+        if (!drag) return;
+        persist(drag.frac);
+        drag = null;
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+      };
+      handle.addEventListener("pointerup", endDrag);
+      handle.addEventListener("pointercancel", endDrag);
+      handle.addEventListener("dblclick", () => {
+        persist(INLINE_FRAC_DEFAULT);
+        applyInlineFrac(INLINE_FRAC_DEFAULT);
+      });
     }
 
     async function moveAgentToGroup(name, group) {
@@ -5531,6 +5904,10 @@
         if (ev.target === $("#preview-box")) closePreview();
       });
 
+      // Inline file dock (chat): close button + drag-resize handle.
+      $("#inline-file-close").addEventListener("click", closeInlineFile);
+      wireInlineFileResize();
+
       // Launch agent (lightbox).
       $("#launcher-open").addEventListener("click", () => {
         $("#launcher-box").hidden = false;
@@ -5581,6 +5958,86 @@
         chatInput.style.height = Math.min(chatInput.scrollHeight, 140) + "px";
       };
       chatInput.addEventListener("input", autogrow);
+
+      // ---- Attachments: drag-drop / paste files onto the composer ---------
+      // A dropped or pasted file is uploaded to the hub (POST /api/uploads),
+      // an inline "[📎 name]" token marks the spot until send, and on submit
+      // each token expands to the uploaded file's ABSOLUTE path so the agent
+      // can read it from disk.
+      const CHAT_PLACEHOLDER = chatInput.placeholder;
+      const attachments = new Map(); // "[📎 name]" -> absolute path on the hub
+      let uploading = 0;
+      const attachToken = (name) => `[📎 ${name}]`;
+
+      function setUploading(delta) {
+        uploading += delta;
+        const busy = uploading > 0;
+        $("#chat-send").disabled = busy;
+        chatInput.placeholder = busy ? "Uploading attachment…" : CHAT_PLACEHOLDER;
+      }
+
+      async function uploadFile(file, name) {
+        // Content-Type is ALWAYS octet-stream: fetch would otherwise infer the
+        // Blob's own type, and a dragged .json file would be eaten by the hub's
+        // global JSON body parser before the raw route could see it.
+        const res = await fetch(`/api/uploads?name=${encodeURIComponent(name)}`, {
+          method: "POST",
+          headers: { "content-type": "application/octet-stream" },
+          body: file,
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok || !body.ok) throw new Error(body.error || `HTTP ${res.status}`);
+        return body; // { ok, path, name }
+      }
+
+      async function attachFiles(files) {
+        const list = Array.from(files || []);
+        if (!list.length) return;
+        let pos = chatInput.selectionStart ?? chatInput.value.length;
+        for (const file of list) {
+          setUploading(+1);
+          try {
+            // A pasted screenshot arrives with a generic name — stamp it.
+            const stamp = new Date().toTimeString().slice(0, 8).replace(/:/g, "");
+            const isPastedImage = file.name === "" || file.name === "image.png";
+            const name = isPastedImage ? `pasted-${stamp}.png` : file.name;
+            const saved = await uploadFile(file, name);
+            const tok = attachToken(saved.name);
+            attachments.set(tok, saved.path);
+            const v = chatInput.value;
+            const at = Math.min(pos, v.length);
+            chatInput.value = v.slice(0, at) + tok + v.slice(at);
+            pos = at + tok.length;
+            chatInput.setSelectionRange(pos, pos);
+            chatInput.dispatchEvent(new Event("input")); // autogrow + menus
+          } catch (err) {
+            toast(`Attachment failed: ${err && err.message ? err.message : err}`, "warn");
+          } finally {
+            setUploading(-1);
+          }
+        }
+        chatInput.focus();
+      }
+
+      chatInput.addEventListener("paste", (ev) => {
+        if (ev.clipboardData && ev.clipboardData.files && ev.clipboardData.files.length) {
+          ev.preventDefault();
+          attachFiles(ev.clipboardData.files);
+        }
+      });
+      chatInput.addEventListener("dragover", (ev) => {
+        ev.preventDefault(); // required, or the browser navigates to the file
+        chatInput.classList.add("drag-over");
+      });
+      chatInput.addEventListener("dragleave", () => chatInput.classList.remove("drag-over"));
+      chatInput.addEventListener("drop", (ev) => {
+        ev.preventDefault();
+        chatInput.classList.remove("drag-over");
+        if (ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files.length) {
+          attachFiles(ev.dataTransfer.files);
+        }
+      });
+      // ---- end attachments -------------------------------------------------
 
       // ---- Slash-command autocomplete (composer) --------------------------
       const SLASH_DESCRIPTIONS = {
@@ -5650,6 +6107,95 @@
       chatInput.addEventListener("blur", () => closeSlashMenu());
       // ---- end slash-command autocomplete --------------------------------
 
+      // ---- "@" file-mention autocomplete (composer) ------------------------
+      // Same popover contract as the slash menu, different trigger: the token
+      // ENDING at the caret matches /@([\w./-]*)$/ — so an "@" works mid-message
+      // (the slash menu is start-anchored). Items come from the OPEN agent's
+      // cwd via GET /api/agents/:name/files, debounced ~150ms per keystroke;
+      // `seq` orphans stale responses so a slow fetch can never repaint over a
+      // newer one. Picking replaces the "@query" span (including the "@") with
+      // the relative path + a space.
+      const mentionMenuEl = $("#mention-menu");
+      const mentionState = { open: false, items: [], active: 0, start: -1, seq: 0 };
+      let mentionTimer = null;
+      function closeMentionMenu() {
+        mentionState.open = false;
+        mentionState.items = [];
+        mentionState.active = 0;
+        mentionState.start = -1;
+        mentionState.seq += 1; // any in-flight fetch is now stale
+        clearTimeout(mentionTimer);
+        mentionMenuEl.hidden = true;
+      }
+      function renderMentionMenu() {
+        mentionMenuEl.replaceChildren();
+        mentionState.items.forEach((f, i) => {
+          const row = el("div", "slash-item" + (i === mentionState.active ? " active" : ""));
+          row.appendChild(el("span", "slash-item__icon", f.dir ? "📁" : "📄"));
+          row.appendChild(el("span", "slash-item__name", f.path));
+          row.addEventListener("mousedown", (e) => { e.preventDefault(); pickMention(f); });
+          row.addEventListener("mouseenter", () => { if (mentionState.active !== i) { mentionState.active = i; renderMentionMenu(); } });
+          if (i === mentionState.active) requestAnimationFrame(() => row.scrollIntoView({ block: "nearest" }));
+          mentionMenuEl.appendChild(row);
+        });
+      }
+      function updateMentionMenu() {
+        if (slashState.open) return closeMentionMenu(); // one popover at a time
+        const name = screenState.name;
+        if (!name) return closeMentionMenu();
+        const before = chatInput.value.slice(0, chatInput.selectionStart);
+        const m = /@([\w./-]*)$/.exec(before);
+        if (!m) return closeMentionMenu();
+        mentionState.start = m.index;
+        clearTimeout(mentionTimer);
+        const seq = ++mentionState.seq;
+        mentionTimer = setTimeout(async () => {
+          try {
+            const res = await fetch(
+              `/api/agents/${encodeURIComponent(name)}/files?q=${encodeURIComponent(m[1])}&limit=50`,
+            );
+            const data = await res.json();
+            if (seq !== mentionState.seq) return; // a newer keystroke owns the menu
+            if (!res.ok || !data.ok || !data.files.length) return closeMentionMenu();
+            mentionState.items = data.files;
+            if (mentionState.active >= data.files.length) mentionState.active = 0;
+            mentionState.open = true;
+            mentionMenuEl.hidden = false;
+            renderMentionMenu();
+          } catch {
+            if (seq === mentionState.seq) closeMentionMenu();
+          }
+        }, 150);
+      }
+      function pickMention(f) {
+        // Re-derive the "@query" span at pick time: the user may have typed
+        // between the fetch and the click, and the stored start could be stale.
+        const caret = chatInput.selectionStart;
+        const m = /@([\w./-]*)$/.exec(chatInput.value.slice(0, caret));
+        const start = m ? m.index : mentionState.start;
+        if (start < 0) return closeMentionMenu();
+        const insert = f.path + " ";
+        chatInput.value = chatInput.value.slice(0, start) + insert + chatInput.value.slice(caret);
+        closeMentionMenu();
+        autogrow();
+        chatInput.focus();
+        const pos = start + insert.length;
+        chatInput.setSelectionRange(pos, pos);
+      }
+      function mentionKeydown(ev) {
+        if (!mentionState.open) return false;
+        const n = mentionState.items.length;
+        if (ev.key === "ArrowDown") { ev.preventDefault(); mentionState.active = (mentionState.active + 1) % n; renderMentionMenu(); return true; }
+        if (ev.key === "ArrowUp") { ev.preventDefault(); mentionState.active = (mentionState.active - 1 + n) % n; renderMentionMenu(); return true; }
+        if (ev.key === "Enter" || ev.key === "Tab") { ev.preventDefault(); pickMention(mentionState.items[mentionState.active]); return true; }
+        if (ev.key === "Escape") { ev.preventDefault(); closeMentionMenu(); return true; }
+        return false;
+      }
+      chatInput.addEventListener("input", updateMentionMenu);
+      chatInput.addEventListener("click", updateMentionMenu); // caret moved by mouse
+      chatInput.addEventListener("blur", () => closeMentionMenu());
+      // ---- end "@" file-mention autocomplete -------------------------------
+
       // Shell-style history of the operator's own sends (↑ recalls, ↓ steps back).
       const sentHistory = [];
       let histIdx = -1; // -1 = not navigating
@@ -5667,6 +6213,7 @@
       chatInput.addEventListener("keydown", (ev) => {
         // The slash menu, when open, owns Enter/Tab/arrows/Esc — before the rest.
         if (slashKeydown(ev)) return;
+        if (mentionKeydown(ev)) return;
         // Enter sends; Shift+Enter is a newline.
         if (ev.key === "Enter" && !ev.shiftKey) {
           ev.preventDefault();
@@ -5695,7 +6242,12 @@
       $("#chat-composer").addEventListener("submit", async (ev) => {
         ev.preventDefault();
         const name = screenState.name;
-        const text = chatInput.value.trim();
+        if (uploading > 0) return; // attachments still in flight (send is disabled too)
+        // Expand each [📎 name] token to the uploaded file's absolute path —
+        // this is what actually reaches the agent (and the echo/history).
+        let raw = chatInput.value;
+        for (const [tok, p] of attachments) raw = raw.split(tok).join(p);
+        const text = raw.trim();
         if (!name || text === "") return;
         // A slash command drives the CLI's own interactive UI (the autocomplete
         // menu, the model picker, /clear…) — and that UI lives on the terminal
@@ -5714,6 +6266,7 @@
         try {
           await sendChatMessage(name, text);
           chatInput.value = "";
+          attachments.clear();
           autogrow();
           if (isSlash) {
             toast("Slash commands run in the terminal — switched you there.");

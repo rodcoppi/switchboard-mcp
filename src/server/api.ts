@@ -329,6 +329,19 @@ export interface ApiOptions {
 const FS_DIRS_CAP = 500;
 
 /**
+ * GET /api/agents/:name/files bounds. The walk is breadth-first and triple-
+ * bounded (depth, vendor dirs, entries visited) so a pathological tree —
+ * a node_modules that slipped past the skip list, a runaway generated dir —
+ * stays cheap. No caching: a walk this bounded re-runs per keystroke fine.
+ */
+const AGENT_FILES_SKIP = new Set([
+  "node_modules", ".git", "dist", "build", ".next", "target", "__pycache__",
+]);
+const AGENT_FILES_MAX_DEPTH = 5;
+const AGENT_FILES_CAP = 200; // hard ceiling on ?limit
+const AGENT_FILES_SCAN_CAP = 20_000; // entries visited before the walk bails
+
+/**
  * Best-effort "this folder has a previous Claude Code conversation" probe for
  * the dir browser badge. Claude Code stores each project's sessions under
  * `<claudeProjectsDir>/<encoded>` where encoded = the absolute path with `/`,
@@ -826,6 +839,64 @@ export function createApiRouter(options: ApiOptions): express.Router {
     });
   });
 
+  // POST /api/uploads?name=<filename> — RAW binary body (the dashboard's
+  // drag-drop / pasted-screenshot attachments). The bytes land in
+  // <baseDir>/uploads/<ulid>-<name> and the ABSOLUTE path comes back: the
+  // composer swaps its inline [📎 name] token for that path on send, so the
+  // agent reads the file from disk — the file itself never rides tmux.
+  //
+  // Parser interplay (why this works with the global express.json in hub.ts):
+  // express.json only touches bodies whose Content-Type is application/json;
+  // the dashboard sends application/octet-stream, so the stream reaches the
+  // route-level express.raw untouched. If a client DOES label the body
+  // application/json, the global parser consumes it first and req.body is an
+  // object — the Buffer.isBuffer guard below turns that into an instructive
+  // 400 instead of writing garbage.
+  router.post(
+    "/api/uploads",
+    express.raw({ type: "*/*", limit: "25mb" }),
+    (req, res) => {
+      // basename() drops any path the client sent; the charset strip keeps the
+      // name shell- and filesystem-safe; leading dots go too (no hidden files,
+      // and ".." collapses to "" → 400). ulid() makes the final name unique.
+      const rawName = typeof req.query.name === "string" ? req.query.name : "";
+      const name = path
+        .basename(rawName)
+        .replace(/[^a-zA-Z0-9._-]+/g, "_")
+        .replace(/^[._]+/, "")
+        .slice(0, 120);
+      if (name === "") {
+        res.status(400).json({
+          ok: false,
+          error: `Missing or invalid "name": pass the filename as ?name=<file.ext>.`,
+        });
+        return;
+      }
+      if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+        res.status(400).json({
+          ok: false,
+          error:
+            `Empty or non-binary upload: send the file's raw bytes as the request ` +
+            `body with Content-Type application/octet-stream.`,
+        });
+        return;
+      }
+      try {
+        const uploadsDir = path.join(store.baseDir, "uploads");
+        fs.mkdirSync(uploadsDir, { recursive: true });
+        const filePath = path.join(uploadsDir, `${ulid()}-${name}`);
+        fs.writeFileSync(filePath, req.body);
+        log.info(`[api] upload stored: ${filePath} (${req.body.length} bytes).`);
+        res.status(201).json({ ok: true, path: filePath, name });
+      } catch (err) {
+        res.status(500).json({
+          ok: false,
+          error: `Could not store the upload: ${(err as Error).message}.`,
+        });
+      }
+    },
+  );
+
   // POST /api/agents/:name/mute — body {muted: boolean}. Messages keep being
   // recorded; only nudges stop (Phase 3 dispatcher reads the flag).
   router.post("/api/agents/:name/mute", (req, res) => {
@@ -912,6 +983,92 @@ export function createApiRouter(options: ApiOptions): express.Router {
     bus.emit({ type: "agent_updated", payload: toPublicAgent(updated) });
     log.info(`[api] agent ${name} moved to group ${group}.`);
     res.json({ ok: true, agent: toPublicAgent(updated) });
+  });
+
+  // GET /api/agents/:name/files?q=<query>&limit=50 — file autocomplete for the
+  // dashboard composer's "@" file mentions. Answers files AND directories under
+  // the AGENT's cwd whose RELATIVE path contains the query (case-insensitive);
+  // directories carry a trailing "/". Breadth-first walk: each depth level is
+  // sorted alphabetically and appended before descending, so the response is
+  // ordered shallower-first then alphabetical WITHOUT a global sort, and the
+  // limit fills with the shallow paths first. Symlinks are listed but never
+  // descended into (no cycles). Localhost trust model: this exposes strictly
+  // less than /api/files/preview, which already reads file CONTENTS.
+  router.get("/api/agents/:name/files", (req, res) => {
+    const agent = store.getAgent(String(req.params.name));
+    if (!agent) {
+      res.status(404).json({ ok: false, error: `Unknown agent: "${req.params.name}".` });
+      return;
+    }
+    if (!agent.cwd || agent.cwd.trim() === "") {
+      res.status(409).json({
+        ok: false,
+        error: `No working directory recorded for "${agent.name}", so its files cannot be listed.`,
+      });
+      return;
+    }
+    const q = (typeof req.query.q === "string" ? req.query.q : "").toLowerCase();
+    let limit = 50;
+    if (req.query.limit !== undefined) {
+      limit = Number(req.query.limit);
+      if (!Number.isInteger(limit) || limit <= 0) {
+        res.status(400).json({
+          ok: false,
+          error: `Invalid "limit" parameter: ${String(req.query.limit)} (expected a positive integer).`,
+        });
+        return;
+      }
+    }
+    limit = Math.min(limit, AGENT_FILES_CAP);
+
+    const files: { path: string; dir: boolean }[] = [];
+    let scanned = 0;
+    // Relative dir paths of ONE depth level at a time ("" = the cwd itself).
+    let level: string[] = [""];
+    for (
+      let depth = 0;
+      depth < AGENT_FILES_MAX_DEPTH &&
+      level.length > 0 &&
+      files.length < limit &&
+      scanned < AGENT_FILES_SCAN_CAP;
+      depth++
+    ) {
+      const next: string[] = [];
+      const matches: { path: string; dir: boolean }[] = [];
+      for (const relDir of level) {
+        let entries: fs.Dirent[];
+        try {
+          entries = fs.readdirSync(path.join(agent.cwd, relDir), { withFileTypes: true });
+        } catch {
+          continue; // unreadable/vanished dir — skip it, never error
+        }
+        for (const entry of entries) {
+          if (++scanned > AGENT_FILES_SCAN_CAP) break;
+          // isDirectory() is false for symlinks, so a symlinked dir is listed
+          // as a plain entry and never descended into — the walk cannot cycle.
+          const isDir = entry.isDirectory();
+          if (isDir && AGENT_FILES_SKIP.has(entry.name)) continue;
+          if (!isDir && !entry.isFile() && !entry.isSymbolicLink()) continue; // sockets, FIFOs
+          const rel = relDir === "" ? entry.name : `${relDir}/${entry.name}`;
+          if (isDir) next.push(rel);
+          if (q === "" || rel.toLowerCase().includes(q)) {
+            matches.push({ path: isDir ? rel + "/" : rel, dir: isDir });
+          }
+        }
+      }
+      matches.sort((a, b) => {
+        const la = a.path.toLowerCase();
+        const lb = b.path.toLowerCase();
+        if (la !== lb) return la < lb ? -1 : 1;
+        return a.path < b.path ? -1 : a.path > b.path ? 1 : 0;
+      });
+      for (const m of matches) {
+        if (files.length >= limit) break;
+        files.push(m);
+      }
+      level = next;
+    }
+    res.json({ ok: true, files });
   });
 
   // GET /api/agents/:name/conversation — SSE. The agent's conversation as a
