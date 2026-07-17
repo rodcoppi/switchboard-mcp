@@ -467,6 +467,66 @@
       gap: 9px;
       padding: 12px 16px 16px;
     }
+    /* Colour picker popover — a curated swatch grid + custom + clear. */
+    .color-pop {
+      position: fixed;
+      z-index: 70;
+      padding: 10px;
+      background: var(--bg-elev-2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      box-shadow: 0 14px 34px rgba(0, 0, 0, 0.55);
+    }
+    .color-grid {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 7px;
+    }
+    .color-sw {
+      width: 22px;
+      height: 22px;
+      border-radius: 6px;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      cursor: pointer;
+      padding: 0;
+      transition: transform 0.1s var(--ease), box-shadow 0.1s var(--ease);
+    }
+    .color-sw:hover { transform: scale(1.14); }
+    .color-sw.on { box-shadow: 0 0 0 2px var(--bg-elev-2), 0 0 0 3px var(--text); }
+    .color-pop-foot {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-top: 9px;
+      padding-top: 9px;
+      border-top: 1px solid var(--border-soft);
+    }
+    .color-custom {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      font-family: var(--mono);
+      font-size: var(--fs-xs);
+      color: var(--text-dim);
+      cursor: pointer;
+    }
+    .color-custom-dot {
+      width: 16px; height: 16px; border-radius: 5px;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+    }
+    .color-custom input[type="color"] { width: 0; height: 0; opacity: 0; padding: 0; border: none; }
+    .color-clear {
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-faint);
+      font-family: var(--mono);
+      font-size: var(--fs-eyebrow);
+      padding: 3px 9px;
+      cursor: pointer;
+    }
+    .color-clear:hover { color: var(--danger); border-color: var(--danger); }
     .info-card-body {
       padding: 16px;
       font-family: var(--sans);
@@ -2736,6 +2796,78 @@
       ok.focus();
     }
 
+    // A proper colour picker: a small popover of curated swatches (click a
+    // swatch = pick, no drag-to-close, no native OS dialog) plus a "custom…"
+    // escape hatch and, when relevant, a "clear". `anchor` positions it; the
+    // pick fires onPick(hex|null). Replaces the native <input type=color>, whose
+    // every drag-tick applied a colour and whose first click closed it.
+    const COLOR_SWATCHES = [
+      "#e0a326", "#f2c14e", "#e0623c", "#e0504e", "#d1509a", "#a371f7",
+      "#6a8cff", "#4a9eff", "#2bb8a3", "#3fb950", "#8bc34a", "#9aa0bd",
+    ];
+    function openColorPicker(anchor, current, onPick, opts = {}) {
+      document.getElementById("color-pop")?.remove();
+      const pop = el("div", "color-pop");
+      pop.id = "color-pop";
+      const grid = el("div", "color-grid");
+      for (const c of COLOR_SWATCHES) {
+        const sw = el("button", "color-sw" + (current && current.toLowerCase() === c ? " on" : ""));
+        sw.type = "button";
+        sw.style.background = c;
+        sw.title = c;
+        sw.addEventListener("click", (e) => {
+          e.stopPropagation();
+          pop.remove();
+          onPick(c);
+        });
+        grid.appendChild(sw);
+      }
+      pop.appendChild(grid);
+      const foot = el("div", "color-pop-foot");
+      // Custom hex via a native input, but it only applies on CHANGE (commit),
+      // not on every drag-tick — so you can actually pick.
+      const customWrap = el("label", "color-custom");
+      const dot = el("span", "color-custom-dot");
+      dot.style.background = current || "#e0a326";
+      const custom = el("input");
+      custom.type = "color";
+      custom.value = current || "#e0a326";
+      custom.addEventListener("input", (e) => (dot.style.background = e.target.value));
+      custom.addEventListener("change", (e) => {
+        pop.remove();
+        onPick(e.target.value);
+      });
+      custom.addEventListener("click", (e) => e.stopPropagation());
+      customWrap.append(dot, document.createTextNode("custom"), custom);
+      foot.appendChild(customWrap);
+      if (opts.clearable) {
+        const clr = el("button", "color-clear", "clear");
+        clr.type = "button";
+        clr.addEventListener("click", (e) => {
+          e.stopPropagation();
+          pop.remove();
+          onPick(null);
+        });
+        foot.appendChild(clr);
+      }
+      pop.appendChild(foot);
+      document.body.appendChild(pop);
+      // Position under the anchor, kept on-screen.
+      const r = anchor.getBoundingClientRect();
+      const pr = pop.getBoundingClientRect();
+      let left = r.left;
+      if (left + pr.width > window.innerWidth - 8) left = window.innerWidth - pr.width - 8;
+      pop.style.left = `${Math.max(8, left)}px`;
+      pop.style.top = `${Math.min(r.bottom + 6, window.innerHeight - pr.height - 8)}px`;
+      const onDoc = (e) => {
+        if (!pop.contains(e.target)) {
+          pop.remove();
+          document.removeEventListener("mousedown", onDoc);
+        }
+      };
+      setTimeout(() => document.addEventListener("mousedown", onDoc), 0);
+    }
+
     // "You named a leader — tell the group?" (the operator's optional signal).
     function openLeaderAnnouncePrompt(group, leaderName) {
       const peers = [...state.agents.values()].filter(
@@ -3438,17 +3570,10 @@
       if (group !== DEFAULT_GROUP) {
         const swatch = el("span", "group-swatch");
         swatch.title = `Recolour the ${group} group`;
-        const picker = el("input");
-        picker.type = "color";
-        picker.value = groupColor(group);
-        picker.style.cssText = "position:absolute;width:0;height:0;opacity:0;pointer-events:none;";
-        picker.addEventListener("input", (e) => setGroupColor(group, e.target.value));
-        picker.addEventListener("click", (e) => e.stopPropagation());
         swatch.addEventListener("click", (e) => {
           e.stopPropagation(); // do not fold the group
-          picker.click();
+          openColorPicker(swatch, groupColor(group), (c) => c && setGroupColor(group, c));
         });
-        swatch.appendChild(picker);
         head.appendChild(swatch);
       }
       if (unread > 0) {
@@ -3667,33 +3792,26 @@
           ),
         );
       }
-      // Recolour this chat's cable — a native picker, no blocking dialog. A
-      // hidden colour input lives on the item; the item click opens it.
-      const colourItem = menuItem(
-        "colour-btn",
-        chatColor(agent.name) ? "recolour…" : "colour…",
-        `Give "${agent.name}" a cable colour in the rail`,
-        () => colourPicker.click(),
+      // Recolour this chat's cable — a swatch popover (pick a colour, or custom,
+      // or clear). No native OS dialog; a click picks, nothing auto-applies.
+      menu.appendChild(
+        menuItem(
+          "colour-btn",
+          chatColor(agent.name) ? "recolour…" : "colour…",
+          `Give "${agent.name}" a cable colour in the rail`,
+          (item) => {
+            openColorPicker(
+              item,
+              chatColor(agent.name),
+              (c) => {
+                closeMenus();
+                setChatColor(agent.name, c); // c === null clears
+              },
+              { clearable: !!chatColor(agent.name) },
+            );
+          },
+        ),
       );
-      const colourPicker = el("input");
-      colourPicker.type = "color";
-      colourPicker.value = chatColor(agent.name) || "#e0a326";
-      colourPicker.style.cssText = "position:absolute;width:0;height:0;opacity:0;pointer-events:none;";
-      colourPicker.addEventListener("input", (e) => {
-        closeMenus();
-        setChatColor(agent.name, e.target.value);
-      });
-      colourPicker.addEventListener("click", (e) => e.stopPropagation());
-      colourItem.appendChild(colourPicker);
-      menu.appendChild(colourItem);
-      if (chatColor(agent.name)) {
-        menu.appendChild(
-          menuItem("colour-reset-btn", "clear colour", `Remove "${agent.name}"'s cable colour`, () => {
-            closeMenus();
-            setChatColor(agent.name, null);
-          }),
-        );
-      }
       menu.appendChild(
         menuItem(
           `mute-toggle${agent.muted ? " muted" : ""}`,
