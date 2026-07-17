@@ -67,6 +67,12 @@
       --accent-wash:   rgba(245, 166, 35, 0.13);
       --accent-line:   rgba(245, 166, 35, 0.42);
 
+      /* --- selection: a cool "patched-in" cyan, deliberately NOT amber so the
+             selected card never reads like the gold leader card ------------- */
+      --selected:      #45b8e0;
+      --selected-line: rgba(69, 184, 224, 0.45);
+      --selected-wash: rgba(69, 184, 224, 0.14);
+
       /* --- status LEDs (glowing lamps, not flat dots) -------------------- */
       --online:      #3fb950;
       --offline:     #5a6673;
@@ -447,25 +453,26 @@
        so the chat is identifiable in the rail at a glance. */
     .agent-card.tinted::before,
     .agent-card.tinted:hover::before { background: var(--chat-color); }
-    /* Selected: the one you're looking at. It reads as "patched in" — an amber
-       tint that fades left→right, a full amber border, a soft lift, and the
-       cable-end swelling into a solid full-height bar down the left edge. */
+    /* Selected: the one you're looking at. It reads as "patched in" — a cool
+       cyan tint that fades left→right, a full cyan border, a soft lift, and the
+       cable-end swelling into a solid full-height bar down the left edge. Cyan,
+       NOT amber, so it never blurs into the gold leader card. */
     .agent-card.active {
-      border-color: var(--accent);
+      border-color: var(--selected);
       background:
-        linear-gradient(90deg, var(--accent-wash), color-mix(in srgb, var(--accent-wash) 32%, transparent) 58%, transparent),
+        linear-gradient(90deg, var(--selected-wash), color-mix(in srgb, var(--selected-wash) 32%, transparent) 58%, transparent),
         var(--bg-elev);
-      box-shadow: 0 0 0 1px var(--accent-line), 0 6px 18px -10px rgba(245, 166, 35, 0.55);
+      box-shadow: 0 0 0 1px var(--selected-line), 0 6px 18px -10px rgba(69, 184, 224, 0.5);
     }
     .agent-card.active::before {
       top: 3px; bottom: 3px;
       width: 3px;
       border-radius: 0 3px 3px 0;
-      background: var(--accent);
-      box-shadow: 0 0 10px 1px rgba(245, 166, 35, 0.65);
+      background: var(--selected);
+      box-shadow: 0 0 10px 1px rgba(69, 184, 224, 0.6);
     }
     /* The selected card wins its left bar even when the chat is recoloured. */
-    .agent-card.active.tinted::before { background: var(--accent); }
+    .agent-card.active.tinted::before { background: var(--selected); }
     .agent-card.offline { opacity: 0.66; }
 
     /* the LAMP: a glowing phosphor jack indicator, not a flat circle. Now inline
@@ -577,6 +584,17 @@
     }
     .agent-card.leader::before { background: #f2c14e; box-shadow: 0 0 8px rgba(217, 165, 33, 0.7); }
     .agent-card.leader:hover { border-color: #f2c14e; }
+    /* A selected leader shows the SELECTION cyan (its crown still marks it as
+       leader), so "which am I looking at" wins over the gold rim. These beat the
+       gold rules above on specificity, regardless of source order. */
+    .agent-card.leader.active {
+      border-color: var(--selected);
+      background:
+        linear-gradient(90deg, var(--selected-wash), color-mix(in srgb, var(--selected-wash) 32%, transparent) 58%, transparent),
+        var(--bg-elev);
+      box-shadow: 0 0 0 1px var(--selected-line), 0 6px 18px -10px rgba(69, 184, 224, 0.5);
+    }
+    .agent-card.leader.active::before { background: var(--selected); box-shadow: 0 0 10px 1px rgba(69, 184, 224, 0.6); }
     .info-card {
       width: min(460px, 92vw);
       background: var(--bg-elev);
