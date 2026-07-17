@@ -402,15 +402,6 @@
       color: var(--text-dim);
       font-size: var(--fs-xs);
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-      transition: color 0.12s var(--ease);
-      cursor: help;
-    }
-    /* Hover the card and the (usually truncated) description opens up in full —
-       the one-liner was unreadable when the role was a paragraph. */
-    .agent-card:hover .agent-role {
-      overflow: visible;
-      white-space: normal;
-      color: var(--text);
     }
     .agent-badges {
       grid-area: badges;
@@ -440,6 +431,37 @@
        metrics as .mcp-icon so it drops into the same badge slot. Working glows
        and breathes; idle is quiet. */
     .leader-badge { font-size: 12px; line-height: 1; cursor: default; }
+    .info-card {
+      width: min(460px, 92vw);
+      background: var(--bg-elev);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+      overflow: hidden;
+    }
+    .info-card-head {
+      display: flex; align-items: center; gap: 10px;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    .info-card-title {
+      flex: 1 1 auto;
+      font-family: var(--mono);
+      font-weight: 600;
+      color: var(--accent);
+    }
+    .info-card-head .dirpicker-close { margin-left: 0; }
+    .info-card-body {
+      padding: 16px;
+      font-family: var(--sans);
+      font-size: var(--fs-body);
+      line-height: 1.6;
+      color: var(--text);
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      max-height: 60vh;
+      overflow-y: auto;
+    }
     .toast-action {
       margin-left: 10px;
       padding: 2px 9px;
@@ -2645,6 +2667,27 @@
       setTimeout(kill, ttl);
     }
 
+    // A small centred card for reading a bit of text in full (the agent's
+    // description). Backdrop closes; Esc closes. No blocking browser dialog.
+    function showInfoDialog(title, bodyText) {
+      document.getElementById("info-dialog")?.remove();
+      const bd = el("div", "palette-backdrop");
+      bd.id = "info-dialog";
+      const card = el("div", "info-card");
+      const head = el("div", "info-card-head");
+      head.appendChild(el("span", "info-card-title", title));
+      const close = el("button", "dirpicker-close", "✕");
+      close.type = "button";
+      close.addEventListener("click", () => bd.remove());
+      head.appendChild(close);
+      card.append(head, el("div", "info-card-body", bodyText || "(no description)"));
+      bd.appendChild(card);
+      bd.addEventListener("click", (e) => { if (e.target === bd) bd.remove(); });
+      const onEsc = (e) => { if (e.key === "Escape") { bd.remove(); document.removeEventListener("keydown", onEsc); } };
+      document.addEventListener("keydown", onEsc);
+      document.body.appendChild(bd);
+    }
+
     // "You named a leader — tell the group?" (the operator's optional signal).
     function openLeaderAnnouncePrompt(group, leaderName) {
       toastAction(
@@ -2737,15 +2780,29 @@
       return d.toLocaleString(undefined, { weekday: "short", hour: "2-digit", minute: "2-digit" });
     }
     let usageLimits = [];
+    let usageUpdatedAt = null; // epoch ms of the last SUCCESSFUL (non-empty) fetch
     async function refreshUsage() {
       try {
         const r = await fetch("/api/usage");
         const body = r.ok ? await r.json() : null;
-        usageLimits = Array.isArray(body && body.limits) ? body.limits : [];
+        const next = Array.isArray(body && body.limits) ? body.limits : [];
+        // A transient hiccup (offline, OAuth blip, empty cache) returns [] —
+        // keep the last good bars instead of blanking the card. Only a real,
+        // non-empty read replaces them.
+        if (next.length) {
+          usageLimits = next;
+          usageUpdatedAt = Date.now();
+        }
       } catch {
         /* keep the last good value */
       }
       renderUsage();
+    }
+    function fmtAgo(ms) {
+      const s = Math.round((Date.now() - ms) / 1000);
+      if (s < 60) return `${s}s ago`;
+      if (s < 3600) return `${Math.round(s / 60)}m ago`;
+      return new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     }
     function renderUsage() {
       const card = $("#usage-card");
@@ -2753,6 +2810,8 @@
         card.hidden = true;
         return;
       }
+      const updated = $("#usage-updated");
+      if (updated) updated.textContent = usageUpdatedAt ? `updated ${fmtAgo(usageUpdatedAt)}` : "";
       const now = Date.now();
       const order = { session: 0, weekly: 1 };
       const sorted = [...usageLimits].sort(
@@ -3491,7 +3550,7 @@
       const MENU_ICONS = {
         "nudge-btn": "📣", "group-btn": "🚪", "codex-btn": "◆", "colour-btn": "🎨",
         "colour-reset-btn": "⭕", "mute-toggle": "🔇", "rename-btn": "✏️", "remove-btn": "🗑",
-        "display-btn": "🏷", "leader-btn": "👑", "stop-btn": "⏹",
+        "display-btn": "🏷", "leader-btn": "👑", "stop-btn": "⏹", "desc-btn": "📄",
       };
       function menuItem(cls, label, title, onClick) {
         const item = el("button", `agent-menu-item ${cls}`);
@@ -3617,6 +3676,18 @@
           );
         }
       }
+      // Read the full description (the card truncates it to one line).
+      menu.appendChild(
+        menuItem(
+          "desc-btn",
+          "description…",
+          `See the full description of "${agent.name}"`,
+          () => {
+            closeMenus();
+            showInfoDialog(`${displayOf(agent)} — description`, agent.role || "");
+          },
+        ),
+      );
       // Nickname: the free display name (emoji ok) — works on a RUNNING agent,
       // because nothing in the protocol reads it. The name cell becomes the
       // editor, like rename, but the kebab id is untouched.
@@ -6767,6 +6838,9 @@
       // cadence). Pace recolours as the window elapses.
       refreshUsage();
       setInterval(refreshUsage, 60000);
+      // A lighter tick just re-renders (the "updated Xs ago" label and the pace
+      // colour, which shift as the window elapses) between the 60s fetches.
+      setInterval(() => { if (usageLimits.length) renderUsage(); }, 10000);
       window.addEventListener("focus", refreshUsage);
     }
 

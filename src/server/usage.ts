@@ -64,9 +64,7 @@ export function createUsageProbe(options: UsageProbeOptions): UsageProbe {
       headers: { Authorization: `Bearer ${token}`, "anthropic-beta": "oauth-2025-04-20" },
     });
     if (!res.ok) return [];
-    const body = (await res.json()) as { limits?: unknown };
-    if (!Array.isArray(body.limits)) return [];
-    return body.limits.flatMap((entry) => normalizeLimit(entry));
+    return parseUsageBody(await res.json());
   }
 
   return {
@@ -78,10 +76,50 @@ export function createUsageProbe(options: UsageProbeOptions): UsageProbe {
       } catch (err) {
         log.warn(`[usage] fetch failed: ${err instanceof Error ? err.message : err}`);
       }
-      cache = { at: Date.now(), limits };
-      return limits;
+      // A transient failure (no token yet, network blip, non-200) yields [] —
+      // keep the LAST GOOD bars rather than blanking them, so the dashboard's
+      // card doesn't flicker away. Only a real, non-empty read replaces them;
+      // the timestamp still advances so the cache TTL keeps ticking.
+      if (limits.length > 0 || !cache) {
+        cache = { at: Date.now(), limits };
+      } else {
+        cache = { at: Date.now(), limits: cache.limits };
+      }
+      return cache.limits;
     },
   };
+}
+
+/**
+ * Turns the /usage response into bars, tolerating BOTH shapes Anthropic has
+ * served:
+ *   OLD: { limits: [ { kind, group, percent, resets_at, scope } ] }
+ *   NEW: { five_hour: { utilization, resets_at }, seven_day: {…}, … }
+ * plus the rate-limit shape { error: {…} } → [].
+ */
+export function parseUsageBody(body: unknown): UsageLimit[] {
+  if (typeof body !== "object" || body === null) return [];
+  const b = body as Record<string, unknown>;
+  if (Array.isArray(b.limits)) return b.limits.flatMap((e) => normalizeLimit(e));
+  // New object format: each top-level entry that has a numeric utilisation and
+  // a reset time is a window. The key names it (five_hour → the 5h session bar,
+  // seven_day → the weekly bar); anything else is grouped by a "day/week" hint.
+  const out: UsageLimit[] = [];
+  for (const [key, val] of Object.entries(b)) {
+    if (typeof val !== "object" || val === null) continue;
+    const w = val as { utilization?: unknown; resets_at?: unknown };
+    if (typeof w.utilization !== "number" || typeof w.resets_at !== "string") continue;
+    const weekly = /day|week|7/i.test(key);
+    out.push({
+      kind: key === "five_hour" ? "session" : key === "seven_day" ? "weekly" : key,
+      group: weekly ? "weekly" : "session",
+      label: key === "five_hour" ? "session · 5h" : key === "seven_day" ? "weekly" : key.replace(/_/g, " "),
+      percent: Math.round(w.utilization),
+      severity: "normal",
+      resetsAt: w.resets_at,
+    });
+  }
+  return out;
 }
 
 /** Validates and normalises one raw API bar; [] when it is malformed. */

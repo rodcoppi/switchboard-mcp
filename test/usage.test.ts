@@ -5,7 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { createUsageProbe, normalizeLimit } from "../src/server/usage.js";
+import { createUsageProbe, normalizeLimit, parseUsageBody } from "../src/server/usage.js";
 
 const silentLog = { debug() {}, info() {}, warn() {}, error() {} } as never;
 
@@ -57,6 +57,30 @@ describe("normalizeLimit", () => {
     const [l] = normalizeLimit({ kind: "session", group: 3, percent: 10, resets_at: "z" });
     expect(l.label).toBeNull();
     expect(l.group).toBe("unknown");
+  });
+});
+
+describe("parseUsageBody", () => {
+  it("parses the NEW object format (five_hour / seven_day → utilization)", () => {
+    const bars = parseUsageBody({
+      five_hour: { utilization: 63, resets_at: "2026-07-17T07:59:59Z", limit_dollars: null },
+      seven_day: { utilization: 36, resets_at: "2026-07-19T15:59:59Z" },
+    });
+    expect(bars).toEqual([
+      { kind: "session", group: "session", label: "session · 5h", percent: 63, severity: "normal", resetsAt: "2026-07-17T07:59:59Z" },
+      { kind: "weekly", group: "weekly", label: "weekly", percent: 36, severity: "normal", resetsAt: "2026-07-19T15:59:59Z" },
+    ]);
+  });
+
+  it("still parses the OLD array format", () => {
+    const bars = parseUsageBody({ limits: [{ kind: "session", group: "session", percent: 12, resets_at: "t" }] });
+    expect(bars).toHaveLength(1);
+    expect(bars[0].percent).toBe(12);
+  });
+
+  it("returns [] for the rate-limit error shape", () => {
+    expect(parseUsageBody({ error: { type: "rate_limit_error", message: "Rate limited." } })).toEqual([]);
+    expect(parseUsageBody(null)).toEqual([]);
   });
 });
 
