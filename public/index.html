@@ -430,6 +430,19 @@
     /* Idle vs working — the thing the operator actually watches for. Same chip
        metrics as .mcp-icon so it drops into the same badge slot. Working glows
        and breathes; idle is quiet. */
+    .leader-badge { font-size: 12px; line-height: 1; cursor: default; }
+    .toast-action {
+      margin-left: 10px;
+      padding: 2px 9px;
+      background: transparent;
+      border: 1px solid var(--accent-line);
+      border-radius: 5px;
+      color: var(--accent);
+      font-family: var(--mono);
+      font-size: var(--fs-eyebrow);
+      cursor: pointer;
+    }
+    .toast-action:hover { background: var(--accent-wash); }
     .activity-chip {
       font-family: var(--mono);
       font-size: 9px;
@@ -2598,6 +2611,37 @@
       }, ttl);
     }
 
+    // A toast with an action button — for optional, non-blocking follow-ups
+    // (e.g. "announce the leader to the group?"). Auto-dismisses if ignored.
+    function toastAction(message, actionLabel, onAction, ttl = 8000) {
+      const box = $("#toasts");
+      const t = el("div", "toast ok");
+      t.appendChild(el("span", null, message));
+      const btn = el("button", "toast-action", actionLabel);
+      btn.type = "button";
+      const kill = () => {
+        t.style.opacity = "0";
+        t.style.transition = "opacity 0.25s";
+        setTimeout(() => t.remove(), 260);
+      };
+      btn.addEventListener("click", () => {
+        onAction();
+        kill();
+      });
+      t.appendChild(btn);
+      box.appendChild(t);
+      setTimeout(kill, ttl);
+    }
+
+    // "You named a leader — tell the group?" (the operator's optional signal).
+    function openLeaderAnnouncePrompt(group, leaderName) {
+      toastAction(
+        `${displayOf(leaderName)} is now the leader (visual).`,
+        "announce to the group",
+        () => announceLeader(group, leaderName),
+      );
+    }
+
     // --- agent state merge ------------------------------------------------
     // GET /api/agents carries unreadCount; the SSE agent_updated payload is a
     // PublicAgent and does NOT — so we PRESERVE the previous unreadCount when a
@@ -2848,6 +2892,45 @@
       if (v === "" || v === group) localStorage.removeItem("sb.groupLabel." + group);
       else localStorage.setItem("sb.groupLabel." + group, v);
       renderAgents();
+    }
+
+    // --- Group "leader" (purely VISUAL; the operator picks it) -------------
+    // A badge that marks who the operator has named as the group's lead. The
+    // hub knows nothing about it — no permission changes, no protocol effect;
+    // it is a viewer preference (localStorage), and its only side effect is the
+    // OPTIONAL announcement message the operator can send when setting it.
+    function groupLeaderOf(group) {
+      return localStorage.getItem("sb.groupLeader." + group) || null;
+    }
+    function setGroupLeader(group, name) {
+      if (name) localStorage.setItem("sb.groupLeader." + group, name);
+      else localStorage.removeItem("sb.groupLeader." + group);
+      renderAgents();
+    }
+    // Tells the OTHER online members of the group that a leader was named, from
+    // the operator's voice — same guarded pane path everything else uses.
+    async function announceLeader(group, leaderName) {
+      const peers = [...state.agents.values()].filter(
+        (a) => groupOf(a) === group && a.name !== leaderName && a.status === "online",
+      );
+      if (peers.length === 0) {
+        toast("No other online agent in this group to notify.");
+        return;
+      }
+      const msg =
+        `[operator] The user has set ${displayOf(leaderName)} as the LEADER of this group. ` +
+        `Their instructions carry the same weight as the user's — coordinate under their direction. ` +
+        `(This is a coordination signal from the operator.)`;
+      let sent = 0;
+      for (const p of peers) {
+        try {
+          await sendChatMessage(p.name, msg);
+          sent++;
+        } catch {
+          /* one failed send should not stop the rest */
+        }
+      }
+      toast(`Leader announced to ${sent} agent(s).`);
     }
 
     // Per-chat colour: tints the card's left cable-end. Unset => no tint (the
@@ -3331,6 +3414,14 @@
 
       // Badges: agent-type chip + MCP chip + unread count.
       const badges = el("div", "agent-badges");
+      // Leader crown — purely visual, marks who the operator named as this
+      // group's lead. Never on the no-group bucket.
+      const grp = groupOf(agent);
+      if (grp !== DEFAULT_GROUP && groupLeaderOf(grp) === agent.name) {
+        const crown = el("span", "leader-badge", "👑");
+        crown.title = `Leader of this group (set by you — visual only)`;
+        badges.appendChild(crown);
+      }
       const type = agentTypeOf(agent);
       const typeChip = el("span", "agent-type-chip");
       typeChip.appendChild(agentLogo(type));
@@ -3388,7 +3479,7 @@
       const MENU_ICONS = {
         "nudge-btn": "📣", "group-btn": "🚪", "codex-btn": "◆", "colour-btn": "🎨",
         "colour-reset-btn": "⭕", "mute-toggle": "🔇", "rename-btn": "✏️", "remove-btn": "🗑",
-        "display-btn": "🏷",
+        "display-btn": "🏷", "leader-btn": "👑", "stop-btn": "⏹",
       };
       function menuItem(cls, label, title, onClick) {
         const item = el("button", `agent-menu-item ${cls}`);
@@ -3486,6 +3577,34 @@
           },
         ),
       );
+      // Leader: purely visual, and only meaningful inside a real group. Set it,
+      // and offer to announce it to the group (operator's voice). Toggle off if
+      // this agent is already the marked leader.
+      {
+        const grp2 = groupOf(agent);
+        if (grp2 !== DEFAULT_GROUP) {
+          const isLeader = groupLeaderOf(grp2) === agent.name;
+          menu.appendChild(
+            menuItem(
+              "leader-btn",
+              isLeader ? "unset leader" : "set as leader",
+              isLeader
+                ? "Remove the leader badge from this agent (visual only)"
+                : `Mark "${agent.name}" as this group's leader (visual only — you decide)`,
+              () => {
+                closeMenus();
+                if (isLeader) {
+                  setGroupLeader(grp2, null);
+                  return;
+                }
+                setGroupLeader(grp2, agent.name);
+                // Offer to tell the other agents. Non-blocking: a toast asks.
+                openLeaderAnnouncePrompt(grp2, agent.name);
+              },
+            ),
+          );
+        }
+      }
       // Nickname: the free display name (emoji ok) — works on a RUNNING agent,
       // because nothing in the protocol reads it. The name cell becomes the
       // editor, like rename, but the kebab id is untouched.
@@ -3525,6 +3644,31 @@
           },
         ),
       );
+      // Stop: kill the tmux session but KEEP the registration (offline, can be
+      // reopened). Online only — an offline agent has nothing to stop.
+      if (online) {
+        menu.appendChild(
+          menuItem(
+            "stop-btn",
+            "stop",
+            `Stop "${agent.name}" (kills its tmux session) but keep it in the Hub — you can reopen it`,
+            async () => {
+              closeMenus();
+              try {
+                const res = await fetch(`/api/agents/${encodeURIComponent(agent.name)}/stop`, { method: "POST" });
+                const body = await res.json().catch(() => ({}));
+                if (!res.ok || !body.ok) {
+                  toast(`Could not stop "${agent.name}": ${body.error || `HTTP ${res.status}`}`, "warn");
+                  return;
+                }
+                toast(`Stopped "${agent.name}" — still in the rail, offline.`);
+              } catch (err) {
+                toast(`Could not stop "${agent.name}": ${err && err.message ? err.message : err}`, "warn");
+              }
+            },
+          ),
+        );
+      }
       // Remove: ALWAYS offered (the owner's ask — deleting the codex sibling
       // took a trip to the CLI). Online, it stops the tmux session first, then
       // removes the registration. Two-click inline confirmation, no dialogs.
