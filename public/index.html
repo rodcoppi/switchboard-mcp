@@ -330,7 +330,7 @@
       column-gap: 11px;
       row-gap: 3px;
       align-items: center;
-      padding: 11px 12px 11px 14px;
+      padding: 11px 12px 11px 24px;
       margin-bottom: 8px;
       background: var(--bg-elev);
       border: 1px solid var(--border-soft);
@@ -338,6 +338,24 @@
       cursor: pointer;
       transition: border-color 0.14s var(--ease), background 0.14s var(--ease), transform 0.14s var(--ease);
     }
+    /* Drag handle — the ONLY reorder grip, revealed on hover on the left edge. */
+    .card-grab {
+      position: absolute;
+      left: 3px; top: 0; bottom: 0;
+      width: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-faint);
+      font-size: 13px;
+      line-height: 1;
+      cursor: grab;
+      opacity: 0;
+      transition: opacity 0.12s var(--ease), color 0.12s var(--ease);
+    }
+    .agent-card:hover .card-grab { opacity: 0.65; }
+    .card-grab:hover { opacity: 1; color: var(--text); }
+    .card-grab:active { cursor: grabbing; }
     /* the patch rail: a thin amber cable-end that lights when the row is live/active */
     .agent-card::before {
       content: "";
@@ -3625,9 +3643,12 @@
     function buildAgentCard(agent) {
       const card = el("div", "agent-card");
       card.classList.add(agent.status === "online" ? "online" : "offline");
-      // Drag to reorder within a group, or across into another group's box.
-      card.draggable = true;
-      card.addEventListener("dragstart", (e) => {
+      // Reorder ONLY via the grabber on the left — dragging the whole card
+      // fought the click that opens the agent. The card itself is not draggable.
+      const grab = el("div", "card-grab", "⠿");
+      grab.title = "Drag to reorder";
+      grab.draggable = true;
+      grab.addEventListener("dragstart", (e) => {
         dragName = agent.name;
         card.classList.add("dragging");
         e.dataTransfer.effectAllowed = "move";
@@ -3637,14 +3658,14 @@
           /* some browsers require a payload; the value itself is unused */
         }
       });
-      card.addEventListener("dragend", () => {
+      grab.addEventListener("dragend", () => {
         card.classList.remove("dragging");
-        // dragend ALWAYS fires (drop does not, e.g. dropped outside a zone), so
-        // this is where the arrangement is committed — the drop handler only has
-        // to accept the gesture.
+        // dragend ALWAYS fires (drop does not), so the arrangement commits here.
         if (dragName) commitDrag(dragName);
         dragName = null;
       });
+      grab.addEventListener("click", (e) => e.stopPropagation()); // never open the screen
+      card.appendChild(grab);
       if (state.filter === agent.name) card.classList.add("active");
       card.dataset.name = agent.name;
       const tint = chatColor(agent.name);
