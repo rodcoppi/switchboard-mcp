@@ -1182,10 +1182,15 @@
     .chat-tool-head:hover { background: var(--bg-hover); }
     .chat-tool-caret { width: 8px; color: var(--text-faint); transition: transform 0.12s var(--ease); }
     .chat-tool.open .chat-tool-caret { transform: rotate(90deg); }
+    .chat-tool-icon { font-size: 12px; line-height: 1; }
     .chat-tool-name { color: var(--accent); font-weight: 600; }
+    .chat-tool-summary { color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .chat-tool.error .chat-tool-name { color: var(--danger); }
     .chat-tool-body { display: none; border-top: 1px solid var(--border-soft); }
     .chat-tool.open .chat-tool-body { display: block; }
+    /* Each input/result pre is wrapped so a copy button can float over it. */
+    .chat-tool-pre { position: relative; }
+    .chat-tool-pre + .chat-tool-pre { border-top: 1px dashed var(--border-soft); }
     .chat-tool-body pre {
       margin: 0;
       padding: 9px 11px;
@@ -1198,10 +1203,30 @@
       max-height: 320px;
       overflow-y: auto;
     }
-    .chat-tool-body pre + pre { border-top: 1px dashed var(--border-soft); }
-    /* Diff colouring for Edit/Write, applied per line. */
-    .diff-add { color: var(--online); }
-    .diff-del { color: var(--danger); }
+    /* Copy button: quiet until you hover the block it sits on. */
+    .copy-btn {
+      position: absolute;
+      top: 5px;
+      right: 6px;
+      padding: 1px 7px;
+      font-family: var(--mono);
+      font-size: var(--fs-eyebrow);
+      color: var(--text-faint);
+      background: var(--bg-elev);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      cursor: pointer;
+      opacity: 0;
+      transition: opacity 0.12s var(--ease), color 0.12s var(--ease);
+    }
+    .chat-tool-pre:hover .copy-btn,
+    .code-wrap:hover .copy-btn { opacity: 1; }
+    .copy-btn:hover { color: var(--accent); border-color: var(--accent-line); }
+    /* Diff colouring for Edit/Write, per line, with a faint bed like the ref. */
+    .diff-add { color: #7ee2a8; background: color-mix(in srgb, #12351f 55%, transparent); display: block; }
+    .diff-del { color: #ff8589; background: color-mix(in srgb, #3d1418 55%, transparent); display: block; }
+    /* Code blocks in assistant markdown get the same hover copy button. */
+    .code-wrap { position: relative; }
     /* xterm paints its own grid; it just needs a box that does not collapse.
        CENTRED, and on the terminal's own colour: while mirroring, the grid is
        the pane's and its shape rarely matches the panel's, so something is
@@ -3828,24 +3853,57 @@
       return turn;
     }
 
+    // A glyph per tool, like the reference app's transcript — so the eye reads
+    // the KIND of action before the name.
+    const TOOL_ICON = {
+      Bash: "💻", Read: "📖", Edit: "✏️", Write: "📝", MultiEdit: "✏️",
+      NotebookEdit: "✏️", Grep: "🔍", Glob: "🔍", WebFetch: "🌐",
+      WebSearch: "🌐", Task: "🤖", TodoWrite: "📋",
+    };
+    function toolIcon(name) {
+      return TOOL_ICON[name] || (name && name.startsWith("mcp__") ? "🔌" : "🔧");
+    }
+
     function buildToolChip(it) {
       const chip = el("div", `chat-tool${it.isError ? " error" : ""}`);
       const head = el("div", "chat-tool-head");
       head.append(
         el("span", "chat-tool-caret", "▸"),
+        el("span", "chat-tool-icon", toolIcon(it.name)),
         el("span", "chat-tool-name", it.name),
-        el("span", null, it.summary.replace(new RegExp("^" + it.name + ":?\\s*"), "")),
+        el("span", "chat-tool-summary", it.summary.replace(new RegExp("^" + it.name + ":?\\s*"), "")),
       );
       if (it.isError) head.appendChild(el("span", "chat-tool-name", "· error"));
       const body = el("div", "chat-tool-body");
       // The call's input (command / file / pattern) …
       const inputText = toolInputText(it);
-      if (inputText) body.appendChild(buildToolPre(it.name, inputText));
+      if (inputText) body.appendChild(buildToolPre(it.name, inputText, it.name));
       // … then its result, diff-coloured for edits.
       if (it.result) body.appendChild(buildToolPre(null, it.result, it.name));
       chip.append(head, body);
       head.addEventListener("click", () => chip.classList.toggle("open"));
       return chip;
+    }
+
+    // A small copy button that lifts `text` to the clipboard, with a brief tick.
+    function copyButton(text) {
+      const btn = el("button", "copy-btn", "copy");
+      btn.type = "button";
+      btn.title = "Copy to clipboard";
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        navigator.clipboard.writeText(text).then(
+          () => {
+            btn.textContent = "copied";
+            setTimeout(() => (btn.textContent = "copy"), 1200);
+          },
+          () => {
+            btn.textContent = "failed";
+            setTimeout(() => (btn.textContent = "copy"), 1200);
+          },
+        );
+      });
+      return btn;
     }
 
     function toolInputText(it) {
@@ -3861,10 +3919,12 @@
       return "";
     }
 
-    // A <pre> for a tool's input/result. `diffFor` set → colour +/- lines.
+    // A <pre> for a tool's input/result, wrapped with a hover copy button.
+    // `diffFor` set → colour +/- lines like a diff.
     function buildToolPre(label, text, diffFor) {
+      const wrap = el("div", "chat-tool-pre");
       const pre = el("pre");
-      const isDiff = diffFor === "Edit" || diffFor === "Write" || /^[-+] /m.test(text);
+      const isDiff = diffFor === "Edit" || diffFor === "Write" || diffFor === "MultiEdit" || /^[-+] /m.test(text);
       if (isDiff) {
         for (const line of text.split("\n")) {
           const span = el(
@@ -3877,7 +3937,8 @@
       } else {
         pre.textContent = text.length > 8000 ? text.slice(0, 8000) + "\n… (truncated)" : text;
       }
-      return pre;
+      wrap.append(pre, copyButton(text));
+      return wrap;
     }
 
     /**
@@ -3910,6 +3971,14 @@
             /* highlighting is cosmetic — never let it break the message */
           }
         }
+      }
+      // A hover copy button on every fenced code block (like the reference app).
+      for (const pre of container.querySelectorAll("pre")) {
+        if (pre.closest(".code-wrap")) continue;
+        const code = pre.querySelector("code");
+        const wrap = el("div", "code-wrap");
+        pre.replaceWith(wrap);
+        wrap.append(pre, copyButton((code ? code.textContent : pre.textContent) || ""));
       }
     }
 
