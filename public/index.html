@@ -242,6 +242,16 @@
     .usage-bar { height: 6px; border-radius: 999px; background: var(--bg-inset); overflow: hidden; }
     .usage-bar-fill { height: 100%; border-radius: 999px; transition: width 0.4s var(--ease), background 0.3s var(--ease); }
     .usage-row-reset { font-size: var(--fs-eyebrow); color: var(--text-faint); font-family: var(--mono); }
+    /* Codex tokens today — a count, not a bar (Codex has no % limit). */
+    #usage-codex[hidden] { display: none; }
+    #usage-codex { margin-top: 9px; padding-top: 9px; border-top: 1px solid var(--border-soft); }
+    .usage-codex-row {
+      display: flex; align-items: baseline; justify-content: space-between;
+      font-family: var(--mono); font-size: var(--fs-xs);
+    }
+    .usage-codex-label { color: var(--text-dim); }
+    .usage-codex-total { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+    .usage-codex-breakdown { margin-top: 2px; font-family: var(--mono); font-size: var(--fs-eyebrow); color: var(--text-faint); }
     /* [hidden] LAST, and it must exist on every rule that sets `display`: the
        attribute is only a UA-stylesheet `display:none`, so any `display` of ours
        beats it and the element stays on screen while the JS believes it hid it.
@@ -2542,6 +2552,9 @@
           <span class="usage-reset" id="usage-updated"></span>
         </div>
         <div id="usage-rows"></div>
+        <!-- Codex has no limit API — its tokens-today go here when a codex agent
+             exists. Filled by renderUsage. -->
+        <div id="usage-codex" hidden></div>
       </div>
 
     </aside>
@@ -3013,6 +3026,7 @@
     }
     let usageLimits = [];
     let usageUpdatedAt = null; // epoch ms of the last SUCCESSFUL (non-empty) fetch
+    let usageCodex = null; // { total, input, output, reasoning } | null (no codex agent)
     async function refreshUsage() {
       try {
         const r = await fetch("/api/usage");
@@ -3025,6 +3039,7 @@
           usageLimits = next;
           usageUpdatedAt = Date.now();
         }
+        if (body && "codex" in body) usageCodex = body.codex; // null = no codex agent
       } catch {
         /* keep the last good value */
       }
@@ -3036,11 +3051,36 @@
       if (s < 3600) return `${Math.round(s / 60)}m ago`;
       return new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     }
+    function fmtTokensShort(n) {
+      if (n >= 1e6) return (n / 1e6).toFixed(n >= 1e7 ? 0 : 1).replace(/\.0$/, "") + "M";
+      if (n >= 1e3) return Math.round(n / 1e3) + "k";
+      return String(Math.round(n));
+    }
     function renderUsage() {
       const card = $("#usage-card");
-      if (!usageLimits.length) {
+      const hasCodex = usageCodex && usageCodex.total > 0;
+      if (!usageLimits.length && !hasCodex) {
         card.hidden = true;
         return;
+      }
+      // Codex tokens today — Codex has no % limit (it's OpenAI), so a token
+      // count, not a bar. Shown only when a codex agent is around.
+      const cbox = $("#usage-codex");
+      if (cbox) {
+        cbox.textContent = "";
+        if (hasCodex) {
+          const row = el("div", "usage-codex-row");
+          row.append(
+            el("span", "usage-codex-label", "◆ codex today"),
+            el("span", "usage-codex-total", `${fmtTokensShort(usageCodex.total)} tok`),
+          );
+          const bd = el("div", "usage-codex-breakdown",
+            `${fmtTokensShort(usageCodex.input)} in · ${fmtTokensShort(usageCodex.output)} out · ${fmtTokensShort(usageCodex.reasoning)} reasoning`);
+          cbox.append(row, bd);
+          cbox.hidden = false;
+        } else {
+          cbox.hidden = true;
+        }
       }
       const updated = $("#usage-updated");
       if (updated) updated.textContent = usageUpdatedAt ? `updated ${fmtAgo(usageUpdatedAt)}` : "";

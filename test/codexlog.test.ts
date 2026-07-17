@@ -127,3 +127,30 @@ describe("codexSessionsDir", () => {
     expect(codexSessionsDir({} as NodeJS.ProcessEnv)).toBe(path.join(os.homedir(), ".codex", "sessions"));
   });
 });
+
+describe("codexTokensToday", () => {
+  const dirs: string[] = [];
+  afterEach(() => { for (const d of dirs.splice(0)) fs.rmSync(d, { recursive: true, force: true }); });
+
+  it("sums the last token_count of each of the day's rollouts", async () => {
+    const { codexTokensToday } = await import("../src/server/codexlog.js");
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "sb-ctok-"));
+    dirs.push(root);
+    const now = new Date(2026, 6, 17, 3, 0, 0); // 2026-07-17 local
+    const day = path.join(root, "2026", "07", "17");
+    fs.mkdirSync(day, { recursive: true });
+    const tc = (total: number, input: number, output: number, reasoning: number) =>
+      JSON.stringify({ type: "response_item", payload: { type: "token_count", info: { total_token_usage: { input_tokens: input, output_tokens: output, reasoning_output_tokens: reasoning, total_tokens: total } } } });
+    // rollout A: two token_counts — the LAST (cumulative) is what counts
+    fs.writeFileSync(path.join(day, "rollout-a.jsonl"), tc(100, 60, 30, 10) + "\n" + tc(300, 180, 90, 30) + "\n");
+    fs.writeFileSync(path.join(day, "rollout-b.jsonl"), tc(50, 30, 15, 5) + "\n");
+    expect(codexTokensToday(now, root)).toEqual({ total: 350, input: 210, output: 105, reasoning: 35 });
+  });
+
+  it("returns zeros when today's folder is absent", async () => {
+    const { codexTokensToday } = await import("../src/server/codexlog.js");
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "sb-ctok2-"));
+    dirs.push(root);
+    expect(codexTokensToday(new Date(2020, 0, 1), root)).toEqual({ total: 0, input: 0, output: 0, reasoning: 0 });
+  });
+});

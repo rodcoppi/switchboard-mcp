@@ -112,6 +112,76 @@ export function findCodexRolloutForCwd(cwd: string, sessionsDir = codexSessionsD
   return null;
 }
 
+export interface CodexTokens {
+  total: number;
+  input: number;
+  output: number;
+  reasoning: number;
+}
+
+/**
+ * Sum of Codex tokens spent TODAY — Codex has no usage-limit API (it's OpenAI),
+ * but its rollouts carry token_count events whose info.total_token_usage is the
+ * running total for that session. Summing the LAST token_count of each of the
+ * day's rollouts gives "tokens across today's Codex sessions". `now` picks the
+ * date folder (YYYY/MM/DD); a missing folder → zeros.
+ */
+export function codexTokensToday(now: Date, sessionsDir = codexSessionsDir()): CodexTokens {
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  const dayDir = path.join(sessionsDir, String(y), m, d);
+  const acc: CodexTokens = { total: 0, input: 0, output: 0, reasoning: 0 };
+  let files: string[];
+  try {
+    files = fs.readdirSync(dayDir).filter((f) => f.startsWith("rollout-") && f.endsWith(".jsonl"));
+  } catch {
+    return acc; // no folder for today yet
+  }
+  for (const name of files) {
+    const last = lastTokenUsage(path.join(dayDir, name));
+    if (!last) continue;
+    acc.total += last.total;
+    acc.input += last.input;
+    acc.output += last.output;
+    acc.reasoning += last.reasoning;
+  }
+  return acc;
+}
+
+/** The last token_count's cumulative total_token_usage in a rollout, or null. */
+function lastTokenUsage(file: string): CodexTokens | null {
+  let text: string;
+  try {
+    text = fs.readFileSync(file, "utf8");
+  } catch {
+    return null;
+  }
+  const lines = text.split("\n");
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    if (!line.includes('"token_count"')) continue;
+    try {
+      const rec = JSON.parse(line) as {
+        payload?: { type?: string; info?: { total_token_usage?: Record<string, unknown> } };
+      };
+      if (rec.payload?.type !== "token_count") continue;
+      const u = rec.payload.info?.total_token_usage;
+      if (!u) continue;
+      const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+      return {
+        total: num(u.total_tokens),
+        input: num(u.input_tokens),
+        output: num(u.output_tokens),
+        reasoning: num(u.reasoning_output_tokens),
+      };
+    } catch {
+      /* malformed — keep scanning upward */
+    }
+  }
+  return null;
+}
+
 /** One-line label for a codex tool call ("exec: const p = await …"). */
 function codexToolSummary(name: string, input: unknown): string {
   const text = typeof input === "string" ? input : JSON.stringify(input ?? "");

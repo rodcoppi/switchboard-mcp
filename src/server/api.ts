@@ -38,7 +38,7 @@ import { PickError, pickWindowsFolder } from "./winpicker.js";
 import { TerminalError } from "./terminal.js";
 import { PreviewError, readPreview, resolveInScope } from "./filepreview.js";
 import { parseConversation, projectDirForCwd } from "./conversation.js";
-import { findCodexRolloutForCwd, parseCodexRollout } from "./codexlog.js";
+import { codexTokensToday, findCodexRolloutForCwd, parseCodexRollout, type CodexTokens } from "./codexlog.js";
 import type { UsageProbe } from "./usage.js";
 import {
   invalidAgentTypeMessage,
@@ -1541,8 +1541,23 @@ export function createApiRouter(options: ApiOptions): express.Router {
 
   // Claude /usage bars (5h session + weekly), proxied from the OAuth endpoint
   // and cached. [] when no probe or the fetch failed — the dashboard hides it.
+  // Codex tokens today, cached — reading the day's rollouts each request would
+  // be wasteful. Only computed if any codex agent is registered (else null).
+  let codexCache: { at: number; tokens: CodexTokens } | null = null;
+  const codexUsage = (): CodexTokens | null => {
+    const hasCodex = store.listAgents().some((a) => resolveAgentType(a.agentType) === "codex");
+    if (!hasCodex) return null;
+    if (!codexCache || Date.now() - codexCache.at > 30_000) {
+      codexCache = { at: Date.now(), tokens: codexTokensToday(new Date()) };
+    }
+    return codexCache.tokens;
+  };
+
   router.get("/api/usage", async (_req, res) => {
-    res.json({ limits: usage ? await usage.getLimits() : [] });
+    res.json({
+      limits: usage ? await usage.getLimits() : [],
+      codex: codexUsage(),
+    });
   });
 
   // Fallback for unknown /api routes: JSON 404, never the Express HTML page.
