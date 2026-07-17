@@ -2038,14 +2038,15 @@
        a multi-day history read as shuffled — 10:37 sitting above 19:02 is
        today above yesterday, and nothing said so. Sticky, so the day you are
        reading is always on screen. */
-    /* The transcript is a COLUMN pinned to the left, under the panel label and
-       against the patchbay, where the eye already is. It is still capped: the
-       two lanes (agents left, the operator right) only associate while they
-       stay within one eyeful, and a 2000px-wide line of mono text is unreadable
-       anyway. Rows and dividers share the cap so the column has one spine. */
+    /* The transcript is a CENTRED column — the SAME 880px reading column the
+       agent chat casca uses, so switching between an agent's chat and the
+       intra-agents chat never moves where your eyes read. Rows and dividers
+       share the cap so the column has one spine. */
     .day-divider, .msg-row {
       width: 100%;
-      max-width: 1200px;
+      max-width: 880px;
+      margin-left: auto;
+      margin-right: auto;
     }
 
     .day-divider {
