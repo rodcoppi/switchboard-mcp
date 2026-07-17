@@ -3482,31 +3482,49 @@
           },
         ),
       );
-      if (!online) {
-        // Remove: two-click inline confirmation (no blocking browser dialogs).
-        menu.appendChild(
-          menuItem(
-            "remove-btn",
-            "remove",
-            "Remove this agent from the Hub registry (messages are kept)",
-            (item) => {
-              if (item.dataset.confirming === "1") {
-                closeMenus();
-                removeAgent(agent.name);
-                return;
+      // Remove: ALWAYS offered (the owner's ask — deleting the codex sibling
+      // took a trip to the CLI). Online, it stops the tmux session first, then
+      // removes the registration. Two-click inline confirmation, no dialogs.
+      const removeLabel = online ? "stop & remove" : "remove";
+      menu.appendChild(
+        menuItem(
+          "remove-btn",
+          removeLabel,
+          online
+            ? `Stop "${agent.name}" (kills its tmux session) and remove it from the Hub (messages are kept)`
+            : "Remove this agent from the Hub registry (messages are kept)",
+          async (item) => {
+            if (item.dataset.confirming === "1") {
+              closeMenus();
+              if (online) {
+                try {
+                  const res = await fetch(`/api/agents/${encodeURIComponent(agent.name)}/stop`, { method: "POST" });
+                  const body = await res.json().catch(() => ({}));
+                  if (!res.ok || !body.ok) {
+                    toast(`Could not stop "${agent.name}": ${body.error || `HTTP ${res.status}`}`, "warn");
+                    return;
+                  }
+                } catch (err) {
+                  toast(`Could not stop "${agent.name}": ${err && err.message ? err.message : err}`, "warn");
+                  return;
+                }
               }
-              item.dataset.confirming = "1";
-              item.textContent = "sure?";
-              item.classList.add("confirming");
-              setTimeout(() => {
-                item.dataset.confirming = "";
-                item.textContent = "remove";
-                item.classList.remove("confirming");
-              }, 3000);
-            },
-          ),
-        );
-      }
+              removeAgent(agent.name);
+              return;
+            }
+            item.dataset.confirming = "1";
+            item.textContent = "sure?";
+            item.classList.add("confirming");
+            setTimeout(() => {
+              item.dataset.confirming = "";
+              item.textContent = "";
+              item.appendChild(el("span", "mi-icon", "🗑"));
+              item.appendChild(el("span", null, removeLabel));
+              item.classList.remove("confirming");
+            }, 3000);
+          },
+        ),
+      );
 
       kebab.addEventListener("click", (ev) => {
         ev.stopPropagation();

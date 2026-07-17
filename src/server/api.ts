@@ -314,6 +314,12 @@ export interface ApiOptions {
   claudeProjectsDir?: string;
   /** Claude /usage bars proxy (OAuth-backed, cached). Undefined → /api/usage = []. */
   usage?: UsageProbe;
+  /**
+   * Kills an agent's tmux session (POST /api/agents/:name/stop — the
+   * dashboard's one-click "stop & remove"). Undefined (tests, stubbed
+   * onMessage) → the endpoint answers 501, like launcher/terminals.
+   */
+  stopper?: (session: string) => Promise<void>;
   /** Hub start timestamp (epoch ms) for /api/health uptime. */
   startedAt: number;
   /** Hub version string for /api/health (from package.json). */
@@ -363,7 +369,7 @@ function hasClaudeConversation(claudeProjectsDir: string, absPath: string): bool
 }
 
 export function createApiRouter(options: ApiOptions): express.Router {
-  const { store, config, log, bus, onMessage, nudger, launcher, terminals, usage, startedAt, version } =
+  const { store, config, log, bus, onMessage, nudger, launcher, terminals, usage, stopper, startedAt, version } =
     options;
   const heartbeatMs = options.heartbeatMs ?? 25_000;
   const claudeProjectsDir =
@@ -916,6 +922,41 @@ export function createApiRouter(options: ApiOptions): express.Router {
     bus.emit({ type: "agent_updated", payload: toPublicAgent(agent) });
     log.info(`[api] agent ${name} ${muted ? "muted" : "unmuted"} (mute=${muted}).`);
     res.json({ ok: true, agent: toPublicAgent(agent) });
+  });
+
+  // POST /api/agents/:name/stop — kills the agent's tmux session (the same
+  // thing `switchboard stop <name>` does, exposed to the dashboard so "delete
+  // this agent" is one click, not a trip to the CLI). The registration is NOT
+  // removed here — that stays DELETE's job — but the record flips offline at
+  // once so a follow-up DELETE doesn't race the 10s status poll.
+  router.post("/api/agents/:name/stop", async (req, res) => {
+    const agent = store.getAgent(String(req.params.name));
+    if (!agent) {
+      res.status(404).json({ ok: false, error: `Unknown agent: "${req.params.name}".` });
+      return;
+    }
+    if (!stopper) {
+      res.status(501).json({
+        ok: false,
+        error: "Stop unavailable: this hub was started without tmux (custom onMessage).",
+      });
+      return;
+    }
+    try {
+      await stopper(agent.tmuxSession);
+    } catch {
+      // Already dead ("no such session") — the goal is convergence, not the kill.
+    }
+    const updated = store.updateAgent(agent.name, {
+      status: "offline",
+      mcpConnected: false,
+      activity: "idle",
+      goalActive: false,
+      goalFor: undefined,
+    });
+    bus.emit({ type: "agent_updated", payload: toPublicAgent(updated) });
+    log.info(`[api] agent stopped from the dashboard: ${agent.name} (tmux ${agent.tmuxSession}).`);
+    res.json({ ok: true, stopped: agent.name });
   });
 
   // DELETE /api/agents/:name — removes the agent's REGISTRATION (post-v1,

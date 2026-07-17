@@ -134,6 +134,7 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
   let dispatcher: Dispatcher | undefined;
   let launcher: Launcher | undefined;
   let terminals: TerminalBridge | undefined;
+  let stopper: ((session: string) => Promise<void>) | undefined;
   let onMessage: OnMessage;
   if (options.onMessage) {
     onMessage = options.onMessage;
@@ -160,6 +161,8 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
       terminalOpener,
       ...options.launcher,
     });
+    // Dashboard "stop this agent": the same killSession the CLI's stop uses.
+    stopper = (session) => tmux.killSession(session);
   }
 
   // Claude /usage bars: a thin OAuth-endpoint proxy, cached — a single small
@@ -203,6 +206,7 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
       launcher,
       terminals,
       usage,
+      stopper,
       claudeProjectsDir: options.claudeProjectsDir,
       startedAt,
       version,
