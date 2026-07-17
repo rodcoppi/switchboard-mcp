@@ -2578,6 +2578,7 @@
           <div class="chat-composer-inner">
             <div class="slash-menu" id="slash-menu" hidden></div>
             <div class="slash-menu" id="mention-menu" hidden></div>
+            <div class="slash-menu" id="agentref-menu" hidden></div>
             <textarea id="chat-input" rows="1"
               placeholder="Message this agent…  (Enter sends · Shift+Enter for a newline)"></textarea>
             <button class="btn chat-mic" id="chat-mic" type="button"
@@ -6789,6 +6790,77 @@
       chatInput.addEventListener("blur", () => closeMentionMenu());
       // ---- end "@" file-mention autocomplete -------------------------------
 
+      // ---- "%" agent-reference autocomplete (composer) ---------------------
+      // Same contract as @/slash: typing "%word" ending at the caret opens a
+      // menu of AGENTS (the "%<name>" delegation sigil the network uses). No
+      // fetch — it reads state.agents. Picking inserts "%<kebab name> " (the id
+      // the hub routes on, even when a display name is shown).
+      const agentRefMenuEl = $("#agentref-menu");
+      const agentRefState = { open: false, items: [], active: 0, start: -1 };
+      function closeAgentRefMenu() {
+        agentRefState.open = false;
+        agentRefState.items = [];
+        agentRefState.active = 0;
+        agentRefState.start = -1;
+        agentRefMenuEl.hidden = true;
+      }
+      function renderAgentRefMenu() {
+        agentRefMenuEl.replaceChildren();
+        agentRefState.items.forEach((a, i) => {
+          const row = el("div", "slash-item" + (i === agentRefState.active ? " active" : ""));
+          row.appendChild(el("span", `p-dot${a.status === "online" ? " online" : ""}`));
+          row.appendChild(el("span", "slash-item__name", "%" + a.name));
+          if (displayOf(a) !== a.name) row.appendChild(el("span", "slash-item__desc", displayOf(a)));
+          row.addEventListener("mousedown", (e) => { e.preventDefault(); pickAgentRef(a); });
+          row.addEventListener("mouseenter", () => { if (agentRefState.active !== i) { agentRefState.active = i; renderAgentRefMenu(); } });
+          agentRefMenuEl.appendChild(row);
+        });
+      }
+      function updateAgentRefMenu() {
+        if (slashState.open || mentionState.open) return closeAgentRefMenu();
+        if (!screenState.name) return closeAgentRefMenu();
+        const before = chatInput.value.slice(0, chatInput.selectionStart);
+        const m = /(?:^|\s)%([\w-]*)$/.exec(before);
+        if (!m) return closeAgentRefMenu();
+        const q = m[1].toLowerCase();
+        const items = sortedAgents().filter(
+          (a) => a.name !== screenState.name && (a.name.toLowerCase().includes(q) || displayOf(a).toLowerCase().includes(q)),
+        );
+        if (!items.length) return closeAgentRefMenu();
+        agentRefState.items = items;
+        agentRefState.start = m.index + m[0].indexOf("%");
+        if (agentRefState.active >= items.length) agentRefState.active = 0;
+        agentRefState.open = true;
+        agentRefMenuEl.hidden = false;
+        renderAgentRefMenu();
+      }
+      function pickAgentRef(a) {
+        const caret = chatInput.selectionStart;
+        const m = /(?:^|\s)%([\w-]*)$/.exec(chatInput.value.slice(0, caret));
+        const start = m ? m.index + m[0].indexOf("%") : agentRefState.start;
+        if (start < 0) return closeAgentRefMenu();
+        const insert = "%" + a.name + " ";
+        chatInput.value = chatInput.value.slice(0, start) + insert + chatInput.value.slice(caret);
+        closeAgentRefMenu();
+        autogrow();
+        chatInput.focus();
+        const pos = start + insert.length;
+        chatInput.setSelectionRange(pos, pos);
+      }
+      function agentRefKeydown(ev) {
+        if (!agentRefState.open) return false;
+        const n = agentRefState.items.length;
+        if (ev.key === "ArrowDown") { ev.preventDefault(); agentRefState.active = (agentRefState.active + 1) % n; renderAgentRefMenu(); return true; }
+        if (ev.key === "ArrowUp") { ev.preventDefault(); agentRefState.active = (agentRefState.active - 1 + n) % n; renderAgentRefMenu(); return true; }
+        if (ev.key === "Enter" || ev.key === "Tab") { ev.preventDefault(); pickAgentRef(agentRefState.items[agentRefState.active]); return true; }
+        if (ev.key === "Escape") { ev.preventDefault(); closeAgentRefMenu(); return true; }
+        return false;
+      }
+      chatInput.addEventListener("input", updateAgentRefMenu);
+      chatInput.addEventListener("click", updateAgentRefMenu);
+      chatInput.addEventListener("blur", () => closeAgentRefMenu());
+      // ---- end "%" agent-reference autocomplete ----------------------------
+
       // Shell-style history of the operator's own sends (↑ recalls, ↓ steps back).
       const sentHistory = [];
       let histIdx = -1; // -1 = not navigating
@@ -6807,6 +6879,7 @@
         // The slash menu, when open, owns Enter/Tab/arrows/Esc — before the rest.
         if (slashKeydown(ev)) return;
         if (mentionKeydown(ev)) return;
+        if (agentRefKeydown(ev)) return;
         // Enter sends; Shift+Enter is a newline.
         if (ev.key === "Enter" && !ev.shiftKey) {
           ev.preventDefault();
