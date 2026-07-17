@@ -14,6 +14,13 @@ export type AgentStatus = "online" | "offline";
  */
 export type AgentActivity = "working" | "idle";
 
+/**
+ * The CLI's current permission mode, read from the TUI footer
+ * ("⏵⏵ bypass permissions on (shift+tab to cycle)"). "plan" is Claude Code's
+ * plan mode. null when the footer could not be read. Ephemeral, like activity.
+ */
+export type AgentPermission = "bypass" | "acceptEdits" | "plan" | "default";
+
 export interface Agent {
   name: string; // ^[a-z0-9][a-z0-9-]{1,30}$ , unique
   role: string; // free-form description, e.g. "backend da API de pagamentos"
@@ -21,6 +28,9 @@ export interface Agent {
   cwd: string; // directory where the agent CLI was opened
   status: AgentStatus; // derived from tmux has-session during polling
   activity?: AgentActivity; // idle vs working, derived from the live pane (ephemeral)
+  permission?: AgentPermission; // permission/plan mode from the TUI footer (ephemeral)
+  goalActive?: boolean; // a /goal is active in the session (ephemeral)
+  goalFor?: string; // how long the goal has run, e.g. "21m" (ephemeral)
   mcpConnected: boolean; // true after the first join via MCP
   muted: boolean; // dashboard can silence nudges (messages are still recorded)
   createdAt: string; // ISO 8601

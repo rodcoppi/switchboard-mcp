@@ -857,6 +857,23 @@
     .tab:hover { color: var(--text); }
     .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
     .tab-mark { color: var(--accent); font-weight: 700; }
+    /* The hub tab (the agents' own chat) is not an agent — give it a standing
+       pill look so it reads as the fixed room, distinct from the agent tabs. */
+    .tab-hub {
+      margin: 5px 6px 5px 0;
+      padding: 5px 13px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg-inset);
+      font-weight: 600;
+      letter-spacing: 0.2px;
+    }
+    .tab-hub.active {
+      border-color: var(--accent-line);
+      background: var(--accent-wash);
+      border-bottom-color: var(--accent-line);
+    }
+    .tab-hub:hover { color: var(--text); border-color: var(--border-strong); }
     .tab .name { overflow: hidden; text-overflow: ellipsis; }
     .tab .dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
     .tab .dot.online { background: var(--online); }
@@ -952,6 +969,37 @@
       color: var(--text-faint);
     }
     .screen-hint.stale { color: var(--danger); }
+    /* Session-status bar UNDER the composer, like a terminal footer: the CLI's
+       permission/plan mode and a running /goal with its age. */
+    .chat-statusbar {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 5px 18px 7px;
+      background: var(--bg-elev);
+      border-top: 1px solid var(--border-soft);
+    }
+    .chat-statusbar[hidden] { display: none; }
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 2px 9px;
+      border-radius: 999px;
+      font-family: var(--mono);
+      font-size: var(--fs-eyebrow);
+      letter-spacing: 0.4px;
+      color: var(--pill-color, var(--text-dim));
+      border: 1px solid color-mix(in srgb, var(--pill-color, var(--border)) 45%, transparent);
+      background: color-mix(in srgb, var(--pill-color, var(--bg-elev)) 12%, transparent);
+    }
+    .status-pill::before {
+      content: "";
+      width: 6px; height: 6px; border-radius: 50%;
+      background: var(--pill-color, var(--text-dim));
+    }
+    .status-pill.goal { --pill-color: var(--accent); }
     .screen-head .btn { margin-left: auto; }
     .screen-head .dirpicker-close { margin-left: 0; }
 
@@ -2027,10 +2075,10 @@
            "whatever the panel showed when no screen was open", which made the
            one view that is not an agent behave unlike everything next to it. -->
       <div class="tabs" id="tabs">
-        <button class="tab active" id="tab-messages" type="button"
-          title="The messages your agents sent each other">
+        <button class="tab tab-hub active" id="tab-messages" type="button"
+          title="The chat between your agents — what they send each other">
           <span class="tab-mark">⇄</span>
-          <span>Messages</span>
+          <span>Intra-agents Chat</span>
           <span class="tab-unread" id="tab-messages-unread" hidden></span>
         </button>
         <div class="tab-strip" id="tab-strip"></div>
@@ -2082,6 +2130,9 @@
             <button class="btn chat-send" id="chat-send" type="submit">send</button>
           </div>
         </form>
+        <!-- Session status read from the CLI footer — under the composer, like a
+             terminal footer: permission/plan mode + a running /goal with its age. -->
+        <div class="chat-statusbar" id="chat-statusbar" hidden></div>
         <!-- Terminal view: xterm. Hidden until you toggle to it. -->
         <div class="screen-term" id="screen-term" hidden></div>
       </div>
@@ -2752,6 +2803,7 @@
       renderGroupOptions();
       renderTabs(); // the tabs carry each agent's dot and unread count
       updateChatTyping(); // reflect the open agent's working/idle in the chat
+      renderScreenStatus(); // permission/plan/goal pills in the screen header
     }
 
     /**
@@ -3618,6 +3670,7 @@
         mountChat(name);
         updateChatTyping();
       }
+      renderScreenStatus(); // show the footer pills in chat, hide in terminal
     }
 
     /**
@@ -4011,6 +4064,38 @@
       } else if (!working && ind) {
         ind.remove();
       }
+    }
+
+    // The CLI's permission/plan mode and whether a /goal is running — read from
+    // the footer by the hub, shown as pills UNDER the composer (terminal-style).
+    // Colours: bypass = red (least safe), plan = violet, accept-edits = teal,
+    // manual = amber; a running goal is blue with its age.
+    const PERM_LABEL = { bypass: "bypass perms", acceptEdits: "accept edits", plan: "plan mode", default: "manual" };
+    const PERM_COLOR = { bypass: "var(--danger)", acceptEdits: "#4fd6c9", plan: "#a98bff", default: "var(--warn)" };
+    const GOAL_COLOR = "#4a9eff";
+    function renderScreenStatus() {
+      const box = $("#chat-statusbar");
+      if (!box) return;
+      box.textContent = "";
+      const agent = screenState.name === null ? null : state.agents.get(screenState.name);
+      const showable = agent && screenState.mode === "chat";
+      if (!showable) {
+        box.hidden = true;
+        return;
+      }
+      if (agent.permission) {
+        const pill = el("span", "status-pill", PERM_LABEL[agent.permission] || agent.permission);
+        pill.style.setProperty("--pill-color", PERM_COLOR[agent.permission] || "var(--text-dim)");
+        pill.title = `Permission mode: ${PERM_LABEL[agent.permission] || agent.permission} — change it in the Terminal with Shift+Tab`;
+        box.appendChild(pill);
+      }
+      if (agent.goalActive) {
+        const g = el("span", "status-pill goal", `◎ goal${agent.goalFor ? " · " + agent.goalFor : ""}`);
+        g.style.setProperty("--pill-color", GOAL_COLOR);
+        g.title = `A /goal is active${agent.goalFor ? ` (running for ${agent.goalFor})` : ""}`;
+        box.appendChild(g);
+      }
+      box.hidden = box.childElementCount === 0;
     }
 
     /** Drops any pending echo whose text now appears as a real user bubble. */

@@ -28,6 +28,7 @@ import {
   toPublicAgent,
   type Agent,
   type AgentActivity,
+  type AgentPermission,
   type AgentStatus,
   type Config,
   type Delivery,
@@ -59,15 +60,44 @@ export interface DispatcherTmux {
   capturePane?(session: string, lines?: number): Promise<string>;
 }
 
+export interface PaneStatus {
+  working: boolean;
+  permission: AgentPermission | null;
+  goalActive: boolean;
+  goalFor: string | null; // "21m" from "/goal active (21m)", or null
+}
+
 /**
- * The agent's CLI is mid-turn when its TUI shows the interrupt affordance —
- * Claude Code and Codex both print "esc to interrupt" while generating or
- * running a tool, and drop it the instant they return to the prompt. That one
- * marker is the signal; the CLIs run in the alternate screen (no scrollback),
- * so a captured pane holds only the CURRENT frame, never a stale one.
+ * Reads the live TUI frame for what the operator wants at a glance. Claude Code
+ * and Codex run in the alternate screen (no scrollback), so a captured pane is
+ * only the CURRENT frame — never stale.
+ *   - working: "esc to interrupt" shows only mid-turn.
+ *   - permission/plan: the "⏵⏵ <mode> (shift+tab to cycle)" footer line.
+ *   - goalActive: the "/goal active" marker Claude Code prints when a goal runs.
  */
+export function parsePaneStatus(pane: string): PaneStatus {
+  const working = /esc to interrupt/i.test(pane);
+  const goalMatch = pane.match(/\/goal active(?:\s*\(([^)]+)\))?/i);
+  const goalActive = goalMatch !== null;
+  const goalFor = goalMatch && goalMatch[1] ? goalMatch[1].trim() : null;
+  let permission: AgentPermission | null = null;
+  const m = pane.match(/⏵⏵\s*(.+?)\s*\(shift\+tab/i);
+  if (m) {
+    const t = m[1].toLowerCase();
+    permission = t.includes("bypass")
+      ? "bypass"
+      : t.includes("accept edits")
+        ? "acceptEdits"
+        : t.includes("plan")
+          ? "plan"
+          : "default";
+  }
+  return { working, permission, goalActive, goalFor };
+}
+
+/** Back-compat shim: whether the CLI is mid-turn. */
 export function detectWorking(pane: string): boolean {
-  return /esc to interrupt/i.test(pane) || /\besc\b\s+to\s+interrupt/i.test(pane);
+  return parsePaneStatus(pane).working;
 }
 
 export interface DispatcherOptions {
@@ -324,16 +354,30 @@ export class Dispatcher {
       for (const { name, tmuxSession } of this.store.listAgents()) {
         const agent = this.store.getAgent(name);
         if (!agent || agent.status !== "online") continue;
-        let working = false;
+        let status: PaneStatus = { working: false, permission: null, goalActive: false, goalFor: null };
         try {
-          const pane = await this.tmux.capturePane(tmuxSession, 30);
-          working = detectWorking(pane);
+          status = parsePaneStatus(await this.tmux.capturePane(tmuxSession, 30));
         } catch {
-          working = false; // unreadable pane: treat as idle, never throw
+          /* unreadable pane: treat as idle/unknown, never throw */
         }
-        const next: AgentActivity = working ? "working" : "idle";
-        if (agent.activity === next) continue;
-        const updated = this.store.updateAgent(name, { activity: next });
+        const next: AgentActivity = status.working ? "working" : "idle";
+        // Only write on a real change (any field), so a steady agent is free.
+        const permission = status.permission ?? agent.permission;
+        const goalFor = status.goalActive ? status.goalFor ?? undefined : undefined;
+        if (
+          agent.activity === next &&
+          agent.permission === permission &&
+          !!agent.goalActive === status.goalActive &&
+          (agent.goalFor ?? undefined) === goalFor
+        ) {
+          continue;
+        }
+        const updated = this.store.updateAgent(name, {
+          activity: next,
+          permission,
+          goalActive: status.goalActive,
+          goalFor,
+        });
         this.bus.emit({ type: "agent_updated", payload: toPublicAgent(updated) });
       }
     } finally {

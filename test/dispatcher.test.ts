@@ -584,3 +584,42 @@ describe("lifecycle (start/stop with no dangling handles)", () => {
     dispatcher.stop(); // no-op — if a handle leaked, vitest would hang here
   });
 });
+
+describe("parsePaneStatus", () => {
+  it("reads working / permission / goal from a Claude footer", async () => {
+    const { parsePaneStatus } = await import("../src/server/dispatcher.js");
+    const pane = [
+      "· Transfiguring… (30m · ↓ 108k tokens)",
+      "                                        ◎ /goal active (21m)",
+      "❯ ",
+      "  ⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt · ← for agents",
+    ].join("\n");
+    expect(parsePaneStatus(pane)).toEqual({
+      working: true,
+      permission: "bypass",
+      goalActive: true,
+      goalFor: "21m",
+    });
+  });
+
+  it("reads plan mode and no goal when idle", async () => {
+    const { parsePaneStatus } = await import("../src/server/dispatcher.js");
+    const pane = "❯ \n  ⏵⏵ plan mode on (shift+tab to cycle) · ? for shortcuts";
+    expect(parsePaneStatus(pane)).toEqual({
+      working: false,
+      permission: "plan",
+      goalActive: false,
+      goalFor: null,
+    });
+  });
+
+  it("returns null permission when the footer is absent", async () => {
+    const { parsePaneStatus } = await import("../src/server/dispatcher.js");
+    expect(parsePaneStatus("just some output\n")).toEqual({
+      working: false,
+      permission: null,
+      goalActive: false,
+      goalFor: null,
+    });
+  });
+});
