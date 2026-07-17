@@ -654,11 +654,22 @@
       0%, 100% { opacity: 1; box-shadow: 0 0 0 0 var(--accent-line); }
       50% { opacity: 0.45; box-shadow: 0 0 6px 1px var(--accent-line); }
     }
-    /* The lamp itself breathes amber while the agent is mid-turn. */
+    /* Green ALWAYS means online. Working is a separate signal: a pulsing amber
+       HALO ringing the still-green lamp — the dot never changes colour. */
     .status-dot.working {
-      background: var(--accent);
-      box-shadow: 0 0 8px rgba(245, 166, 35, 0.7);
-      animation: pulse-work 1.15s ease-in-out infinite;
+      position: relative;
+    }
+    .status-dot.working::after {
+      content: "";
+      position: absolute;
+      inset: -4px;
+      border-radius: 50%;
+      border: 1.5px solid var(--accent);
+      animation: halo-work 1.2s ease-out infinite;
+    }
+    @keyframes halo-work {
+      0% { transform: scale(0.7); opacity: 0.9; }
+      100% { transform: scale(1.5); opacity: 0; }
     }
     /* Which agent CLI the card's agent runs — same chip metrics as .mcp-icon
        so the two sit as one badge row. Deliberately NOT accent-colored: the
