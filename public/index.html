@@ -5709,13 +5709,18 @@
     }
 
     // Walks the rendered markdown's TEXT nodes and turns file paths into
-    // clickable preview links (skipping code, where a path is not a link).
+    // clickable preview links.
+    //
+    // INLINE code is linkified: `path/to/x.md` in backticks is how an agent
+    // writes a path nearly every time, so skipping <code> meant skipping the
+    // real case. A <pre> block is different — that is source code, where a path
+    // is a string, not a thing to open — and <a> already points somewhere.
     function linkifyPaths(root) {
       const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
       const targets = [];
       let node;
       while ((node = walker.nextNode())) {
-        if (node.parentElement.closest("code, pre, a")) continue;
+        if (node.parentElement.closest("pre, a")) continue;
         FILE_PATH_RE.lastIndex = 0; // global regex: reset before each test
         if (FILE_PATH_RE.test(node.nodeValue)) targets.push(node);
       }
@@ -5727,18 +5732,20 @@
     }
 
     // Plain text, but file paths become clickable preview links (same detection
-    // as the transcript).
+    // as the transcript). A relative path resolves against the agent whose chat
+    // this is — its own cwd is what it was talking about.
     function appendTextWithPaths(container, text) {
       FILE_PATH_RE.lastIndex = 0;
       let last = 0;
       for (const match of text.matchAll(FILE_PATH_RE)) {
         const p = match[0];
         if (match.index > last) container.appendChild(document.createTextNode(text.slice(last, match.index)));
-        const link = el("span", "path-link", p);
-        link.title = `Preview ${p}`;
+        const full = resolveAgentPath(p, screenState.name);
+        const link = el("span", "path-link", p); // shows what the agent wrote
+        link.title = `Preview ${full}`;          // reveals where that actually is
         // Chat links open the inline DOCK (read the file while chatting); the
         // Messages feed's links keep the lightbox.
-        link.addEventListener("click", (ev) => { ev.stopPropagation(); openInlineFile(p); });
+        link.addEventListener("click", (ev) => { ev.stopPropagation(); openInlineFile(full); });
         container.appendChild(link);
         last = match.index + p.length;
       }
@@ -6180,28 +6187,61 @@
       return foot;
     }
 
-    // Absolute-ish file paths agents name in messages: "/home/..", "~/..", with
-    // an extension. Kept conservative (needs a dir separator and an extension)
-    // so ordinary prose is not littered with false links. The scope check on
-    // the server is the real gate; this only decides what looks clickable.
-    const FILE_PATH_RE = /(?:~|\/)[\w.\-+@]+(?:\/[\w.\-+@ ]+)*\.[A-Za-z0-9]{1,8}/g;
+    // File paths agents name in messages. Two shapes:
+    //   absolute/home — "/home/rod/x.md", "~/notes/y.md"
+    //   RELATIVE      — "resultados/clip.mp4": agents talk about their own cwd
+    //                   far more often than they spell it out, so a relative
+    //                   path is the common case, not the exception. It is
+    //                   resolved against the naming agent's cwd (resolveAgentPath).
+    // Both still need a dir separator AND an extension, so ordinary prose is not
+    // littered with false links (a bare "node.js" is never a link). The scope
+    // check on the server is the real gate; this only decides what LOOKS
+    // clickable. The lookbehind keeps the relative branch from starting
+    // mid-token (e.g. inside a URL that was not autolinked).
+    //
+    // Two traps this shape exists to avoid, both of which it USED to fall into:
+    //   "~/x.md" — "~" must be glued to the slash ("~?/"). Requiring a name char
+    //     after "~" made the branch fail and the scan match "/x.md" instead: a
+    //     DIFFERENT, absolute path.
+    //   spaces  — a path segment may not contain one. Allowing it made
+    //     "/a/b.md e tambem c/d.json" match as ONE path, swallowing the prose
+    //     between them. A path with a real space in it is rare; eating sentences
+    //     is not, so the space loses.
+    const FILE_PATH_RE =
+      /~?\/[\w.\-+@]+(?:\/[\w.\-+@]+)*\.[A-Za-z0-9]{1,8}|(?<![\w:/@.\-])[\w.\-+@]+(?:\/[\w.\-+@]+)+\.[A-Za-z0-9]{1,8}/g;
+
+    /**
+     * A RELATIVE path an agent named is relative to THAT agent's cwd — resolving
+     * it against the hub's own cwd (what the server would do) is meaningless and
+     * just 404s. Absolute and "~" paths pass through untouched; with no agent
+     * context the raw text goes to the server, which judges it.
+     */
+    function resolveAgentPath(p, agentName) {
+      if (p.startsWith("/") || p.startsWith("~")) return p;
+      const a = agentName ? state.agents.get(agentName) : null;
+      if (!a || !a.cwd) return p;
+      return `${a.cwd.replace(/\/+$/, "")}/${p}`;
+    }
 
     /**
      * Builds the message body as text nodes with clickable spans for any file
      * path. Stays XSS-safe like the rest of this file: createElement + text
      * nodes, never innerHTML — the path text goes in via textContent.
      */
-    function buildBodyWithPaths(body) {
+    function buildBodyWithPaths(body, fromAgent) {
       const el2 = el("div", "msg-body clamped");
+      FILE_PATH_RE.lastIndex = 0;
       let last = 0;
       for (const match of body.matchAll(FILE_PATH_RE)) {
         const p = match[0];
         if (match.index > last) el2.appendChild(document.createTextNode(body.slice(last, match.index)));
+        // A relative path belongs to the agent that WROTE the message.
+        const full = resolveAgentPath(p, fromAgent);
         const link = el("span", "path-link", p);
-        link.title = `Preview ${p}`;
+        link.title = `Preview ${full}`;
         link.addEventListener("click", (ev) => {
           ev.stopPropagation(); // the card click toggles the feed filter
-          openPreview(p);
+          openPreview(full);
         });
         el2.appendChild(link);
         last = match.index + p.length;
@@ -6213,7 +6253,7 @@
     function buildBubble(from, to, body, createdAt, flag, extra) {
       const bubble = el("div", "msg-bubble");
       bubble.appendChild(buildMetaLine(from, to, { extra }));
-      bubble.appendChild(buildBodyWithPaths(body));
+      bubble.appendChild(buildBodyWithPaths(body, from));
       bubble.appendChild(buildFoot(createdAt, flag));
       return bubble;
     }
