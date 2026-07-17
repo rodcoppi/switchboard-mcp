@@ -2796,6 +2796,17 @@
       return (agent && agent.group) || DEFAULT_GROUP;
     }
 
+    /**
+     * What the UI SHOWS for an agent: the free display name (emoji welcome)
+     * when set, else the kebab id. Accepts an agent object or a name string
+     * (looked up; an unregistered name just shows itself).
+     */
+    function displayOf(agentOrName) {
+      const a = typeof agentOrName === "string" ? state.agents.get(agentOrName) : agentOrName;
+      if (!a) return typeof agentOrName === "string" ? agentOrName : "?";
+      return a.displayName || a.name;
+    }
+
     // --- Per-group colour ------------------------------------------------
     // A group's colour is a VIEWER preference (this is one operator's console),
     // so it lives in localStorage, not on the server. Unset groups get a stable
@@ -2940,11 +2951,11 @@
     function paletteResults(q) {
       const query = q.trim().toLowerCase();
       const agents = sortedAgents().map((a) => ({
-        kind: "agent", name: a.name, desc: a.role || "", online: a.status === "online",
+        kind: "agent", name: displayOf(a), id: a.name, desc: a.role || "", online: a.status === "online",
         run: () => { closePalette(); openScreen(a.name); },
       }));
       let all = [...agents, ...paletteActions()];
-      if (query) all = all.filter((it) => (it.name + " " + (it.desc || "")).toLowerCase().includes(query));
+      if (query) all = all.filter((it) => (it.name + " " + (it.id || "") + " " + (it.desc || "")).toLowerCase().includes(query));
       return all;
     }
 
@@ -3296,8 +3307,8 @@
       const dot = el("span", `status-dot ${online ? "online" : "offline"}${working ? " working" : ""}`);
       dot.title = online ? (working ? "online · working" : "online · idle") : "offline";
 
-      const name = el("div", "agent-name", agent.name);
-      name.title = agent.name;
+      const name = el("div", "agent-name", displayOf(agent));
+      name.title = agent.displayName ? `${agent.displayName} (${agent.name})` : agent.name;
       const role = el("div", "agent-role", agent.role || "—");
       role.title = agent.role || "";
 
@@ -3360,6 +3371,7 @@
       const MENU_ICONS = {
         "nudge-btn": "📣", "group-btn": "🚪", "codex-btn": "◆", "colour-btn": "🎨",
         "colour-reset-btn": "⭕", "mute-toggle": "🔇", "rename-btn": "✏️", "remove-btn": "🗑",
+        "display-btn": "🏷",
       };
       function menuItem(cls, label, title, onClick) {
         const item = el("button", `agent-menu-item ${cls}`);
@@ -3457,6 +3469,20 @@
           },
         ),
       );
+      // Nickname: the free display name (emoji ok) — works on a RUNNING agent,
+      // because nothing in the protocol reads it. The name cell becomes the
+      // editor, like rename, but the kebab id is untouched.
+      menu.appendChild(
+        menuItem(
+          "display-btn",
+          "nickname…",
+          `Set the display name the UI shows for "${agent.name}" — emoji welcome; empty clears`,
+          () => {
+            closeMenus();
+            startDisplayRename(agent, name);
+          },
+        ),
+      );
       // Rename: the name cell becomes an inline input (no blocking dialogs).
       // Only an OFFLINE agent can be renamed — a live one would re-join under
       // its old name. The item stays VISIBLE while online (greyed, saying why)
@@ -3465,7 +3491,7 @@
       menu.appendChild(
         menuItem(
           `rename-btn${online ? " disabled" : ""}`,
-          "rename",
+          "rename id",
           online
             ? `Stop "${agent.name}" first — a running agent would re-join under its old name`
             : "Rename this agent — its message history follows the new name",
@@ -3709,6 +3735,62 @@
       });
       input.addEventListener("blur", restore);
       bindAgentNameSanitizer(input);
+
+      nameEl.replaceWith(input);
+      input.focus();
+      input.select();
+    }
+
+    /**
+     * Inline editor for the DISPLAY name (emoji welcome, spaces welcome) — the
+     * free-form label the UI shows. Unlike startRename this works on a RUNNING
+     * agent: the kebab id (the protocol address) is untouched. Empty clears.
+     */
+    function startDisplayRename(agent, nameEl) {
+      const input = el("input", "agent-rename-input");
+      input.type = "text";
+      input.value = agent.displayName || "";
+      input.placeholder = agent.name;
+      input.spellcheck = false;
+      input.maxLength = 48;
+      input.title = "Display name (emoji ok) — Enter saves, empty clears, Esc cancels";
+
+      let done = false;
+      function restore() {
+        if (done) return true;
+        done = true;
+        input.replaceWith(nameEl);
+        return false;
+      }
+      async function confirm() {
+        const next = input.value.trim();
+        if (restore()) return;
+        if (next === (agent.displayName || "")) return;
+        try {
+          const res = await fetch(`/api/agents/${encodeURIComponent(agent.name)}/display`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ displayName: next }),
+          });
+          const body = await res.json().catch(() => ({}));
+          if (!res.ok || !body.ok) {
+            toast(`Could not set the display name: ${body.error || `HTTP ${res.status}`}`, "warn");
+            return;
+          }
+          mergeAgent(body.agent);
+          renderAgents();
+          renderTabs();
+        } catch (err) {
+          toast(`Could not set the display name: ${err && err.message ? err.message : err}`, "warn");
+        }
+      }
+
+      input.addEventListener("click", (ev) => ev.stopPropagation());
+      input.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter") confirm();
+        else if (ev.key === "Escape") restore();
+      });
+      input.addEventListener("blur", restore);
 
       nameEl.replaceWith(input);
       input.focus();
@@ -3972,7 +4054,7 @@
         tab.title = agent ? `${name} — ${agent.role || "no role"}` : name;
         tab.append(
           el("span", `dot ${agent && agent.status === "online" ? "online" : "offline"}`),
-          el("span", "name", name),
+          el("span", "name", displayOf(name)),
         );
         if (agent && agent.unreadCount > 0) {
           tab.appendChild(el("span", "tab-unread", String(agent.unreadCount)));
@@ -4018,7 +4100,8 @@
       $(".feed-head").hidden = true;
       $("#filter-bar").hidden = true;
       $("#screen").hidden = false;
-      $("#screen-name").textContent = name;
+      $("#screen-name").textContent = displayOf(name);
+      $("#screen-name").title = name; // the kebab id stays one hover away
 
       // Default to the CHAT casca. The mode is remembered across agents so
       // switching tabs keeps you in the view you chose.
@@ -4633,10 +4716,11 @@
         return box;
       }
       const turn = el("div", `chat-turn ${it.kind}`);
-      const avatar = el("div", `chat-avatar${isUser ? " you" : ""}`, isUser ? "you" : initialsOf(agentName));
+      const shown = agentName ? displayOf(agentName) : "agent";
+      const avatar = el("div", `chat-avatar${isUser ? " you" : ""}`, isUser ? "you" : initialsOf(shown));
       const body = el("div", "chat-turn-body");
       const meta = el("div", "chat-meta");
-      meta.appendChild(el("span", "chat-role", isUser ? "you" : agentName || "agent"));
+      meta.appendChild(el("span", "chat-role", isUser ? "you" : shown));
       if (it.ts) {
         const t = el("span", "chat-time", fmtTime(it.ts));
         t.title = fmtFull(it.ts);
@@ -5346,19 +5430,21 @@
     /** "alpha to beta" — a sentence, not a diagram. */
     function buildMetaLine(from, to, opts) {
       const meta = el("div", "msg-meta");
-      meta.append(
-        el("span", `msg-from${from === "operator" ? " operator" : ""}`, from),
-        el("span", "msg-rel", "to"),
-        el("span", `msg-to${to === "everyone" ? " all" : ""}`, to),
-      );
+      const showFrom = from === "operator" ? "operator" : displayOf(from);
+      const showTo = to === "everyone" ? "everyone" : displayOf(to);
+      const fromEl = el("span", `msg-from${from === "operator" ? " operator" : ""}`, showFrom);
+      fromEl.title = from;
+      const toEl = el("span", `msg-to${to === "everyone" ? " all" : ""}`, showTo);
+      toEl.title = to;
+      meta.append(fromEl, el("span", "msg-rel", "to"), toEl);
       if (opts && opts.extra) meta.appendChild(opts.extra);
       return meta;
     }
 
     function buildAvatar(name) {
-      const av = el("div", "msg-avatar", monogram(name));
+      const av = el("div", "msg-avatar", monogram(name === "operator" ? name : displayOf(name)));
       av.style.background = name === "operator" ? "var(--accent)" : agentHue(name);
-      av.title = name;
+      av.title = name === "operator" ? name : displayOf(name);
       return av;
     }
 

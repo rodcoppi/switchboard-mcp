@@ -832,6 +832,8 @@ function isAgent(value: unknown): value is Agent {
     (v.lastNudgeAt === null || typeof v.lastNudgeAt === "string") &&
     // token is optional: pre-v1.1 snapshots have no token field (legacy
     // record — the first join claims the name and generates one).
-    (v.token === undefined || typeof v.token === "string")
+    (v.token === undefined || typeof v.token === "string") &&
+    // displayName is optional: what the UI shows; `name` stays the protocol id.
+    (v.displayName === undefined || typeof v.displayName === "string")
   );
 }

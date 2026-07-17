@@ -23,6 +23,13 @@ export type AgentPermission = "bypass" | "acceptEdits" | "plan" | "default";
 
 export interface Agent {
   name: string; // ^[a-z0-9][a-z0-9-]{1,30}$ , unique
+  /**
+   * Free-form display name — what the UI SHOWS (emoji welcome, any script,
+   * spaces). The kebab `name` above stays the PROTOCOL identifier: agents
+   * address each other by it, the tmux session is derived from it, and it
+   * survives restarts. Absent → the UI shows `name`.
+   */
+  displayName?: string;
   role: string; // free-form description, e.g. "backend da API de pagamentos"
   tmuxSession: string; // e.g. "sb-alpha" (prefix + name)
   cwd: string; // directory where the agent CLI was opened

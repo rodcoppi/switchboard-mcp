@@ -924,6 +924,34 @@ export function createApiRouter(options: ApiOptions): express.Router {
     res.json({ ok: true, agent: toPublicAgent(agent) });
   });
 
+  // POST /api/agents/:name/display — body {displayName: string}. Sets the
+  // free-form name the UI shows (emoji welcome); empty string clears it back
+  // to the kebab id. Unlike rename this works on a RUNNING agent: nothing in
+  // the protocol reads it — `name` stays the address, the session env, the
+  // tmux session — so there is nothing for a live agent to un-do.
+  router.post("/api/agents/:name/display", (req, res) => {
+    const agent = store.getAgent(String(req.params.name));
+    if (!agent) {
+      res.status(404).json({ ok: false, error: `Unknown agent: "${req.params.name}".` });
+      return;
+    }
+    const raw = (req.body ?? {}) as Record<string, unknown>;
+    if (typeof raw.displayName !== "string") {
+      res.status(400).json({
+        ok: false,
+        error: `Invalid body: expected {"displayName": "<text>"} (empty clears it).`,
+      });
+      return;
+    }
+    // "" is the CLEARED state (updateAgent skips undefined patch values, so an
+    // empty string is how "back to the kebab id" persists; the UI treats any
+    // falsy displayName as absent).
+    const displayName = raw.displayName.trim().slice(0, 48);
+    const updated = store.updateAgent(agent.name, { displayName });
+    bus.emit({ type: "agent_updated", payload: toPublicAgent(updated) });
+    res.json({ ok: true, agent: toPublicAgent(updated) });
+  });
+
   // POST /api/agents/:name/stop — kills the agent's tmux session (the same
   // thing `switchboard stop <name>` does, exposed to the dashboard so "delete
   // this agent" is one click, not a trip to the CLI). The registration is NOT
