@@ -2216,6 +2216,10 @@
             <button class="screen-mode active" data-mode="chat" type="button">Chat</button>
             <button class="screen-mode" data-mode="terminal" type="button">Terminal</button>
           </div>
+          <!-- Engine tabs: when this agent has a codex sibling (same cwd, its own
+               tmux session), switch which engine's screen is shown. Both stay
+               alive — the tab only changes the view. Filled by renderEngineTabs. -->
+          <div class="screen-modes engine-tabs" id="engine-tabs" hidden></div>
           <span class="screen-hint" id="screen-hint"></span>
           <button class="btn" id="screen-window" type="button"
             title="Open this agent in a real Windows terminal window instead">window</button>
@@ -2913,6 +2917,7 @@
       updateChatTyping(); // reflect the open agent's working/idle in the chat
       updateStopButton(); // and the composer STOP button (same working signal)
       renderScreenStatus(); // permission/plan/goal pills in the screen header
+      renderEngineTabs(); // Claude|Codex tabs when the open agent has a sibling
     }
 
     /**
@@ -3163,6 +3168,22 @@
           },
         ),
       );
+      // "Open Codex here": launch the codex sibling in the SAME cwd, so this
+      // logical agent gains a second engine (the pair shows engine tabs). Only
+      // offered on a claude agent that has no sibling yet.
+      if (agentTypeOf(agent) === "claude" && !agent.name.endsWith("-codex") && !state.agents.has(`${agent.name}-codex`)) {
+        menu.appendChild(
+          menuItem(
+            "codex-btn",
+            "open codex…",
+            `Open a Codex instance on ${agent.name}'s folder — same files, its own session`,
+            (item) => {
+              openCodexSibling(agent, item);
+              closeMenus();
+            },
+          ),
+        );
+      }
       // Recolour this chat's cable — a native picker, no blocking dialog. A
       // hidden colour input lives on the item; the item click opens it.
       const colourItem = menuItem(
@@ -4205,6 +4226,71 @@
     const PERM_LABEL = { bypass: "bypass perms", acceptEdits: "accept edits", plan: "plan mode", default: "manual" };
     const PERM_COLOR = { bypass: "var(--danger)", acceptEdits: "#4fd6c9", plan: "#a98bff", default: "var(--warn)" };
     const GOAL_COLOR = "#4a9eff";
+    // --- Engine pairing (Claude + Codex on the same logical agent) ---------
+    // A codex sibling is "<base>-codex" in the SAME cwd: two tmux sessions, two
+    // network identities, one logical agent. Pairing is by name convention.
+    function engineBaseOf(name) {
+      return name.endsWith("-codex") ? name.slice(0, -6) : name;
+    }
+    function enginePairOf(name) {
+      const base = engineBaseOf(name);
+      const claude = state.agents.get(base);
+      const codex = state.agents.get(base + "-codex");
+      return claude && codex ? { base, claude, codex } : null;
+    }
+    /** Engine tabs in the screen head — shown only when the pair exists. */
+    function renderEngineTabs() {
+      const box = $("#engine-tabs");
+      if (!box) return;
+      const pair = screenState.name ? enginePairOf(screenState.name) : null;
+      box.textContent = "";
+      if (!pair) {
+        box.hidden = true;
+        return;
+      }
+      for (const [label, agent] of [["Claude", pair.claude], ["Codex", pair.codex]]) {
+        const btn = el("button", `screen-mode${screenState.name === agent.name ? " active" : ""}`, label);
+        btn.type = "button";
+        btn.title = `${label} engine of ${pair.base} (${agent.status}${agent.activity ? " · " + agent.activity : ""})`;
+        btn.addEventListener("click", () => {
+          if (screenState.name !== agent.name) openScreen(agent.name);
+        });
+        box.appendChild(btn);
+      }
+      box.hidden = false;
+    }
+
+    /** Launches the codex sibling of a claude agent: same cwd, same group. */
+    async function openCodexSibling(agent, trigger) {
+      const name = `${agent.name}-codex`;
+      if (trigger) {
+        trigger.disabled = true;
+        trigger.textContent = "launching…";
+      }
+      try {
+        const res = await fetch("/api/agents/launch", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            dir: agent.cwd,
+            name,
+            role: `Codex engine of ${agent.name}`,
+            agentType: "codex",
+            group: groupOf(agent),
+            continue: false,
+          }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok || !body.ok) {
+          toast(`Could not launch codex: ${body.error || `HTTP ${res.status}`}`, "warn");
+          return;
+        }
+        toast(`Codex opening on ${agent.name} — it appears in the rail when ready.`);
+      } catch (err) {
+        toast(`Could not launch codex: ${err && err.message ? err.message : err}`, "warn");
+      }
+    }
+
     // A short model label from a JSONL model id: "claude-opus-4-8" -> "opus-4-8".
     function shortModel(id) {
       if (!id) return null;

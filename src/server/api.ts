@@ -38,6 +38,7 @@ import { PickError, pickWindowsFolder } from "./winpicker.js";
 import { TerminalError } from "./terminal.js";
 import { PreviewError, readPreview, resolveInScope } from "./filepreview.js";
 import { parseConversation, projectDirForCwd } from "./conversation.js";
+import { findCodexRolloutForCwd, parseCodexRollout } from "./codexlog.js";
 import type { UsageProbe } from "./usage.js";
 import {
   invalidAgentTypeMessage,
@@ -933,25 +934,44 @@ export function createApiRouter(options: ApiOptions): express.Router {
       return;
     }
 
-    const dir = projectDirForCwd(agent.cwd);
-    // The active session = the most-recently-modified .jsonl in the project dir.
+    // Which CLI wrote this agent's log decides both WHERE it lives and HOW it
+    // parses: claude keys a per-project dir off the encoded cwd; codex keeps a
+    // date tree of rollouts located by scanning for session_meta.cwd.
+    const isCodex = resolveAgentType(agent.agentType) === "codex";
+    const parser = isCodex ? parseCodexRollout : parseConversation;
     let file: string;
-    try {
-      const jsonls = fs
-        .readdirSync(dir)
-        .filter((f) => f.endsWith(".jsonl"))
-        .map((f) => path.join(dir, f))
-        .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
-      if (jsonls.length === 0) throw new Error("no conversation log yet");
-      file = jsonls[0];
-    } catch {
-      res.status(404).json({
-        ok: false,
-        error:
-          `No conversation log for "${agent.name}" yet (looked in ${dir}). ` +
-          `It appears once the agent has talked at least once.`,
-      });
-      return;
+    if (isCodex) {
+      const rollout = findCodexRolloutForCwd(agent.cwd);
+      if (!rollout) {
+        res.status(404).json({
+          ok: false,
+          error:
+            `No codex conversation for "${agent.name}" yet (no rollout in ` +
+            `~/.codex/sessions matches ${agent.cwd}). It appears after its first turn.`,
+        });
+        return;
+      }
+      file = rollout;
+    } else {
+      const dir = projectDirForCwd(agent.cwd);
+      // The active session = the most-recently-modified .jsonl in the project dir.
+      try {
+        const jsonls = fs
+          .readdirSync(dir)
+          .filter((f) => f.endsWith(".jsonl"))
+          .map((f) => path.join(dir, f))
+          .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
+        if (jsonls.length === 0) throw new Error("no conversation log yet");
+        file = jsonls[0];
+      } catch {
+        res.status(404).json({
+          ok: false,
+          error:
+            `No conversation log for "${agent.name}" yet (looked in ${dir}). ` +
+            `It appears once the agent has talked at least once.`,
+        });
+        return;
+      }
     }
 
     res.writeHead(200, {
@@ -986,7 +1006,7 @@ export function createApiRouter(options: ApiOptions): express.Router {
           const nl = text.lastIndexOf("\n");
           const complete = nl === -1 ? "" : text.slice(0, nl);
           carry = nl === -1 ? text : text.slice(nl + 1);
-          const parsed = parseConversation(complete.split("\n"));
+          const parsed = parser(complete.split("\n"));
           // The initial dump is capped to the most recent turns: a long project
           // has thousands, and sending them all made the page render ~40k DOM
           // nodes and choke. Live appends are never capped (they are new).
