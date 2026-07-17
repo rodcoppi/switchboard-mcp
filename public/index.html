@@ -402,6 +402,15 @@
       color: var(--text-dim);
       font-size: var(--fs-xs);
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      transition: color 0.12s var(--ease);
+      cursor: help;
+    }
+    /* Hover the card and the (usually truncated) description opens up in full —
+       the one-liner was unreadable when the role was a paragraph. */
+    .agent-card:hover .agent-role {
+      overflow: visible;
+      white-space: normal;
+      color: var(--text);
     }
     .agent-badges {
       grid-area: badges;
@@ -2348,11 +2357,14 @@
       <span class="conn-state" id="conn-state" data-state="connecting">
         <span class="dot"></span><span id="conn-label">connecting</span>
       </span>
+    </div>
+    <div class="header-spacer"></div>
+    <!-- The at-a-glance metrics live on the RIGHT, off the wordmark. -->
+    <div class="hub-status hub-metrics">
       <span class="metric">online <b id="online-count">0</b>/<span id="agent-count">0</span></span>
       <span class="metric">uptime <b id="uptime">—</b></span>
       <span class="metric">v<span id="version">—</span></span>
     </div>
-    <div class="header-spacer"></div>
     <!-- The one-time "register this hub in Claude Code" command. It only shows
          on a hub with no agents yet, because that is the only time it is the
          next thing to do — `switchboard setup` runs it for you, and once an
@@ -3619,14 +3631,14 @@
           },
         ),
       );
-      // Rename: the name cell becomes an inline input (no blocking dialogs).
-      // Only an OFFLINE agent can be renamed — a live one would re-join under
-      // its old name. The item stays VISIBLE while online (greyed, saying why)
-      // rather than vanishing: hiding it made the feature look nonexistent to
-      // anyone whose agents are all up.
-      menu.appendChild(
+      // Rename the technical ID — only OFFLINE (a live agent would re-join under
+      // its old name). Now that "nickname…" covers what people usually want (the
+      // shown name), the raw id rename is an advanced, rare thing — so it is
+      // HIDDEN while online instead of shown greyed-and-confusing. It reappears
+      // when the agent is stopped, for when you truly need to change the address.
+      if (!online) menu.appendChild(
         menuItem(
-          `rename-btn${online ? " disabled" : ""}`,
+          "rename-btn",
           "rename id",
           online
             ? `Stop "${agent.name}" first — a running agent would re-join under its old name`
