@@ -38,6 +38,7 @@ import { PickError, pickWindowsFolder } from "./winpicker.js";
 import { TerminalError } from "./terminal.js";
 import { PreviewError, readPreview, resolveInScope } from "./filepreview.js";
 import { parseConversation, projectDirForCwd } from "./conversation.js";
+import type { UsageProbe } from "./usage.js";
 import {
   invalidAgentTypeMessage,
   isAgentType,
@@ -310,6 +311,8 @@ export interface ApiOptions {
    * Injectable so tests never read the operator's real conversation index.
    */
   claudeProjectsDir?: string;
+  /** Claude /usage bars proxy (OAuth-backed, cached). Undefined → /api/usage = []. */
+  usage?: UsageProbe;
   /** Hub start timestamp (epoch ms) for /api/health uptime. */
   startedAt: number;
   /** Hub version string for /api/health (from package.json). */
@@ -346,7 +349,7 @@ function hasClaudeConversation(claudeProjectsDir: string, absPath: string): bool
 }
 
 export function createApiRouter(options: ApiOptions): express.Router {
-  const { store, config, log, bus, onMessage, nudger, launcher, terminals, startedAt, version } =
+  const { store, config, log, bus, onMessage, nudger, launcher, terminals, usage, startedAt, version } =
     options;
   const heartbeatMs = options.heartbeatMs ?? 25_000;
   const claudeProjectsDir =
@@ -1288,6 +1291,12 @@ export function createApiRouter(options: ApiOptions): express.Router {
       uptime: Math.floor((Date.now() - startedAt) / 1000),
       version,
     });
+  });
+
+  // Claude /usage bars (5h session + weekly), proxied from the OAuth endpoint
+  // and cached. [] when no probe or the fetch failed — the dashboard hides it.
+  router.get("/api/usage", async (_req, res) => {
+    res.json({ limits: usage ? await usage.getLimits() : [] });
   });
 
   // Fallback for unknown /api routes: JSON 404, never the Express HTML page.

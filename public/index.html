@@ -213,6 +213,35 @@
     @keyframes blink { 50% { opacity: 0.25; } }
 
     .header-spacer { flex: 1 1 auto; }
+
+    /* Claude /usage bars in the rail's foot — the 5-hour and weekly limits,
+       each a bar coloured by burn PACE (green if under the clock, red if you're
+       spending faster than the window refills). Copied from the reference app,
+       on this dashboard's own palette. */
+    .usage-card {
+      flex: 0 0 auto;
+      margin: 8px 10px 12px;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--bg-elev);
+      display: flex;
+      flex-direction: column;
+      gap: 9px;
+    }
+    .usage-card[hidden] { display: none; }
+    .usage-card-head { display: flex; align-items: baseline; justify-content: space-between; }
+    .usage-reset { font-family: var(--mono); font-size: var(--fs-eyebrow); color: var(--text-faint); }
+    .usage-row { display: flex; flex-direction: column; gap: 3px; }
+    .usage-row-head {
+      display: flex; justify-content: space-between; align-items: baseline;
+      font-family: var(--mono); font-size: var(--fs-xs);
+    }
+    .usage-row-label { color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .usage-row-pct { color: var(--text); font-variant-numeric: tabular-nums; font-weight: 600; }
+    .usage-bar { height: 6px; border-radius: 999px; background: var(--bg-inset); overflow: hidden; }
+    .usage-bar-fill { height: 100%; border-radius: 999px; transition: width 0.4s var(--ease), background 0.3s var(--ease); }
+    .usage-row-reset { font-size: var(--fs-eyebrow); color: var(--text-faint); font-family: var(--mono); }
     /* [hidden] LAST, and it must exist on every rule that sets `display`: the
        attribute is only a UA-stylesheet `display:none`, so any `display` of ours
        beats it and the element stays on screen while the JS believes it hid it.
@@ -1845,6 +1874,16 @@
 
       <div class="agents" id="agents"></div>
 
+      <!-- Claude /usage bars (5h session + weekly), like the reference app —
+           filled by /api/usage, coloured by burn pace. Hidden until it has data. -->
+      <div class="usage-card" id="usage-card" hidden>
+        <div class="usage-card-head">
+          <span class="eyebrow">Claude usage</span>
+          <span class="usage-reset" id="usage-updated"></span>
+        </div>
+        <div id="usage-rows"></div>
+      </div>
+
     </aside>
 
     <main class="main">
@@ -2087,6 +2126,82 @@
     // =====================================================================
     // Rendering
     // =====================================================================
+
+    // --- Claude /usage bars, pace-coloured (from the reference app) --------
+    // The bar fills to `percent`, coloured by how the burn compares to the clock:
+    // under the window's pace = green, at/over it = warming to red.
+    const USAGE_HOUR = 3_600_000;
+    function usageWindow(group) {
+      if (group === "session") return { windowMs: 5 * USAGE_HOUR, chunkMs: USAGE_HOUR / 3 };
+      if (group === "weekly") return { windowMs: 168 * USAGE_HOUR, chunkMs: USAGE_HOUR };
+      return null;
+    }
+    function usageExpected(resetsAt, windowMs, chunkMs, now) {
+      const reset = Date.parse(resetsAt);
+      const start = reset - windowMs;
+      const totalChunks = Math.round(windowMs / chunkMs);
+      const chunks = Math.min(totalChunks, Math.max(1, Math.ceil((now - start) / chunkMs)));
+      return (chunks / totalChunks) * 100;
+    }
+    function usagePaceColor(percent, expected) {
+      if (expected <= 0) return percent > 0 ? "var(--danger)" : "var(--online)";
+      const ratio = percent / expected;
+      if (ratio <= 1) return "var(--online)";
+      if (ratio >= 2) return "var(--danger)";
+      return `hsl(${Math.round(140 * (2 - ratio))} 70% 55%)`;
+    }
+    function usageLabel(l) {
+      if (l.label) return l.label;
+      if (l.kind === "session") return "session · 5h";
+      if (l.kind === "weekly_all") return "weekly · all";
+      return l.kind.replace(/_/g, " ");
+    }
+    function usageResetText(iso) {
+      const d = new Date(iso);
+      return d.toLocaleString(undefined, { weekday: "short", hour: "2-digit", minute: "2-digit" });
+    }
+    let usageLimits = [];
+    async function refreshUsage() {
+      try {
+        const r = await fetch("/api/usage");
+        const body = r.ok ? await r.json() : null;
+        usageLimits = Array.isArray(body && body.limits) ? body.limits : [];
+      } catch {
+        /* keep the last good value */
+      }
+      renderUsage();
+    }
+    function renderUsage() {
+      const card = $("#usage-card");
+      if (!usageLimits.length) {
+        card.hidden = true;
+        return;
+      }
+      const now = Date.now();
+      const order = { session: 0, weekly: 1 };
+      const sorted = [...usageLimits].sort(
+        (a, b) => (order[a.group] ?? 9) - (order[b.group] ?? 9) || a.percent - b.percent,
+      );
+      const rows = $("#usage-rows");
+      rows.textContent = "";
+      for (const l of sorted) {
+        const win = usageWindow(l.group);
+        const color = win
+          ? usagePaceColor(l.percent, usageExpected(l.resetsAt, win.windowMs, win.chunkMs, now))
+          : "var(--accent)";
+        const row = el("div", "usage-row");
+        const head = el("div", "usage-row-head");
+        head.append(el("span", "usage-row-label", usageLabel(l)), el("span", "usage-row-pct", `${l.percent}%`));
+        const bar = el("div", "usage-bar");
+        const fill = el("div", "usage-bar-fill");
+        fill.style.width = `${Math.min(100, l.percent)}%`;
+        fill.style.background = color;
+        bar.appendChild(fill);
+        row.append(head, bar, el("div", "usage-row-reset", `resets ${usageResetText(l.resetsAt)}`));
+        rows.appendChild(row);
+      }
+      card.hidden = false;
+    }
 
     function renderHeader() {
       const agents = [...state.agents.values()];
@@ -4913,6 +5028,12 @@
       // Local uptime ticker (1s) resynced by the periodic /api/health poll.
       setInterval(renderUptime, 1000);
       setInterval(loadHealth, 15000);
+
+      // Claude /usage bars: poll every 60s and on window focus (the reference's
+      // cadence). Pace recolours as the window elapses.
+      refreshUsage();
+      setInterval(refreshUsage, 60000);
+      window.addEventListener("focus", refreshUsage);
     }
 
     // WAIT for the DOM. This script sits in the middle of the body, so markup

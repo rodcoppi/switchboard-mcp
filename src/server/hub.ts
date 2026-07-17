@@ -19,6 +19,7 @@ import { createMcpEndpoint } from "./mcp.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createTmux } from "./tmux.js";
+import { createUsageProbe, type UsageProbe } from "./usage.js";
 import { Dispatcher } from "./dispatcher.js";
 import {
   createLauncher,
@@ -161,6 +162,10 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
     });
   }
 
+  // Claude /usage bars: a thin OAuth-endpoint proxy, cached — a single small
+  // HTTP GET, safe on any machine (unlike the ccusage log-parse that OOM'd).
+  const usage: UsageProbe = createUsageProbe({ log });
+
   const version = readVersion();
   const startedAt = Date.now();
 
@@ -197,6 +202,7 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
       nudger: dispatcher,
       launcher,
       terminals,
+      usage,
       claudeProjectsDir: options.claudeProjectsDir,
       startedAt,
       version,
