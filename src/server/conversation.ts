@@ -32,6 +32,13 @@ export interface UserItem {
 export interface AssistantItem {
   kind: "assistant";
   text: string;
+  /** The model that produced this turn (message.model), when present. */
+  model?: string;
+  ts?: string;
+}
+export interface ThinkingItem {
+  kind: "thinking";
+  text: string;
   ts?: string;
 }
 export interface ToolItem {
@@ -46,7 +53,7 @@ export interface ToolItem {
   isError?: boolean;
   ts?: string;
 }
-export type ChatItem = UserItem | AssistantItem | ToolItem;
+export type ChatItem = UserItem | AssistantItem | ToolItem | ThinkingItem;
 
 /** A short, human label for a tool call from its name and input. */
 export function toolSummary(name: string, input: unknown): string {
@@ -154,9 +161,12 @@ export function parseConversation(lines: string[]): ChatItem[] {
     }
 
     if (rec.type === "assistant" && Array.isArray(msg?.content)) {
+      const model = typeof msg.model === "string" ? msg.model : undefined;
       for (const block of msg.content) {
         if (block?.type === "text" && typeof block.text === "string" && block.text.trim()) {
-          items.push({ kind: "assistant", text: block.text.trim(), ts });
+          items.push({ kind: "assistant", text: block.text.trim(), model, ts });
+        } else if (block?.type === "thinking" && typeof block.thinking === "string" && block.thinking.trim()) {
+          items.push({ kind: "thinking", text: block.thinking.trim(), ts });
         } else if (block?.type === "tool_use" && block.id) {
           const tool: ToolItem = {
             kind: "tool",

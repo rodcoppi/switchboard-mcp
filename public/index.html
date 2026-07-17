@@ -973,14 +973,22 @@
        permission/plan mode and a running /goal with its age. */
     .chat-statusbar {
       flex: 0 0 auto;
-      display: flex;
-      align-items: center;
-      gap: 7px;
-      padding: 5px 18px 7px;
+      padding: 0;
       background: var(--bg-elev);
       border-top: 1px solid var(--border-soft);
     }
     .chat-statusbar[hidden] { display: none; }
+    /* Inner rail centred on the SAME 880px column as the messages and composer,
+       so the pills line up under the chat instead of hugging the far edge. */
+    .chat-statusbar-inner {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      width: 100%;
+      max-width: 880px;
+      margin: 0 auto;
+      padding: 5px 18px 7px;
+    }
     .status-pill {
       display: inline-flex;
       align-items: center;
@@ -1050,7 +1058,40 @@
       width: 100%;
       max-width: 880px;
       margin: 0 auto;
+      position: relative; /* anchors the slash-command popover */
     }
+    /* Slash-command autocomplete popover — opens ABOVE the textarea. */
+    .slash-menu {
+      position: absolute;
+      bottom: calc(100% + 8px);
+      left: 0;
+      right: 0;
+      z-index: 40;
+      max-height: 264px;
+      overflow-y: auto;
+      padding: 6px;
+      background: var(--bg-elev);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+    }
+    .slash-menu[hidden] { display: none; }
+    .slash-item {
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+      padding: 8px 11px;
+      border-radius: 7px;
+      cursor: pointer;
+      color: var(--text-dim);
+    }
+    .slash-item__name { flex: 0 0 auto; font-family: var(--mono); font-size: var(--fs-sm); font-weight: 600; color: var(--text); }
+    .slash-item__desc {
+      flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      font-family: var(--sans); font-size: var(--fs-sm); color: var(--text-faint);
+    }
+    .slash-item.active { background: var(--accent-wash); color: var(--text); }
+    .slash-item.active .slash-item__name { color: var(--accent); }
     #chat-input {
       flex: 1 1 auto;
       resize: none;
@@ -1067,6 +1108,23 @@
     #chat-input:focus { outline: none; border-color: var(--accent-line); }
     #chat-input:disabled { opacity: 0.5; }
     .chat-send { flex: none; align-self: stretch; padding: 0 16px; }
+    /* Interrupt the open agent mid-turn — a danger square beside send, shown
+       only while that agent is working. */
+    .chat-stop {
+      flex: none;
+      align-self: stretch;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      min-width: 40px;
+      padding: 0 14px;
+      color: var(--danger);
+      border-color: var(--danger);
+      font-size: 12px;
+      line-height: 1;
+    }
+    .chat-stop.visible { display: inline-flex; }
+    .chat-stop:hover { background: var(--danger); border-color: var(--danger); color: #fff; }
 
     /* A centred reading column — the messages the operator liked. The composer
        below is constrained to the SAME column so the place you type lines up
@@ -1267,6 +1325,27 @@
       background: var(--accent-wash);
       border-radius: 12px 12px 3px 12px;
     }
+    /* Edit pencil on your own recent user turns — reveals on hover, no reflow. */
+    .chat-edit-btn {
+      flex: 0 0 auto;
+      align-self: center;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 4px;
+      line-height: 0;
+      background: transparent;
+      border: none;
+      border-radius: 7px;
+      color: var(--text-faint);
+      cursor: pointer;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.15s var(--ease), color 0.15s var(--ease);
+    }
+    .chat-edit-btn svg { display: block; }
+    .chat-turn.user:hover .chat-edit-btn { opacity: 1; pointer-events: auto; }
+    .chat-edit-btn:hover { color: var(--accent); }
     .chat-turn.assistant .chat-bubble { border-radius: 12px 12px 12px 3px; }
     /* Minimal markdown: inline code, code fences, bold. */
     .chat-bubble code { font-family: var(--mono); font-size: 0.92em; background: var(--bg-inset); padding: 1px 5px; border-radius: 4px; }
@@ -1345,6 +1424,32 @@
     .diff-del { color: #ff8589; background: color-mix(in srgb, #3d1418 55%, transparent); display: block; }
     /* Code blocks in assistant markdown get the same hover copy button. */
     .code-wrap { position: relative; }
+
+    /* Thinking: the agent's reasoning, folded away, dim and set to the side. */
+    .chat-thinking { align-self: stretch; max-width: 100%; margin-left: 40px; }
+    .chat-thinking-head {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      cursor: pointer;
+      font-family: var(--mono);
+      font-size: var(--fs-xs);
+      font-style: italic;
+      color: var(--text-faint);
+      padding: 3px 2px;
+    }
+    .chat-thinking-head:hover { color: var(--text-dim); }
+    .chat-thinking.open .chat-thinking-head .chat-tool-caret { transform: rotate(90deg); }
+    .chat-thinking-body {
+      display: none;
+      border-left: 2px solid var(--border-soft);
+      padding: 2px 0 2px 12px;
+      margin: 2px 0 2px 4px;
+      color: var(--text-dim);
+      font-style: italic;
+      font-size: var(--fs-sm);
+    }
+    .chat-thinking.open .chat-thinking-body { display: block; }
 
     /* Action group: a run of tool calls folded into one card, stacked look. */
     .chat-tool-group {
@@ -2125,9 +2230,12 @@
              because the chat tails the conversation log live. -->
         <form class="chat-composer" id="chat-composer" hidden autocomplete="off">
           <div class="chat-composer-inner">
+            <div class="slash-menu" id="slash-menu" hidden></div>
             <textarea id="chat-input" rows="1"
               placeholder="Message this agent…  (Enter sends · Shift+Enter for a newline)"></textarea>
             <button class="btn chat-send" id="chat-send" type="submit">send</button>
+            <button class="btn chat-stop" id="chat-stop" type="button"
+              aria-label="Stop the agent (Esc)" title="Stop (Esc)">■</button>
           </div>
         </form>
         <!-- Session status read from the CLI footer — under the composer, like a
@@ -2803,6 +2911,7 @@
       renderGroupOptions();
       renderTabs(); // the tabs carry each agent's dot and unread count
       updateChatTyping(); // reflect the open agent's working/idle in the chat
+      updateStopButton(); // and the composer STOP button (same working signal)
       renderScreenStatus(); // permission/plan/goal pills in the screen header
     }
 
@@ -3669,6 +3778,7 @@
         $("#chat-composer").hidden = false;
         mountChat(name);
         updateChatTyping();
+        updateStopButton();
       }
       renderScreenStatus(); // show the footer pills in chat, hide in terminal
     }
@@ -3791,6 +3901,7 @@
     // ---- the chat casca: renders the agent's conversation log ----------
     function mountChat(name) {
       setScreenHint("reading the conversation log", false);
+      screenState.model = null; // re-derived from this agent's own log
       const view = $("#screen-chat");
       view.textContent = "";
       view.appendChild(el("div", "chat-empty", "Loading the conversation…"));
@@ -3815,9 +3926,13 @@
           if (stale) stale.remove(); // rebuild, don't stack onto old turns
         }
         const atBottom = view.scrollHeight - view.scrollTop - view.clientHeight < 120;
-        for (const it of parsed.items || []) items.push(it);
+        for (const it of parsed.items || []) {
+          items.push(it);
+          if (it.kind === "assistant" && it.model) screenState.model = it.model; // track current model
+        }
         renderChat(view, items);
         setScreenHint(`${items.length} messages`, false);
+        renderScreenStatus(); // the model pill follows the latest assistant turn
         if (atBottom) view.scrollTop = view.scrollHeight;
       };
       sse.onerror = () => setScreenHint("reconnecting…", true);
@@ -3952,10 +4067,17 @@
       const name = screenState.name;
       for (let i = start; i < items.length; i++) {
         const it = items[i];
-        thread.appendChild(it.kind === "tool" ? buildToolChip(it) : buildChatTurn(it, name));
+        const node =
+          it.kind === "tool"
+            ? buildToolChip(it)
+            : it.kind === "thinking"
+              ? buildThinkingBlock(it)
+              : buildChatTurn(it, name);
+        thread.appendChild(node);
       }
       thread.__count = items.length;
       groupActions(thread);
+      markEditableUserTurns(thread);
       reconcilePending(view);
     }
 
@@ -4066,6 +4188,16 @@
       }
     }
 
+    // Sibling of updateChatTyping(): the composer STOP button is visible iff an
+    // agent is open, we're in chat mode, and that agent is mid-turn (working).
+    function updateStopButton() {
+      const btn = $("#chat-stop");
+      if (!btn) return;
+      const agent = screenState.name ? state.agents.get(screenState.name) : null;
+      const working = !!(agent && agent.activity === "working");
+      btn.classList.toggle("visible", working && screenState.name !== null && screenState.mode === "chat");
+    }
+
     // The CLI's permission/plan mode and whether a /goal is running — read from
     // the footer by the hub, shown as pills UNDER the composer (terminal-style).
     // Colours: bypass = red (least safe), plan = violet, accept-edits = teal,
@@ -4073,29 +4205,45 @@
     const PERM_LABEL = { bypass: "bypass perms", acceptEdits: "accept edits", plan: "plan mode", default: "manual" };
     const PERM_COLOR = { bypass: "var(--danger)", acceptEdits: "#4fd6c9", plan: "#a98bff", default: "var(--warn)" };
     const GOAL_COLOR = "#4a9eff";
+    // A short model label from a JSONL model id: "claude-opus-4-8" -> "opus-4-8".
+    function shortModel(id) {
+      if (!id) return null;
+      return id.replace(/^claude-/, "").replace(/-\d{8}$/, "");
+    }
     function renderScreenStatus() {
       const box = $("#chat-statusbar");
       if (!box) return;
-      box.textContent = "";
       const agent = screenState.name === null ? null : state.agents.get(screenState.name);
-      const showable = agent && screenState.mode === "chat";
-      if (!showable) {
+      if (!agent || screenState.mode !== "chat") {
         box.hidden = true;
         return;
+      }
+      let inner = box.querySelector(".chat-statusbar-inner");
+      if (!inner) {
+        inner = el("div", "chat-statusbar-inner");
+        box.appendChild(inner);
+      }
+      inner.textContent = "";
+      const model = shortModel(screenState.model);
+      if (model) {
+        const m = el("span", "status-pill", model);
+        m.style.setProperty("--pill-color", "var(--text-dim)");
+        m.title = `Model: ${screenState.model}`;
+        inner.appendChild(m);
       }
       if (agent.permission) {
         const pill = el("span", "status-pill", PERM_LABEL[agent.permission] || agent.permission);
         pill.style.setProperty("--pill-color", PERM_COLOR[agent.permission] || "var(--text-dim)");
         pill.title = `Permission mode: ${PERM_LABEL[agent.permission] || agent.permission} — change it in the Terminal with Shift+Tab`;
-        box.appendChild(pill);
+        inner.appendChild(pill);
       }
       if (agent.goalActive) {
         const g = el("span", "status-pill goal", `◎ goal${agent.goalFor ? " · " + agent.goalFor : ""}`);
         g.style.setProperty("--pill-color", GOAL_COLOR);
         g.title = `A /goal is active${agent.goalFor ? ` (running for ${agent.goalFor})` : ""}`;
-        box.appendChild(g);
+        inner.appendChild(g);
       }
-      box.hidden = box.childElementCount === 0;
+      box.hidden = inner.childElementCount === 0;
     }
 
     /** Drops any pending echo whose text now appears as a real user bubble. */
@@ -4157,7 +4305,48 @@
       renderMarkdownInto(bubble, it.text);
       body.append(meta, bubble);
       turn.append(avatar, body);
+      // Stash the raw text (a JS property, not dataset — it carries newlines) so
+      // markEditableUserTurns can refill the composer from it.
+      turn.__text = it.text;
       return turn;
+    }
+
+    // The pencil glyph, via createElementNS to match agentLogo (never innerHTML).
+    function editPencilSvg() {
+      const ns = "http://www.w3.org/2000/svg";
+      const svg = document.createElementNS(ns, "svg");
+      for (const [k, v] of Object.entries({ viewBox: "0 0 24 24", width: "13", height: "13", fill: "none", stroke: "currentColor", "stroke-width": "2", "stroke-linecap": "round", "stroke-linejoin": "round" })) svg.setAttribute(k, v);
+      const p = document.createElementNS(ns, "path");
+      p.setAttribute("d", "M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z");
+      svg.appendChild(p);
+      return svg;
+    }
+    // Read-only mirror: "editing" a sent message = loading it back into the
+    // composer to change and resend. Dispatching 'input' runs autogrow.
+    function loadIntoComposer(text) {
+      const input = $("#chat-input");
+      if (!input) return;
+      input.disabled = false;
+      input.value = text;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+    }
+    // After each render, only the LAST 5 user turns carry an edit pencil.
+    function markEditableUserTurns(threadEl) {
+      if (!threadEl) return;
+      for (const b of threadEl.querySelectorAll(".chat-edit-btn")) b.remove();
+      const turns = threadEl.querySelectorAll(".chat-turn.user");
+      for (let i = Math.max(0, turns.length - 5); i < turns.length; i++) {
+        const turn = turns[i];
+        if (typeof turn.__text !== "string") continue;
+        const btn = el("button", "chat-edit-btn");
+        btn.type = "button";
+        btn.title = "Edit — load this message into the composer";
+        btn.appendChild(editPencilSvg());
+        btn.addEventListener("click", (e) => { e.stopPropagation(); loadIntoComposer(turn.__text); });
+        turn.appendChild(btn);
+      }
     }
 
     // A glyph per tool, like the reference app's transcript — so the eye reads
@@ -4169,6 +4358,19 @@
     };
     function toolIcon(name) {
       return TOOL_ICON[name] || (name && name.startsWith("mcp__") ? "🔌" : "🔧");
+    }
+
+    // The agent's reasoning — a collapsible block, dim and set aside, like the
+    // reference transcript's Thinking section. Collapsed by default.
+    function buildThinkingBlock(it) {
+      const box = el("div", "chat-thinking");
+      const head = el("div", "chat-thinking-head");
+      head.append(el("span", "chat-tool-caret", "▸"), el("span", "chat-thinking-label", "💭 thinking"));
+      const body = el("div", "chat-thinking-body");
+      renderMarkdownInto(body, it.text);
+      box.append(head, body);
+      head.addEventListener("click", () => box.classList.toggle("open"));
+      return box;
     }
 
     function buildToolChip(it) {
@@ -5293,6 +5495,75 @@
         chatInput.style.height = Math.min(chatInput.scrollHeight, 140) + "px";
       };
       chatInput.addEventListener("input", autogrow);
+
+      // ---- Slash-command autocomplete (composer) --------------------------
+      const SLASH_DESCRIPTIONS = {
+        compact: "clear context & summarize", cost: "show token cost",
+        context: "show context usage", usage: "show usage limits",
+        clear: "start a fresh conversation", model: "switch model",
+        mcp: "manage MCP servers", agents: "manage subagents",
+        approvals: "permission mode", init: "initialize CLAUDE.md",
+        review: "review changes", diff: "show diff", undo: "undo last change",
+        resume: "resume a conversation",
+      };
+      const SLASH_ALL = Object.keys(SLASH_DESCRIPTIONS);
+      const SLASH_HIDDEN = new Set(["exit", "help"]);
+      const slashMenuEl = $("#slash-menu");
+      const slashState = { open: false, items: [], active: 0 };
+      function filterSlash(query) {
+        const q = query.toLowerCase();
+        const matches = SLASH_ALL.filter((c) => !SLASH_HIDDEN.has(c) && c.toLowerCase().includes(q));
+        return matches.sort((a, b) => SLASH_ALL.indexOf(a) - SLASH_ALL.indexOf(b));
+      }
+      function renderSlashMenu() {
+        slashMenuEl.replaceChildren();
+        slashState.items.forEach((cmd, i) => {
+          const row = el("div", "slash-item" + (i === slashState.active ? " active" : ""));
+          row.appendChild(el("span", "slash-item__name", "/" + cmd));
+          if (SLASH_DESCRIPTIONS[cmd]) row.appendChild(el("span", "slash-item__desc", SLASH_DESCRIPTIONS[cmd]));
+          row.addEventListener("mousedown", (e) => { e.preventDefault(); pickSlash(cmd); });
+          row.addEventListener("mouseenter", () => { if (slashState.active !== i) { slashState.active = i; renderSlashMenu(); } });
+          if (i === slashState.active) requestAnimationFrame(() => row.scrollIntoView({ block: "nearest" }));
+          slashMenuEl.appendChild(row);
+        });
+      }
+      function closeSlashMenu() {
+        slashState.open = false;
+        slashState.items = [];
+        slashState.active = 0;
+        slashMenuEl.hidden = true;
+      }
+      function updateSlashMenu() {
+        const v = chatInput.value;
+        if (!/^\/\S*$/.test(v)) return closeSlashMenu();
+        const items = filterSlash(v.slice(1));
+        if (!items.length) return closeSlashMenu();
+        slashState.items = items;
+        if (slashState.active >= items.length) slashState.active = 0;
+        slashState.open = true;
+        slashMenuEl.hidden = false;
+        renderSlashMenu();
+      }
+      function pickSlash(cmd) {
+        chatInput.value = "/" + cmd + " ";
+        closeSlashMenu();
+        autogrow();
+        chatInput.focus();
+        chatInput.setSelectionRange(chatInput.value.length, chatInput.value.length);
+      }
+      function slashKeydown(ev) {
+        if (!slashState.open) return false;
+        const n = slashState.items.length;
+        if (ev.key === "ArrowDown") { ev.preventDefault(); slashState.active = (slashState.active + 1) % n; renderSlashMenu(); return true; }
+        if (ev.key === "ArrowUp") { ev.preventDefault(); slashState.active = (slashState.active - 1 + n) % n; renderSlashMenu(); return true; }
+        if (ev.key === "Enter" || ev.key === "Tab") { ev.preventDefault(); pickSlash(slashState.items[slashState.active]); return true; }
+        if (ev.key === "Escape") { ev.preventDefault(); closeSlashMenu(); return true; }
+        return false;
+      }
+      chatInput.addEventListener("input", updateSlashMenu);
+      chatInput.addEventListener("blur", () => closeSlashMenu());
+      // ---- end slash-command autocomplete --------------------------------
+
       // Shell-style history of the operator's own sends (↑ recalls, ↓ steps back).
       const sentHistory = [];
       let histIdx = -1; // -1 = not navigating
@@ -5308,10 +5579,21 @@
         histIdx = -1;
       };
       chatInput.addEventListener("keydown", (ev) => {
+        // The slash menu, when open, owns Enter/Tab/arrows/Esc — before the rest.
+        if (slashKeydown(ev)) return;
         // Enter sends; Shift+Enter is a newline.
         if (ev.key === "Enter" && !ev.shiftKey) {
           ev.preventDefault();
           $("#chat-composer").requestSubmit();
+          return;
+        }
+        // Escape interrupts the agent mid-turn (only when it's actually working).
+        if (ev.key === "Escape") {
+          const a = screenState.name ? state.agents.get(screenState.name) : null;
+          if (a && a.activity === "working") {
+            ev.preventDefault();
+            sendScreenInput(screenState.name, "\x1b");
+          }
           return;
         }
         if (ev.key === "ArrowUp" && sentHistory.length && (histIdx >= 0 || (chatInput.value === "" || chatInput.selectionStart === 0))) {
@@ -5357,6 +5639,10 @@
           chatInput.disabled = false;
           if (!isSlash) chatInput.focus();
         }
+      });
+      // STOP button: interrupt the current turn with one ESC to the agent's pane.
+      $("#chat-stop").addEventListener("click", () => {
+        if (screenState.name) sendScreenInput(screenState.name, "\x1b");
       });
 
       // Groups panel wiring.
