@@ -2834,6 +2834,22 @@
       renderAgents();
     }
 
+    // Group display label — free text, emoji welcome, a viewer preference like
+    // the colour. The kebab id stays the protocol value (the message wall);
+    // the label is what the UI SHOWS. The default group reads "Desagrupados"
+    // (the owner's wording): it is the absence of a room, not a room.
+    function groupLabelOf(group) {
+      const saved = localStorage.getItem("sb.groupLabel." + group);
+      if (saved) return saved;
+      return group === DEFAULT_GROUP ? "Desagrupados" : group;
+    }
+    function setGroupLabel(group, label) {
+      const v = (label || "").trim().slice(0, 48);
+      if (v === "" || v === group) localStorage.removeItem("sb.groupLabel." + group);
+      else localStorage.setItem("sb.groupLabel." + group, v);
+      renderAgents();
+    }
+
     // Per-chat colour: tints the card's left cable-end. Unset => no tint (the
     // cable stays the default patchbay behaviour). Also a viewer preference.
     function chatColor(name) {
@@ -3191,20 +3207,21 @@
         ? `Unfold ${group} (${members.length} agents, ${online} online)`
         : `Fold ${group} away`;
 
-      const nameSpan = el("span", "rail-group-name", group);
+      const nameSpan = el("span", "rail-group-name", groupLabelOf(group));
+      if (groupLabelOf(group) !== group) nameSpan.title = group; // the id, one hover away
       head.append(
         el("span", "caret", "▾"),
         nameSpan,
         el("span", "tally", `${online}/${members.length}`),
       );
-      // Rename right here in the rail: a pencil that appears on hover turns the
-      // name into an input. `default` is not a room you rename.
+      // Relabel right here in the rail: a pencil that appears on hover turns the
+      // name into an input (free text + emoji). `default` is not a room.
       if (group !== DEFAULT_GROUP) {
         const pencil = el("span", "group-rename", "✎");
-        pencil.title = `Rename the ${group} group`;
+        pencil.title = `Rename the ${group} group (label + emoji)`;
         pencil.addEventListener("click", (e) => {
           e.stopPropagation(); // do not fold
-          startRailRename(group, nameSpan);
+          startRailRelabel(group, nameSpan);
         });
         head.appendChild(pencil);
       }
@@ -3267,7 +3284,7 @@
 
       tabs.appendChild(mk("all", null));
       for (const group of groups) {
-        tabs.appendChild(mk(group, group, [...state.agents.values()].filter((a) => groupOf(a) === group).length));
+        tabs.appendChild(mk(groupLabelOf(group), group, [...state.agents.values()].filter((a) => groupOf(a) === group).length));
       }
     }
 
@@ -3865,8 +3882,10 @@
         const box = el("div", "groups-group");
 
         const head = el("div", "groups-group-head");
+        const gname = el("span", "groups-group-name", groupLabelOf(group));
+        if (groupLabelOf(group) !== group) gname.title = group;
         head.append(
-          el("span", "groups-group-name", group),
+          gname,
           el("span", "groups-group-count", members.length === 1 ? "1 agent" : `${members.length} agents`),
         );
         // Renaming a group renames it for everyone in it, in one write.
@@ -3905,7 +3924,7 @@
       sel.dataset.agent = agent.name;
       sel.title = `Which group ${agent.name} talks in`;
       for (const group of groups) {
-        const opt = el("option", null, group);
+        const opt = el("option", null, groupLabelOf(group));
         opt.value = group;
         if (group === groupOf(agent)) opt.selected = true;
         sel.appendChild(opt);
@@ -3967,13 +3986,17 @@
     // Inline rename straight in the rail: the group name becomes an input in
     // place. Enter confirms (real server rename via renameGroup), Esc/blur
     // cancels. Events are stopped so editing never folds the group.
-    function startRailRename(group, nameSpan) {
+    // Inline editor for a group's DISPLAY LABEL (free text + emoji) — a viewer
+    // preference, so it never touches the kebab id / the message wall. To
+    // rename the actual group id (which moves the agents), use the Groups panel.
+    function startRailRelabel(group, nameSpan) {
       const input = el("input", "agent-rename-input");
       input.type = "text";
-      input.value = group;
+      input.value = groupLabelOf(group) === group ? "" : groupLabelOf(group);
+      input.placeholder = group;
       input.spellcheck = false;
-      input.maxLength = 31;
-      input.title = "Group name — Enter to confirm, Esc to cancel";
+      input.maxLength = 48;
+      input.title = "Group label (emoji ok) — Enter saves, empty resets, Esc cancels";
       let done = false;
       const restore = () => {
         if (done) return true;
@@ -3982,10 +4005,9 @@
         return false;
       };
       const confirm = () => {
-        const next = sanitizeAgentNameInput(input.value, false);
+        const next = input.value;
         if (restore()) return;
-        if (next === "" || next === group) return;
-        renameGroup(group, next);
+        setGroupLabel(group, next); // renderAgents redraws the head
       };
       input.addEventListener("keydown", (ev) => {
         ev.stopPropagation();
@@ -3994,7 +4016,6 @@
       });
       input.addEventListener("click", (ev) => ev.stopPropagation());
       input.addEventListener("blur", restore);
-      bindAgentNameSanitizer(input);
       nameSpan.replaceWith(input);
       input.focus();
       input.select();
