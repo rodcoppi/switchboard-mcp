@@ -518,14 +518,46 @@
     /* `hidden` must beat display:flex, else every card's menu renders at once. */
     .agent-menu[hidden] { display: none; }
     .agent-menu:not([hidden]) {
-      padding: 6px;
+      padding: 5px;
       background: var(--bg-elev-2);
       border: 1px solid var(--border);
-      border-radius: var(--radius-sm);
+      border-radius: 8px;
       box-shadow: 0 10px 26px rgba(0, 0, 0, 0.55);
-      min-width: 104px;
+      min-width: 176px;
     }
     .agent-menu-item { text-align: left; }
+    /* Inside the ⋯ menu the items are clean full-width ROWS — icon + label on
+       ONE line each (the boxed per-item borders wrapped "open codex…" onto two
+       lines and read as noise). Hover is a quiet wash; remove is set apart. */
+    .agent-menu .agent-menu-item {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      width: 100%;
+      border: none;
+      border-radius: 6px;
+      padding: 6px 10px;
+      white-space: nowrap;
+      background: transparent;
+      color: var(--text-dim);
+    }
+    .agent-menu .agent-menu-item:hover { background: var(--bg-hover); color: var(--text); border: none; }
+    .agent-menu .agent-menu-item .mi-icon {
+      flex: 0 0 auto;
+      width: 16px;
+      text-align: center;
+      font-size: 12px;
+      line-height: 1;
+    }
+    .agent-menu .remove-btn { margin-top: 3px; border-radius: 0 0 6px 6px; position: relative; }
+    .agent-menu .remove-btn::before {
+      content: "";
+      position: absolute;
+      top: -2px; left: 6px; right: 6px;
+      height: 1px;
+      background: var(--border-soft);
+    }
+    .agent-menu .remove-btn:hover { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); }
     .mute-toggle, .nudge-btn, .open-btn, .reopen-btn, .rename-btn, .remove-btn, .menu-btn {
       background: transparent;
       border: 1px solid var(--border);
@@ -1137,6 +1169,24 @@
     }
     .chat-stop.visible { display: inline-flex; }
     .chat-stop:hover { background: var(--danger); border-color: var(--danger); color: #fff; }
+    /* Dictation mic — quiet beside send; red and breathing while recording. */
+    .chat-mic {
+      flex: none;
+      align-self: stretch;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 40px;
+      padding: 0 12px;
+      font-size: 13px;
+      line-height: 1;
+    }
+    .chat-mic[hidden] { display: none; }
+    .chat-mic.rec {
+      color: var(--danger);
+      border-color: var(--danger);
+      animation: pulse-work 1.15s ease-in-out infinite;
+    }
 
     /* A centred reading column — the messages the operator liked. The composer
        below is constrained to the SAME column so the place you type lines up
@@ -2407,6 +2457,8 @@
             <div class="slash-menu" id="mention-menu" hidden></div>
             <textarea id="chat-input" rows="1"
               placeholder="Message this agent…  (Enter sends · Shift+Enter for a newline)"></textarea>
+            <button class="btn chat-mic" id="chat-mic" type="button"
+              aria-label="Dictate a message" title="Dictate (Chrome speech, pt-BR) — click to start/stop">🎤</button>
             <button class="btn chat-send" id="chat-send" type="submit">send</button>
             <button class="btn chat-stop" id="chat-stop" type="button"
               aria-label="Stop the agent (Esc)" title="Stop (Esc)">■</button>
@@ -3040,6 +3092,10 @@
 
     function renderAgents() {
       const container = $("#agents");
+      // A rebuild while a card's ⋯ menu is open closes it in the operator's
+      // face — and the idle/working poll re-renders every ~2.5s, which made the
+      // menu nearly unusable. Skip this pass; the next update lands in seconds.
+      if (container.querySelector(".agent-menu:not([hidden])")) return;
       container.textContent = "";
       const agents = sortedAgents();
       if (agents.length === 0) {
@@ -3300,8 +3356,17 @@
       const menu = el("div", "agent-menu");
       menu.hidden = true;
 
+      // One glyph per action so the menu scans by eye, not by reading.
+      const MENU_ICONS = {
+        "nudge-btn": "📣", "group-btn": "🚪", "codex-btn": "◆", "colour-btn": "🎨",
+        "colour-reset-btn": "⭕", "mute-toggle": "🔇", "rename-btn": "✏️", "remove-btn": "🗑",
+      };
       function menuItem(cls, label, title, onClick) {
-        const item = el("button", `agent-menu-item ${cls}`, label);
+        const item = el("button", `agent-menu-item ${cls}`);
+        const key = cls.split(" ")[0];
+        const icon = cls.includes("muted") ? "🔊" : MENU_ICONS[key];
+        if (icon) item.appendChild(el("span", "mi-icon", icon));
+        item.appendChild(el("span", null, label));
         item.type = "button";
         item.title = title;
         item.addEventListener("click", (ev) => {
@@ -6284,6 +6349,67 @@
       $("#chat-stop").addEventListener("click", () => {
         if (screenState.name) sendScreenInput(screenState.name, "\x1b");
       });
+
+      // ---- Dictation mic (Chrome's built-in speech recognition) ------------
+      // Zero backend: SpeechRecognition is the browser's own service (needs
+      // mic permission + network). Interim results land AT THE CARET, replacing
+      // the same span as they refine — the reference app's live-dictation feel.
+      // The button hides entirely where the API doesn't exist.
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      const micBtn = $("#chat-mic");
+      if (!SR) {
+        micBtn.hidden = true;
+      } else {
+        let rec = null;
+        let recBase = { before: "", after: "" };
+        const micCleanup = () => {
+          rec = null;
+          micBtn.classList.remove("rec");
+          micBtn.textContent = "🎤";
+        };
+        micBtn.addEventListener("click", () => {
+          if (rec) {
+            rec.stop(); // onend does the cleanup
+            return;
+          }
+          rec = new SR();
+          rec.lang = "pt-BR";
+          rec.continuous = true;
+          rec.interimResults = true;
+          const pos = chatInput.selectionStart ?? chatInput.value.length;
+          recBase = { before: chatInput.value.slice(0, pos), after: chatInput.value.slice(pos) };
+          micBtn.classList.add("rec");
+          micBtn.textContent = "⏺";
+          rec.onresult = (e) => {
+            let text = "";
+            for (const r of e.results) text += r[0].transcript;
+            chatInput.value = recBase.before + text + recBase.after;
+            const caret = (recBase.before + text).length;
+            chatInput.setSelectionRange(caret, caret);
+            autogrow();
+          };
+          rec.onerror = (e) => {
+            const why =
+              e.error === "not-allowed"
+                ? "microphone permission denied"
+                : e.error === "no-speech"
+                  ? "no speech heard"
+                  : e.error === "network"
+                    ? "speech service unreachable"
+                    : e.error;
+            toast(`Dictation: ${why}.`, "warn");
+          };
+          rec.onend = micCleanup; // fires after stop(), errors, or silence
+          try {
+            rec.start();
+            chatInput.focus();
+          } catch (err) {
+            toast(`Dictation could not start: ${err && err.message ? err.message : err}`, "warn");
+            micCleanup();
+          }
+        });
+      }
+      // ---- end dictation ---------------------------------------------------
 
       // Groups panel wiring.
       $("#groups-open").addEventListener("click", () => {
