@@ -1052,6 +1052,46 @@
       color: var(--text-faint);
       font-style: italic;
     }
+    /* Interrupt divider: a centred chip flanked by hairlines. */
+    .chat-interrupt {
+      align-self: center;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      margin: 4px auto;
+      padding: 3px 12px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      font-family: var(--mono);
+      font-size: var(--fs-eyebrow);
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: var(--text-faint);
+      font-style: italic;
+      background: var(--bg-elev);
+    }
+    .chat-interrupt-mark { color: var(--danger); font-style: normal; font-size: 8px; }
+    /* API-error callout: a warning, not a reply. */
+    .chat-apierror {
+      align-self: stretch;
+      margin-left: 40px;
+      padding: 10px 14px;
+      border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
+      border-left: 3px solid var(--danger);
+      border-radius: 10px;
+      background: color-mix(in srgb, var(--danger) 9%, transparent);
+    }
+    .chat-apierror-eyebrow {
+      font-family: var(--mono);
+      font-size: var(--fs-eyebrow);
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      font-weight: 700;
+      color: var(--danger);
+      margin-bottom: 6px;
+    }
+    .chat-apierror-msg { font-family: var(--mono); font-size: var(--fs-sm); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); }
+    .chat-apierror-hint { font-size: var(--fs-xs); color: var(--text-dim); margin-top: 6px; }
     /* Per-agent identity disc: initials on the signature amber. The operator's
        own disc is quiet slate — you are not one of the agents. */
     .chat-avatar {
@@ -1227,6 +1267,46 @@
     .diff-del { color: #ff8589; background: color-mix(in srgb, #3d1418 55%, transparent); display: block; }
     /* Code blocks in assistant markdown get the same hover copy button. */
     .code-wrap { position: relative; }
+
+    /* Action group: a run of tool calls folded into one card, stacked look. */
+    .chat-tool-group {
+      align-self: stretch;
+      max-width: 100%;
+      margin-left: 40px;
+      position: relative;
+      border: 1px solid var(--border-soft);
+      border-radius: 8px;
+      background: var(--bg-inset);
+    }
+    .chat-tool-group::before {
+      content: "";
+      position: absolute;
+      inset: -3px 6px auto 6px;
+      height: 12px;
+      border: 1px solid var(--border-soft);
+      border-radius: 8px 8px 0 0;
+      background: var(--bg-inset);
+      opacity: 0.5;
+      z-index: -1;
+    }
+    .chat-tool-group-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 11px;
+      cursor: pointer;
+      font-family: var(--mono);
+      font-size: var(--fs-xs);
+      color: var(--text-dim);
+    }
+    .chat-tool-group-head:hover { background: var(--bg-hover); }
+    .chat-tool-group-head .chat-tool-name { color: var(--text); }
+    .chat-tool-group.open .chat-tool-group-head .chat-tool-caret { transform: rotate(90deg); }
+    .chat-tool-group-body { display: none; border-top: 1px solid var(--border-soft); padding: 4px 6px; }
+    .chat-tool-group.open .chat-tool-group-body { display: block; }
+    /* Chips inside a group: no double left-margin, tighter. */
+    .chat-tool-group-body .chat-tool { margin-left: 0; margin-bottom: 4px; }
+    .chat-tool-group-body .chat-tool:last-child { margin-bottom: 0; }
     /* xterm paints its own grid; it just needs a box that does not collapse.
        CENTRED, and on the terminal's own colour: while mirroring, the grid is
        the pane's and its shape rarely matches the panel's, so something is
@@ -3773,9 +3853,13 @@
       if (!thread) {
         view.textContent = "";
         thread = el("div", "chat-thread");
+        thread.__count = 0;
         view.appendChild(thread);
       }
-      let start = thread.childElementCount;
+      // Item count is tracked as a property, NOT childElementCount: action
+      // grouping wraps N chips into 1 node, so the DOM child count and the item
+      // count diverge.
+      let start = thread.__count || 0;
       if (start > items.length) {
         thread.textContent = ""; // items replaced wholesale — rebuild
         start = 0;
@@ -3785,7 +3869,66 @@
         const it = items[i];
         thread.appendChild(it.kind === "tool" ? buildToolChip(it) : buildChatTurn(it, name));
       }
+      thread.__count = items.length;
+      groupActions(thread);
       reconcilePending(view);
+    }
+
+    /**
+     * Folds runs of ≥3 consecutive tool cards into one collapsible group, like
+     * the reference transcript ("🧰 5 actions · Bash ×2 · Read"). Only CLOSED
+     * runs group — a run at the very end is the still-growing tail and stays
+     * open so the operator watches the live action. Idempotent: already-grouped
+     * chips (dataset.grouped) are skipped, so it re-runs cheaply each render.
+     */
+    function groupActions(thread) {
+      const runs = [];
+      let run = [];
+      const flush = (closed) => {
+        if (run.length >= 3 && closed) runs.push(run);
+        run = [];
+      };
+      for (const node of [...thread.children]) {
+        if (node.classList.contains("chat-tool") && !node.dataset.grouped) {
+          run.push(node);
+        } else if (!node.classList.contains("chat-tool-group")) {
+          flush(true); // a non-action node closes the run
+        }
+      }
+      flush(false); // trailing run = growing tail, leave it live
+      for (const r of runs) wrapActionRun(thread, r);
+    }
+
+    function wrapActionRun(thread, run) {
+      const group = el("div", "chat-tool-group");
+      const head = el("div", "chat-tool-group-head");
+      head.append(
+        el("span", "chat-tool-caret", "▸"),
+        el("span", "chat-tool-icon", "🧰"),
+        el("span", "chat-tool-name", `${run.length} actions`),
+        el("span", "chat-tool-summary", groupSummary(run)),
+      );
+      const body = el("div", "chat-tool-group-body");
+      thread.insertBefore(group, run[0]);
+      for (const node of run) {
+        node.dataset.grouped = "1";
+        body.appendChild(node);
+      }
+      group.append(head, body);
+      head.addEventListener("click", () => group.classList.toggle("open"));
+    }
+
+    /** "Bash ×2 · Read · Edit" — tool names in first-seen order, up to 4. */
+    function groupSummary(run) {
+      const counts = new Map();
+      for (const node of run) {
+        let name = node.querySelector(".chat-tool-name")?.textContent || "tool";
+        if (name.startsWith("mcp__")) name = name.split("__").pop();
+        counts.set(name, (counts.get(name) || 0) + 1);
+      }
+      const parts = [...counts.entries()].slice(0, 4).map(([n, c]) => (c > 1 ? `${n} ×${c}` : n));
+      if (counts.size > 4) parts.push("…");
+      return parts.join(" · ");
     }
 
     /**
@@ -3836,6 +3979,27 @@
 
     function buildChatTurn(it, agentName) {
       const isUser = it.kind === "user";
+      // An interrupt marker is a centred divider, not a bubble — the text came
+      // from the CLI, not the operator (reference app's isInterruptMarker).
+      if (isUser && /^\s*\[Request interrupted/i.test(it.text || "")) {
+        const label = /for tool use/i.test(it.text)
+          ? "Interrupted — tool use declined"
+          : "Interrupted by the operator";
+        const div = el("div", "chat-interrupt");
+        div.append(el("span", "chat-interrupt-mark", "■"), el("span", null, label));
+        return div;
+      }
+      // A provider API error the CLI injected as an assistant turn: a WARNING
+      // callout, not a normal reply.
+      if (!isUser && /^\s*API Error:/i.test(it.text || "")) {
+        const box = el("div", "chat-apierror");
+        box.append(
+          el("div", "chat-apierror-eyebrow", "⚠ engine API error"),
+          el("div", "chat-apierror-msg", it.text.replace(/^\s*API Error:\s*/i, "")),
+          el("div", "chat-apierror-hint", "Provider-side failure — the reply above may be incomplete. Usually temporary; the agent can retry."),
+        );
+        return box;
+      }
       const turn = el("div", `chat-turn ${it.kind}`);
       const avatar = el("div", `chat-avatar${isUser ? " you" : ""}`, isUser ? "you" : initialsOf(agentName));
       const body = el("div", "chat-turn-body");
