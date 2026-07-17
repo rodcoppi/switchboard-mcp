@@ -1871,11 +1871,23 @@
        NOTHING forcing the .xterm's dimensions — the FitAddon reads this box and
        sizes the grid to it. Forcing width/height:100% on .xterm fought the
        addon and was the source of the "gigante" mis-sizing. */
+    /* The wrap fills the panel in the terminal's own colour; the grid inside is
+       capped to the chat's 880px column and centred, so its side gaps read as
+       margin (not the grid "fallen into a corner"). */
+    .screen-term-wrap {
+      flex: 1 1 auto;
+      min-height: 0;
+      display: flex;
+      justify-content: center;
+      background: #070b10; /* xterm's own background (see the theme below) */
+    }
+    .screen-term-wrap[hidden] { display: none; }
     .screen-term {
       flex: 1 1 auto;
       min-height: 0;
+      width: 100%;
+      max-width: 880px;
       padding: 4px 8px;
-      background: #070b10; /* xterm's own background (see the theme below) */
     }
 
     /* The Groups panel — the body of its lightbox now. It used to drop under
@@ -2701,8 +2713,12 @@
         <!-- Session status read from the CLI footer — under the composer, like a
              terminal footer: permission/plan mode + a running /goal with its age. -->
         <div class="chat-statusbar" id="chat-statusbar" hidden></div>
-        <!-- Terminal view: xterm. Hidden until you toggle to it. -->
-        <div class="screen-term" id="screen-term" hidden></div>
+        <!-- Terminal view: xterm. Hidden until you toggle to it. The wrap fills
+             the panel in the terminal's own colour and centres the grid into the
+             SAME reading column as the chat, so the two views line up. -->
+        <div class="screen-term-wrap" id="screen-term-wrap" hidden>
+          <div class="screen-term" id="screen-term"></div>
+        </div>
       </div>
 
       <!-- The operator composer lived here: a recipient picker, a textarea and
@@ -4771,11 +4787,11 @@
         teardownChat();
         $("#screen-chat").hidden = true;
         $("#chat-composer").hidden = true;
-        $("#screen-term").hidden = false;
+        $("#screen-term-wrap").hidden = false;
         mountTerminal(name);
       } else {
         teardownTerminal();
-        $("#screen-term").hidden = true;
+        $("#screen-term-wrap").hidden = true;
         $("#screen-chat").hidden = false;
         $("#chat-composer").hidden = false;
         mountChat(name);
