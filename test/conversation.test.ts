@@ -89,6 +89,39 @@ describe("parseConversation", () => {
     expect((items[0] as any).text).toBe("keep me");
   });
 
+  it("surfaces a QUEUED mid-turn message (attachment/queued_command) as a user turn", () => {
+    // Shape verified on a live transcript: a message sent while the agent was
+    // working never becomes a type:"user" record — it arrives as queue-operation
+    // bookkeeping plus one attachment carrying the prompt. Dropping it left the
+    // chat casca's optimistic echo stuck on "sending…" forever.
+    const items = parseConversation([
+      line({ type: "queue-operation", operation: "enqueue", content: "tamo com 64 gb aqui irmao" }),
+      line({ type: "queue-operation", operation: "remove", content: "tamo com 64 gb aqui irmao" }),
+      line({
+        type: "attachment",
+        isSidechain: false,
+        timestamp: "2026-07-21T00:21:28.335Z",
+        attachment: {
+          type: "queued_command",
+          prompt: "tamo com 64 gb aqui irmao",
+          commandMode: "prompt",
+          origin: { kind: "human" },
+        },
+      }),
+    ]);
+    expect(items).toEqual([
+      { kind: "user", text: "tamo com 64 gb aqui irmao", ts: "2026-07-21T00:21:28.335Z" },
+    ]);
+  });
+
+  it("ignores non-queued attachments and machinery-only queued prompts", () => {
+    const items = parseConversation([
+      line({ type: "attachment", attachment: { type: "file", path: "/x.png" } }),
+      line({ type: "attachment", attachment: { type: "queued_command", prompt: "<system-reminder>x</system-reminder>" } }),
+    ]);
+    expect(items).toHaveLength(0);
+  });
+
   it("marks an errored tool result", () => {
     const items = parseConversation([
       line({ type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", id: "t9", name: "Bash", input: { command: "false" } }] } }),

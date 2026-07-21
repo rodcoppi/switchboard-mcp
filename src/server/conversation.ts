@@ -139,6 +139,21 @@ export function parseConversation(lines: string[]): ChatItem[] {
     const msg = rec.message;
     const ts = typeof rec.timestamp === "string" ? rec.timestamp : undefined;
 
+    // A message sent WHILE the agent was mid-turn never becomes a type:"user"
+    // record: the CLI queues it and the transcript gets queue-operation
+    // bookkeeping plus ONE attachment record carrying the actual prompt
+    // (attachment.type === "queued_command", the text in .prompt — verified on
+    // a live transcript). Without this branch those messages simply never
+    // rendered, which left their optimistic echo stuck on "sending…" forever.
+    if (rec.type === "attachment") {
+      const att = rec.attachment;
+      if (att?.type === "queued_command" && typeof att.prompt === "string") {
+        const text = cleanUserText(att.prompt);
+        if (text) items.push({ kind: "user", text, ts });
+      }
+      continue;
+    }
+
     if (rec.type === "user" && msg) {
       if (typeof msg.content === "string") {
         const text = cleanUserText(msg.content);
