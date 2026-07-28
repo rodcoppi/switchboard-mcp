@@ -88,13 +88,15 @@ const NOT_JOINED_ERROR =
 // printenv output. The model then "remembers" that dead token instead of
 // re-reading the environment, and every join fails identically. The message
 // must therefore demand a FRESH printenv, explicitly distrusting context.
-function joinTokenError(name: string): string {
+function joinTokenError(name: string, provided: string | undefined): string {
   return (
     `The agent "${name}" is already registered and protected by a capability token, and the token ` +
-    `you provided is missing or incorrect. IMPORTANT: if your conversation was resumed, any token ` +
+    `you provided is missing or incorrect. ${describeProvidedToken(provided)} ` +
+    `IMPORTANT: if your conversation was resumed, any token ` +
     `you remember from earlier context is STALE — the hub rotates it on every relaunch. Run ` +
     `printenv SWITCHBOARD_AGENT_TOKEN in a fresh shell NOW (never reuse a remembered value) and ` +
-    `call join again passing exactly that output in the token field. If the variable does not exist ` +
+    `call join again passing exactly that output in the token field, character for character. ` +
+    `If the variable does not exist ` +
     `in this session, you were not started as "${name}": check your name with printenv SWITCHBOARD_AGENT_NAME and use it in join.`
   );
 }
@@ -104,12 +106,44 @@ function joinTokenError(name: string): string {
  * buffers (it THROWS on mismatch, which would both leak the length and crash
  * the tool) — so both sides are hashed to fixed-size SHA-256 digests first
  * and the digests are compared in constant time.
+ *
+ * The provided value is NORMALIZED first (trim + lowercase): the token travels
+ * THROUGH THE MODEL — it reads printenv output and retypes the 64-hex value
+ * into the tool call — and stray whitespace or case flips are transcription
+ * noise, not identity. Hex carries no case information, so lowercasing gives
+ * up nothing; real mistypes (wrong characters) still fail.
  */
 function tokenMatches(expected: string, provided: string | undefined): boolean {
-  if (typeof provided !== "string" || provided.length === 0) return false;
+  if (typeof provided !== "string" || provided.trim().length === 0) return false;
+  const normalized = provided.trim().toLowerCase();
   const expectedDigest = createHash("sha256").update(expected, "utf8").digest();
-  const providedDigest = createHash("sha256").update(provided, "utf8").digest();
+  const providedDigest = createHash("sha256").update(normalized, "utf8").digest();
   return timingSafeEqual(expectedDigest, providedDigest);
+}
+
+/**
+ * Diagnostics about the REJECTED token, for the error message — shape only
+ * (length / charset / whitespace), NEVER the value. This is what lets the
+ * model see WHAT it got wrong when it mistyped the value it copied: "63
+ * characters" says "you dropped one" the way "missing or incorrect" never can.
+ */
+export function describeProvidedToken(provided: string | undefined): string {
+  if (typeof provided !== "string" || provided.trim() === "") return "You sent NO token.";
+  const t = provided.trim();
+  const notes: string[] = [];
+  if (t.length !== 64) notes.push(`${t.length} characters (expected 64)`);
+  if (/\s/.test(t)) notes.push("contains whitespace");
+  if (!/^[0-9a-fA-F]+$/.test(t)) notes.push("contains non-hex characters");
+  if (notes.length === 0) {
+    // Neutral on purpose (codex review): the server cannot tell WHICH failure
+    // happened — a stale remembered value, a transcription slip while copying
+    // from printenv output, or a claim to the wrong agent name.
+    return (
+      "You sent a well-formed 64-hex token, but the VALUE does not match — possible causes: " +
+      "a stale value from earlier context, a transcription error while copying it, or the wrong agent_name."
+    );
+  }
+  return `The token you sent has the wrong shape: ${notes.join("; ")}.`;
 }
 
 // Session lifecycle defaults (overridable for tests). 30 min without any
@@ -252,7 +286,7 @@ export function createMcpEndpoint(options: McpOptions): McpEndpoint {
             log.warn(
               `[mcp] join refused for "${name}": token missing or incorrect (session ${sessionId}).`,
             );
-            return jsonResult({ ok: false, error: joinTokenError(name) });
+            return jsonResult({ ok: false, error: joinTokenError(name, args.token) });
           }
         } else {
           // Legacy pre-v1.1 snapshot (record without token): the first join
