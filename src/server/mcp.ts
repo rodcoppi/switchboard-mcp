@@ -49,7 +49,7 @@ import {
 // ---------------------------------------------------------------------------
 
 const JOIN_DESCRIPTION =
-  "Register this Claude Code session as an agent on the local Switchboard network so other agents can message you. Call this once at the start of a session if you were told you are part of an agent network, or when instructed. agent_name must match the name you were given (check the SWITCHBOARD_AGENT_NAME environment variable via `printenv` if unsure). If the SWITCHBOARD_AGENT_TOKEN environment variable is set, pass its value as token — it proves this session was started for this agent.";
+  "Register this Claude Code session as an agent on the local Switchboard network so other agents can message you. Call this once at the start of a session if you were told you are part of an agent network, or when instructed. agent_name must match the name you were given (check the SWITCHBOARD_AGENT_NAME environment variable via `printenv` if unsure). If the SWITCHBOARD_AGENT_TOKEN environment variable is set, pass its value as token — it proves this session was started for this agent. ALWAYS read the token via a fresh `printenv` call: the hub rotates it on every relaunch, so a value remembered from a resumed conversation's context is stale and will be refused.";
 
 const SEND_MESSAGE_DESCRIPTION =
   'Send a message to another agent on the local Switchboard network (or to "all" for broadcast). Use this when: (a) you changed something that affects another agent\'s work, such as an API contract, schema, or shared file; (b) you need information another agent owns; (c) you were asked to coordinate. Keep messages factual and actionable. Do NOT send acknowledgment-only messages like "thanks" or "ok, got it". For large payloads, write a file to disk and send the absolute path instead of the content.';
@@ -81,12 +81,21 @@ const NOT_JOINED_ERROR =
 
 // v1.1: join on a token-protected agent without the right token. Written FOR
 // the model to self-correct — and it must NEVER echo the expected token.
+//
+// The stale-context trap (seen live, 2026-07-28): the hub ROTATES the token on
+// every relaunch, and a relaunched agent runs `claude -c` — a RESUMED
+// conversation whose transcript still contains the previous generation's
+// printenv output. The model then "remembers" that dead token instead of
+// re-reading the environment, and every join fails identically. The message
+// must therefore demand a FRESH printenv, explicitly distrusting context.
 function joinTokenError(name: string): string {
   return (
     `The agent "${name}" is already registered and protected by a capability token, and the token ` +
-    `you provided is missing or incorrect. Run printenv SWITCHBOARD_AGENT_TOKEN in your environment and ` +
-    `call join again passing that value in the token field. If the variable does not exist in this ` +
-    `session, you were not started as "${name}": check your name with printenv SWITCHBOARD_AGENT_NAME and use it in join.`
+    `you provided is missing or incorrect. IMPORTANT: if your conversation was resumed, any token ` +
+    `you remember from earlier context is STALE — the hub rotates it on every relaunch. Run ` +
+    `printenv SWITCHBOARD_AGENT_TOKEN in a fresh shell NOW (never reuse a remembered value) and ` +
+    `call join again passing exactly that output in the token field. If the variable does not exist ` +
+    `in this session, you were not started as "${name}": check your name with printenv SWITCHBOARD_AGENT_NAME and use it in join.`
   );
 }
 
