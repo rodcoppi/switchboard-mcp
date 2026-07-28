@@ -122,6 +122,34 @@ describe("parseConversation", () => {
     expect(items).toHaveLength(0);
   });
 
+  // The casca hid what the terminal showed between turns — these three signals
+  // exist in the transcript and now surface as quiet "marker" lines.
+  it("surfaces turn_duration and away_summary system records as markers", () => {
+    const items = parseConversation([
+      line({ type: "system", subtype: "turn_duration", durationMs: 139866, timestamp: "T1" }),
+      line({ type: "system", subtype: "turn_duration", durationMs: 400 }), // sub-second: dropped
+      line({ type: "system", subtype: "away_summary", content: "Testando lip-sync no RunPod", timestamp: "T2" }),
+      line({ type: "system", subtype: "stop_hook_summary", hookCount: 1 }), // still noise
+    ]);
+    expect(items).toEqual([
+      { kind: "marker", text: "worked for 2m 20s", ts: "T1" },
+      { kind: "marker", text: "while you were away: Testando lip-sync no RunPod", ts: "T2" },
+    ]);
+  });
+
+  it("surfaces a task-notification (monitor event) as a marker, not a user bubble", () => {
+    const notif =
+      "<task-notification>\n<task-id>bg5eio3fd</task-id>\n<summary>Monitor event: \"Vigiando teste A relançado\"</summary>\n</task-notification>";
+    const items = parseConversation([
+      line({ type: "user", message: { role: "user", content: notif }, timestamp: "T3" }),
+      line({ type: "attachment", attachment: { type: "queued_command", prompt: notif }, timestamp: "T4" }),
+    ]);
+    expect(items).toEqual([
+      { kind: "marker", text: 'task: Monitor event: "Vigiando teste A relançado"', ts: "T3" },
+      { kind: "marker", text: 'task: Monitor event: "Vigiando teste A relançado"', ts: "T4" },
+    ]);
+  });
+
   it("marks an errored tool result", () => {
     const items = parseConversation([
       line({ type: "assistant", message: { role: "assistant", content: [{ type: "tool_use", id: "t9", name: "Bash", input: { command: "false" } }] } }),

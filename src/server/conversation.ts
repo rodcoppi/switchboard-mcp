@@ -41,6 +41,17 @@ export interface ThinkingItem {
   text: string;
   ts?: string;
 }
+/**
+ * A quiet centred line between turns — harness happenings the TERMINAL shows
+ * but that are neither operator words nor agent prose: "worked for 2m 20s"
+ * (turn_duration), a background task/monitor event (task-notification), the
+ * away-summary. Without these the chat casca hid what the pane was showing.
+ */
+export interface MarkerItem {
+  kind: "marker";
+  text: string;
+  ts?: string;
+}
 export interface ToolItem {
   kind: "tool";
   id: string;
@@ -53,7 +64,35 @@ export interface ToolItem {
   isError?: boolean;
   ts?: string;
 }
-export type ChatItem = UserItem | AssistantItem | ToolItem | ThinkingItem;
+export type ChatItem = UserItem | AssistantItem | ToolItem | ThinkingItem | MarkerItem;
+
+/** 139866ms → "2m 20s"; 16228ms → "16s". Sub-second turns are not worth a line. */
+export function fmtDurationMs(ms: number): string | null {
+  const s = Math.round(ms / 1000);
+  if (s < 1) return null;
+  if (s < 60) return `${s}s`;
+  return `${Math.floor(s / 60)}m ${s % 60}s`;
+}
+
+/**
+ * A one-line label for a <task-notification> block (how monitor events and
+ * background-task completions arrive in the transcript): the <summary> tag
+ * when present, else the first line that is not tag machinery. Null when the
+ * text is not a task notification at all.
+ */
+export function taskNotificationSummary(raw: string): string | null {
+  if (!/<task-notification>/.test(raw)) return null;
+  const summary = raw.match(/<summary>([\s\S]*?)<\/summary>/)?.[1]?.trim();
+  if (summary) return summary;
+  const event = raw.match(/<event>([\s\S]*?)<\/event>/)?.[1]?.trim();
+  if (event) return event;
+  const line = raw
+    .replace(/<[^>]+>/g, " ")
+    .split("\n")
+    .map((l) => l.trim())
+    .find((l) => l !== "");
+  return line ?? "background task update";
+}
 
 /** A short, human label for a tool call from its name and input. */
 export function toolSummary(name: string, input: unknown): string {
@@ -150,6 +189,25 @@ export function parseConversation(lines: string[]): ChatItem[] {
       if (att?.type === "queued_command" && typeof att.prompt === "string") {
         const text = cleanUserText(att.prompt);
         if (text) items.push({ kind: "user", text, ts });
+        else {
+          // A queued task-notification (monitor event etc.) is not operator
+          // words, but the TERMINAL shows it — surface it as a marker line.
+          const note = taskNotificationSummary(att.prompt);
+          if (note) items.push({ kind: "marker", text: `task: ${note}`, ts });
+        }
+      }
+      continue;
+    }
+
+    // Harness bookkeeping the terminal DOES show: surface the useful ones as
+    // quiet markers instead of hiding them (the casca looked dead next to the
+    // pane without them).
+    if (rec.type === "system") {
+      if (rec.subtype === "turn_duration" && typeof rec.durationMs === "number") {
+        const d = fmtDurationMs(rec.durationMs);
+        if (d) items.push({ kind: "marker", text: `worked for ${d}`, ts });
+      } else if (rec.subtype === "away_summary" && typeof rec.content === "string" && rec.content.trim()) {
+        items.push({ kind: "marker", text: `while you were away: ${rec.content.trim()}`, ts });
       }
       continue;
     }
@@ -158,6 +216,10 @@ export function parseConversation(lines: string[]): ChatItem[] {
       if (typeof msg.content === "string") {
         const text = cleanUserText(msg.content);
         if (text) items.push({ kind: "user", text, ts });
+        else {
+          const note = taskNotificationSummary(msg.content);
+          if (note) items.push({ kind: "marker", text: `task: ${note}`, ts });
+        }
       } else if (Array.isArray(msg.content)) {
         for (const block of msg.content) {
           if (block?.type === "tool_result") {
@@ -169,6 +231,10 @@ export function parseConversation(lines: string[]): ChatItem[] {
           } else if (block?.type === "text" && typeof block.text === "string") {
             const text = cleanUserText(block.text);
             if (text) items.push({ kind: "user", text, ts });
+            else {
+              const note = taskNotificationSummary(block.text);
+              if (note) items.push({ kind: "marker", text: `task: ${note}`, ts });
+            }
           }
         }
       }
