@@ -380,6 +380,7 @@ describe("alpha → beta flow via MCP", () => {
     expect(joined.etiquette).toContain('"%<name>"');
     expect(joined.etiquette).toContain('"@<name>"');
     expect(joined.etiquette).toContain("DELEGATION");
+    expect(joined.etiquette).toContain("CANNOT see agent-to-agent messages");
 
     // SSE must carry message_created for the send (reader opened BEFORE).
     const sse = await collectSse(
@@ -416,6 +417,10 @@ describe("alpha → beta flow via MCP", () => {
     expect(typeof checked.messages[0].created_at).toBe("string");
     expect(checked.agents_online).toContain("alpha");
     expect(checked.agents_online).toContain("beta");
+    // Narration rule rides WITH the payload: the human cannot see this
+    // channel, so the result itself must tell the agent to surface it.
+    expect(checked.protocol).toContain("Your user cannot see these messages");
+    expect(checked.protocol).toContain("tell your user");
 
     // Read event appended to the JSONL (never edited in place).
     await pollUntil(
@@ -442,9 +447,11 @@ describe("alpha → beta flow via MCP", () => {
       unread_count: 0,
     });
 
-    // A second check returns nothing (all read).
+    // A second check returns nothing (all read) — and no protocol nag when
+    // there is nothing to narrate.
     const rechecked = await callTool(beta, "check_messages");
     expect(rechecked.messages).toHaveLength(0);
+    expect(rechecked.protocol).toBeUndefined();
   }, 15_000);
 });
 
