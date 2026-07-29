@@ -164,6 +164,13 @@ export interface McpOptions {
   sessionIdleTimeoutMs?: number;
   /** Sweep cadence for idle sessions (default 60s; injectable for tests). */
   sessionSweepIntervalMs?: number;
+  /**
+   * Fired whenever a session BINDS to an agent (header auth or the join tool).
+   * The hub uses it to cancel that agent's pending kickoff: a bound session
+   * proves the agent is on the network, so typing the join instruction into
+   * its pane would be pure noise.
+   */
+  onSessionBound?: (agentName: string) => void;
 }
 
 export interface McpEndpoint {
@@ -230,6 +237,69 @@ export function createMcpEndpoint(options: McpOptions): McpEndpoint {
     if (agentName) releaseAgentIfUnmapped(agentName, reason);
   }
 
+  /**
+   * Binds a session to an agent: presence flags, the session map (releasing a
+   * previous binding of this session, if different), the SSE broadcast, and
+   * the kickoff-cancel hook. ONE path shared by the join tool and header auth,
+   * so the two can never drift.
+   */
+  function bindSession(
+    sessionId: string,
+    name: string,
+    via: "join" | "header",
+    role?: string,
+  ) {
+    const updated = store.updateAgent(name, {
+      mcpConnected: true,
+      // A live bind is proof the agent is up; Phase 3 polling (tmux
+      // has-session) takes ownership of this field afterwards.
+      status: "online",
+      lastSeenAt: new Date().toISOString(),
+      ...(role !== undefined ? { role } : {}),
+    });
+    // Re-bind: the same session may bind again under a DIFFERENT name (e.g.
+    // the model joined with a wrong agent_name and corrected itself). The old
+    // name must go through the same release logic as dropSession, or it would
+    // stay mcpConnected/online forever — the ghost-agent condition the idle
+    // sweep can never fix (the session is still alive, just renamed).
+    const previous = sessionAgents.get(sessionId);
+    sessionAgents.set(sessionId, name);
+    if (previous && previous !== name) {
+      releaseAgentIfUnmapped(previous, `session ${sessionId} re-bound to ${name}`);
+    }
+    bus.emit({ type: "agent_updated", payload: toPublicAgent(updated) });
+    if (previous !== name) {
+      log.info(`[mcp] ${via === "header" ? "header auth" : "join"}: session ${sessionId} → agent ${name}.`);
+      options.onSessionBound?.(name);
+    }
+    return updated;
+  }
+
+  /**
+   * Silent identity: `Authorization: Bearer <token>` + `X-Switchboard-Agent-Name`
+   * on the HTTP request. The launcher exports both values into the agent's
+   * environment and the MCP client config expands them into these headers —
+   * the secret never passes through the model (no printenv, no retyping, no
+   * kickoff line typed into the pane). Returns the agent name when the pair
+   * proves out; null (with a warn for a PRESENT-but-wrong pair) otherwise.
+   */
+  function headerIdentity(req: express.Request): string | null {
+    const auth = req.headers.authorization;
+    const rawName = req.headers["x-switchboard-agent-name"];
+    if (typeof auth !== "string" || typeof rawName !== "string") return null;
+    const token = auth.replace(/^Bearer\s+/i, "");
+    const name = rawName.trim();
+    // An UNEXPANDED template means the client didn't substitute the env vars
+    // (old Claude Code, or the vars are missing) — not an attack, just noise.
+    if (name === "" || name.startsWith("${") || token.startsWith("${")) return null;
+    const agent = store.getAgent(name);
+    if (!agent || agent.token === undefined || !tokenMatches(agent.token, token)) {
+      log.warn(`[mcp] header auth refused for "${name}": token missing or incorrect.`);
+      return null;
+    }
+    return name;
+  }
+
   // ------------------------------------------------------------------ tools
 
   /** One McpServer per session; handlers resolve identity via extra.sessionId. */
@@ -278,6 +348,10 @@ export function createMcpEndpoint(options: McpOptions): McpEndpoint {
             `[mcp] join created agent "${name}" on-the-fly (no prior registration via switchboard start); ` +
               `deduced tmuxSession: ${agent.tmuxSession}.`,
           );
+        } else if (sessionAgents.get(sessionId) === name) {
+          // Header auth already bound this SESSION to this exact name — the
+          // identity is proven at the transport, so a (model-typed, thus
+          // fallible) token argument is neither needed nor consulted.
         } else if (agent.token !== undefined) {
           // v1.1 (section 15): a token-protected agent can only be claimed
           // with the matching token — closes local impersonation of
@@ -300,27 +374,7 @@ export function createMcpEndpoint(options: McpOptions): McpEndpoint {
           );
         }
 
-        const updated = store.updateAgent(name, {
-          mcpConnected: true,
-          // join is live proof the agent is up; Phase 3 polling (tmux
-          // has-session) takes ownership of this field afterwards.
-          status: "online",
-          lastSeenAt: new Date().toISOString(),
-          ...(args.role !== undefined ? { role: args.role } : {}),
-        });
-        // Re-bind: the same session may join again under a DIFFERENT name
-        // (e.g. the model joined with a wrong agent_name and corrected
-        // itself). The old name must go through the same release logic as
-        // dropSession, or it would stay mcpConnected/online forever — the
-        // ghost-agent condition the idle sweep can never fix (the session is
-        // still alive, just bound to the new name).
-        const previous = sessionAgents.get(sessionId);
-        sessionAgents.set(sessionId, name);
-        if (previous && previous !== name) {
-          releaseAgentIfUnmapped(previous, `session ${sessionId} re-bound to ${name}`);
-        }
-        bus.emit({ type: "agent_updated", payload: toPublicAgent(updated) });
-        log.info(`[mcp] join: session ${sessionId} → agent ${name}.`);
+        const updated = bindSession(sessionId, name, "join", args.role);
 
         // The agent meets its group here and nothing beyond it: these are the
         // only names it can message, so they are the only ones worth naming.
@@ -491,17 +545,27 @@ export function createMcpEndpoint(options: McpOptions): McpEndpoint {
       if (sessionId && sessions.has(sessionId)) {
         const entry = sessions.get(sessionId)!;
         entry.lastActivityAt = Date.now();
+        // Header auth (re)binds on any request — covers a hub that restarted
+        // and lost the map, and a client whose env token rotated mid-life.
+        const ident = headerIdentity(req);
+        if (ident && sessionAgents.get(sessionId) !== ident) {
+          bindSession(sessionId, ident, "header");
+        }
         await entry.transport.handleRequest(req, res, req.body);
         return;
       }
 
       // No session id + initialize request: create a new session.
       if (!sessionId && isInitializeRequest(req.body)) {
+        // Resolved from THIS request's headers, bound as soon as the session
+        // id exists: the agent is on the network before its model says a word.
+        const ident = headerIdentity(req);
         const transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
           onsessioninitialized: (id) => {
             log.info(`[mcp] session initialized: ${id}`);
             sessions.set(id, { transport, lastActivityAt: Date.now() });
+            if (ident) bindSession(id, ident, "header");
           },
           onsessionclosed: (id) => {
             log.info(`[mcp] session closed by client (DELETE): ${id}`);

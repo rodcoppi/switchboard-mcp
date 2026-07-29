@@ -302,6 +302,14 @@ export interface Launcher {
    * (dashboard "open" button). Never throws: {opened:false, reason} instead.
    */
   openTerminal(name: string): Promise<{ opened: boolean; reason?: string }>;
+  /**
+   * Cancels the pending kickoff for ONE agent — called when its MCP session
+   * binds (header auth or join): the agent is already on the network, so
+   * typing the join instruction into its pane would be pure noise. Idempotent;
+   * a kickoff already past its timer is stopped by the mcpConnected re-check
+   * inside runKickoff instead.
+   */
+  cancelKickoffs(name: string): void;
   /** Cancels pending kickoffs; called by hub.close(). Idempotent. */
   stop(): void;
 }
@@ -317,9 +325,18 @@ export function createLauncher(options: LauncherOptions): Launcher {
   const readinessPollMs = options.readinessPollMs ?? KICKOFF_READINESS_POLL_MS;
   const readinessTimeoutMs = options.readinessTimeoutMs ?? KICKOFF_READINESS_TIMEOUT_MS;
 
-  /** Pending kickoff delay timers, cleared on stop() (hub shutdown). */
-  const pendingKickoffs = new Set<NodeJS.Timeout>();
+  /** Pending kickoff delay timers (timer → agent name), cleared on stop(). */
+  const pendingKickoffs = new Map<NodeJS.Timeout, string>();
   let closed = false;
+
+  function cancelKickoffs(name: string): void {
+    for (const [timer, owner] of pendingKickoffs) {
+      if (owner !== name) continue;
+      clearTimeout(timer);
+      pendingKickoffs.delete(timer);
+      log.info(`[launcher] kickoff for ${name} canceled: its MCP session already bound (silent join).`);
+    }
+  }
 
   async function launchAgent(input: LaunchInput): Promise<LaunchResult> {
     // 0. Which CLI. api.ts validates the incoming value, so anything unknown
@@ -557,7 +574,7 @@ export function createLauncher(options: LauncherOptions): Launcher {
       });
     }, config.kickoffDelayMs);
     timer.unref(); // a pending kickoff never holds the hub process open
-    pendingKickoffs.add(timer);
+    pendingKickoffs.set(timer, name);
   }
 
   /**
@@ -614,6 +631,14 @@ export function createLauncher(options: LauncherOptions): Launcher {
       await sleep(readinessPollMs);
     }
     if (closed) return;
+
+    // The agent may have bound its MCP session (header auth) while we were
+    // polling for TUI readiness — a live bind makes the typed instruction
+    // pure noise, which is exactly the complaint that led to header auth.
+    if (store.getAgent(name)?.mcpConnected) {
+      log.info(`[launcher] kickoff for ${name} skipped: already on the network (silent join).`);
+      return;
+    }
 
     // Guarded nudge path — pane-command guard, -l/--, separate Enter, TOCTOU
     // re-check all enforced inside nudgeSession (PRD 10.3, never bypassed).
@@ -707,9 +732,9 @@ export function createLauncher(options: LauncherOptions): Launcher {
 
   function stop(): void {
     closed = true;
-    for (const timer of pendingKickoffs) clearTimeout(timer);
+    for (const timer of pendingKickoffs.keys()) clearTimeout(timer);
     pendingKickoffs.clear();
   }
 
-  return { launchAgent, openTerminal, stop };
+  return { launchAgent, openTerminal, cancelKickoffs, stop };
 }

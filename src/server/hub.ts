@@ -188,7 +188,10 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
 
   // Claude /usage bars: a thin OAuth-endpoint proxy, cached — a single small
   // HTTP GET, safe on any machine (unlike the ccusage log-parse that OOM'd).
-  const usage: UsageProbe = createUsageProbe({ log });
+  const usage: UsageProbe = createUsageProbe({
+    log,
+    cachePath: path.join(store.baseDir, "usage-cache.json"),
+  });
 
   // Dictation transcription (POST /api/stt). Unlike launcher/terminals this
   // needs no tmux — it exists on every hub unless a test explicitly nulls it.
@@ -225,6 +228,9 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
     onMessage,
     sessionIdleTimeoutMs: options.sessionIdleTimeoutMs,
     sessionSweepIntervalMs: options.sessionSweepIntervalMs,
+    // A bound session (header auth or join) proves the agent is on the
+    // network — the pending kickoff would just type noise into its pane.
+    onSessionBound: (name) => launcher?.cancelKickoffs(name),
   });
   app.use(mcp.router);
 
@@ -353,7 +359,9 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
   log.info(`Data at:      ${baseDir}`);
   log.info(
     `Register in Claude Code (once, user scope): ` +
-      `claude mcp add --transport http --scope user switchboard ${url}/mcp`,
+      `claude mcp add --transport http --scope user switchboard ${url}/mcp ` +
+      `--header 'Authorization: Bearer \${SWITCHBOARD_AGENT_TOKEN}' ` +
+      `--header 'X-Switchboard-Agent-Name: \${SWITCHBOARD_AGENT_NAME}'`,
   );
 
   let closed = false;

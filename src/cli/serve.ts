@@ -18,7 +18,7 @@ const LOG_LEVELS: readonly LogLevel[] = ["debug", "info", "warn", "error"];
  */
 export function serveHeaderLines(url: string): string[] {
   return [
-    `Dashboard: ${url}/  |  MCP: ${url}/mcp  |  Register (once): claude mcp add --transport http --scope user switchboard ${url}/mcp`,
+    `Dashboard: ${url}/  |  MCP: ${url}/mcp  |  Register (once): claude mcp add --transport http --scope user switchboard ${url}/mcp --header 'Authorization: Bearer \${SWITCHBOARD_AGENT_TOKEN}' --header 'X-Switchboard-Agent-Name: \${SWITCHBOARD_AGENT_NAME}'`,
     `Recommendation: run this serve inside a tmux session "sb-hub" (tmux new -s sb-hub) so it survives closing the terminal.`,
   ];
 }

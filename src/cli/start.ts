@@ -246,6 +246,8 @@ export interface KickoffOptions {
   readinessTimeoutMs?: number;
   /** Readiness poll cadence (default 2s). */
   readinessPollMs?: number;
+  /** Injectable fetch for the silent-join check (tests). */
+  fetchFn?: typeof fetch;
 }
 
 const realSleep = (ms: number): Promise<void> =>
@@ -322,6 +324,23 @@ export async function runKickoffAgent(options: KickoffOptions): Promise<NudgeRes
       };
     }
     await sleep(readinessPollMs);
+  }
+
+  // Silent-join check: with header auth in the MCP client config, the agent's
+  // session binds the moment its CLI connects — typing the join instruction
+  // would just be noise in its composer. The hub knows; ask it. Fail-open on
+  // any error (hub unreachable = the old world, where the kickoff is needed).
+  try {
+    const fetchFn = options.fetchFn ?? fetch;
+    const res = await fetchFn(`http://127.0.0.1:${config.port}/api/agents`);
+    if (res.ok) {
+      const agents = (await res.json()) as Array<{ name: string; mcpConnected?: boolean }>;
+      if (agents.find((a) => a.name === options.name)?.mcpConnected) {
+        return { sent: false, reason: "already on the network (silent join) — kickoff not needed" };
+      }
+    }
+  } catch {
+    /* hub unreachable — keep the classic kickoff behavior */
   }
 
   // Guarded nudge path (PRD 11 step 6: "same function as the dispatcher, with

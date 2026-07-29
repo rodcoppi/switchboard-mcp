@@ -1384,3 +1384,61 @@ describe("auxiliary endpoints", () => {
     expect(agents[0].mcpConnected).toBe(false); // reset until the new join
   }, 15_000);
 });
+
+describe("header auth (silent join)", () => {
+  /** An MCP client whose HTTP requests carry the identity headers. */
+  async function mcpClientWithHeaders(name: string, token: string): Promise<Client> {
+    const client = new Client({ name: "integration-test-headers", version: "0.0.0" });
+    const transport = new StreamableHTTPClientTransport(
+      new URL(`http://127.0.0.1:${hub.port}/mcp`),
+      {
+        requestInit: {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "X-Switchboard-Agent-Name": name,
+          },
+        },
+      },
+    );
+    await client.connect(transport);
+    clients.push(client);
+    return client;
+  }
+
+  it("binds the session at connect — tools work with NO join call at all", async () => {
+    const token = await registerAgent("silent");
+    const client = await mcpClientWithHeaders("silent", token);
+    // check_messages requires a bound session; with header auth the binding
+    // happened during initialize, before the model said a word.
+    const res = await callTool(client, "check_messages");
+    expect(res.ok).toBe(true);
+    // …and the hub shows the agent connected.
+    const agents = (await (await fetch(api("/api/agents"))).json()) as any[];
+    expect(agents.find((a) => a.name === "silent")?.mcpConnected).toBe(true);
+  }, 15_000);
+
+  it("join on a header-bound session succeeds WITHOUT a token argument", async () => {
+    const token = await registerAgent("silent-join");
+    const client = await mcpClientWithHeaders("silent-join", token);
+    const joined = await callTool(client, "join", { agent_name: "silent-join" }); // no token
+    expect(joined.ok).toBe(true);
+  }, 15_000);
+
+  it("a WRONG header token binds nothing and protection stays intact", async () => {
+    await registerAgent("guarded");
+    const bad = "0".repeat(64);
+    const client = await mcpClientWithHeaders("guarded", bad);
+    const res = await callTool(client, "check_messages");
+    expect(res.ok).toBe(false); // not bound
+    const joined = await callTool(client, "join", { agent_name: "guarded" }); // still tokenless
+    expect(joined.ok).toBe(false);
+    expect(joined.error).toMatch(/capability token/i);
+  }, 15_000);
+
+  it("an unexpanded ${VAR} template is ignored (old client config), not treated as a token", async () => {
+    await registerAgent("legacyish");
+    const client = await mcpClientWithHeaders("${SWITCHBOARD_AGENT_NAME}", "${SWITCHBOARD_AGENT_TOKEN}");
+    const res = await callTool(client, "check_messages");
+    expect(res.ok).toBe(false); // silently unauthenticated — join path unchanged
+  }, 15_000);
+});

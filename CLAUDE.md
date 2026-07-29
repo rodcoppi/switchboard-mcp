@@ -66,8 +66,12 @@ npx vitest run test/store.test.ts      # a single test file
 npx tsx src/index.ts <subcommand>      # CLI in dev (bin "switchboard" via npm link)
 
 # CLI (subcommands): serve | start <name> | status | send <to> <msg> | stop <name> | down | logs [-f]
-# Registering the MCP in Claude Code (once, user scope):
-claude mcp add --transport http --scope user switchboard http://127.0.0.1:4577/mcp
+# Registering the MCP in Claude Code (once, user scope). The headers carry the
+# agent's identity from ITS OWN environment (Claude Code expands ${VAR} at
+# connect time), so sessions bind silently — no kickoff line typed into panes:
+claude mcp add --transport http --scope user switchboard http://127.0.0.1:4577/mcp \
+  --header 'Authorization: Bearer ${SWITCHBOARD_AGENT_TOKEN}' \
+  --header 'X-Switchboard-Agent-Name: ${SWITCHBOARD_AGENT_NAME}'
 ```
 
 The dispatcher's integration tests use real tmux (automatically skipped if tmux is absent).
