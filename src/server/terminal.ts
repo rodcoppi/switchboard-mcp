@@ -73,6 +73,8 @@ interface Live {
   /** Serializes frames: a layout burst must not interleave two captures. */
   chain: Promise<void>;
   reframeTimer: NodeJS.Timeout | null;
+  /** Consecutive reframe failures — reset on the first clean frame. */
+  reframeRetries: number;
   closed: boolean;
 }
 
@@ -83,6 +85,16 @@ export interface TerminalBridgeOptions {
 
 export class TerminalBridge {
   private readonly live = new Map<string, Live>();
+  /**
+   * The panel's LAST requested grid per session. The dashboard pushes its size
+   * once on mount — often BEFORE the SSE attach spawns the live entry, and the
+   * old resize() silently dropped that push ("no viewer, nothing to size").
+   * The pane then kept a stale grid until the next panel-layout change, which
+   * is exactly the divergence window where the TUI's cursor-relative repaints
+   * scar the screen. Remembering the wish and applying it at attach removes
+   * the race deterministically.
+   */
+  private readonly desired = new Map<string, { cols: number; rows: number }>();
   private readonly tmux: Tmux;
   private readonly log: Logger;
 
@@ -104,6 +116,17 @@ export class TerminalBridge {
     if (!entry) {
       entry = this.spawn(session);
       this.live.set(session, entry);
+      // Apply the panel's remembered size BEFORE the first frame, so the very
+      // first capture already comes at the grid the panel asked for (kills the
+      // mount race — see `desired` above). Queued on the chain like any frame.
+      const wish = this.desired.get(session);
+      if (wish) {
+        const e = entry;
+        entry.chain = entry.chain.then(async () => {
+          if (e.closed) return;
+          await e.cc.command(`resize-window -x ${wish.cols} -y ${wish.rows}`);
+        });
+      }
     }
     entry.viewers.add(internal);
 
@@ -128,6 +151,7 @@ export class TerminalBridge {
       viewers: new Set(),
       chain: Promise.resolve(),
       reframeTimer: null,
+      reframeRetries: 0,
       closed: false,
       cc: this.tmux.attachControlClient(session, {
         onOutput: (paneId, bytes) => {
@@ -163,9 +187,30 @@ export class TerminalBridge {
     entry.reframeTimer = setTimeout(() => {
       entry.reframeTimer = null;
       entry.chain = entry.chain.then(() =>
-        this.frame(entry, [...entry.viewers]).catch((err) => {
-          this.log.warn(`[term] reframe failed for ${entry.session}: ${(err as Error).message}`);
-        }),
+        this.frame(entry, [...entry.viewers]).then(
+          () => {
+            entry.reframeRetries = 0;
+          },
+          (err) => {
+            // A failed reframe used to just give up — and the reframe is the
+            // CLEANER: after a resize, deltas painted on the old grid scar the
+            // screen until this full frame replaces them. Giving up froze the
+            // scar ("embolo") until the next unrelated layout change. Retry
+            // with the same debounce; a handful of rounds outlives any
+            // transient tmux hiccup.
+            entry.reframeRetries += 1;
+            if (entry.reframeRetries <= 5) {
+              this.log.warn(
+                `[term] reframe failed for ${entry.session} (attempt ${entry.reframeRetries}/5, retrying): ${(err as Error).message}`,
+              );
+              this.scheduleReframe(entry);
+            } else {
+              this.log.error(
+                `[term] reframe failed for ${entry.session} after 5 attempts — the view may be stale until the next layout change: ${(err as Error).message}`,
+              );
+            }
+          },
+        ),
       );
     }, 120);
     entry.reframeTimer.unref?.();
@@ -287,8 +332,12 @@ export class TerminalBridge {
         `Invalid terminal size ${cols}x${rows} (expected 1..${MAX_COLS} by 1..${MAX_ROWS}).`,
       );
     }
+    // Remember the wish regardless of a live entry: the dashboard's mount-time
+    // push races the SSE attach, and the attach applies this before its first
+    // frame (see attachViewer). Dropping it was the mount-race divergence.
+    this.desired.set(session, { cols, rows });
     const entry = this.live.get(session);
-    if (!entry || entry.closed) return; // no viewer, nothing to size
+    if (!entry || entry.closed) return; // applied at the next attach instead
 
     entry.chain = entry.chain.then(async () => {
       if (entry.closed) return;

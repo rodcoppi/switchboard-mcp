@@ -287,3 +287,24 @@ describe("TerminalBridge (real tmux, control mode)", () => {
     expect(await createTmux().hasSession(session)).toBe(true);
   }, 20_000);
 });
+
+describe("mount race (panel size pushed before the SSE attach)", () => {
+  it("a resize BEFORE any viewer is remembered and applied at attach", async () => {
+    if (!hasTmux) return;
+    const session = sessionName("race");
+    await newCatSession(session, 80, 24);
+    const bridge = newBridge();
+
+    // The dashboard's mount-time push: no viewer exists yet. The old code
+    // dropped this on the floor ("no viewer, nothing to size") and the first
+    // frame came at the pane's stale 80x24 — the divergence that scarred the
+    // TUI's cursor-relative repaints.
+    await bridge.resize(session, 97, 31);
+
+    const viewer = makeViewer();
+    const detach = await bridge.attachViewer(session, viewer);
+    await waitFor(() => viewer.grids.length > 0);
+    expect(viewer.grids[0]).toEqual({ cols: 97, rows: 31 });
+    detach();
+  }, 20_000);
+});
