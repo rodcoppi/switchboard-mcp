@@ -479,11 +479,31 @@ export function createTmux(options: TmuxOptions = {}): Tmux {
         // "%output %<pane-id> <payload>"
         const space = line.indexOf(" ", 8);
         if (space === -1) return;
-        handlers.onOutput(line.slice(8, space), decodeControlOutput(line.slice(space + 1)));
+        const paneId = line.slice(8, space);
+        const bytes = decodeControlOutput(line.slice(space + 1));
+        // MICROTASK FENCE — the last brick of the stream-order contract. A
+        // command's %end resolves its promise, but the awaiting continuation
+        // (terminal.ts finishing a frame and flipping viewers to started)
+        // only runs as a MICROTASK — while this synchronous loop barrels on
+        // through the rest of the chunk. Dispatched synchronously, a %output
+        // sitting right behind that %end reaches the viewer BEFORE the frame
+        // that excludes it, is dropped as "not started", and its bytes are
+        // simply gone: the screen is short a few bytes and every
+        // cursor-relative repaint after that paints askew (the "embolo" that
+        // appeared exactly when a frame was cut while the pane was talking).
+        // queueMicrotask puts notifications on the SAME FIFO queue as promise
+        // continuations, so JS-land dispatch order equals stream order.
+        queueMicrotask(() => {
+          if (!exited) handlers.onOutput(paneId, bytes);
+        });
         return;
       }
       if (line.startsWith("%layout-change")) {
-        handlers.onLayoutChange();
+        // Same fence, same invariant (order vs command continuations), even
+        // though today's only consumer debounces it anyway.
+        queueMicrotask(() => {
+          if (!exited) handlers.onLayoutChange();
+        });
         return;
       }
       // Every other notification (%session-changed, %exit, …): not our business.

@@ -308,3 +308,49 @@ describe("mount race (panel size pushed before the SSE attach)", () => {
     detach();
   }, 20_000);
 });
+
+describe("mid-stream frames (the %end/%output chunk race)", () => {
+  it("a frame cut while the pane is talking loses not one byte to the race", async () => {
+    if (!hasTmux) return;
+    // The pane floods numbered tokens "<0><1><2>…" with no pauses, so the
+    // chunk that carries a capture's %end almost always carries %output lines
+    // right behind it — the exact window where the synchronous dispatch used
+    // to hand those bytes to a viewer whose frame did not include them yet
+    // (started=false → dropped → the screen stays short a few bytes and the
+    // TUI's cursor-relative repaints scar it). Every attach below cuts a
+    // FIRST frame mid-stream; consecutiveness across frame+deltas is the
+    // no-byte-lost oracle: a drop breaks the token sequence, a chunk split
+    // heals in concatenation.
+    const session = sessionName("race");
+    await execFileAsync("tmux", [
+      "new-session", "-d", "-s", session, "-x", "80", "-y", "24",
+      "sh", "-c", `awk 'BEGIN{for(i=0;;i++) printf "<%d>", i}'`,
+    ]);
+    const bridge = newBridge();
+
+    for (let round = 0; round < 12; round++) {
+      const viewer = makeViewer();
+      const detach = await bridge.attachViewer(session, viewer);
+      try {
+        // Collect a slice of live deltas behind the frame.
+        await waitFor(() => viewer.chunks.length >= 3, 3000);
+      } finally {
+        detach();
+      }
+      expect(viewer.chunks.length).toBeGreaterThanOrEqual(2); // frame + deltas: the race window was real
+      const text = viewer
+        .text()
+        .replace(/\x1b\[[0-9;?]*[a-zA-Z]/g, "") // frame prologue/cursor ANSI
+        .replace(/[\r\n]/g, ""); // screen-line joints; tokens reassemble
+      const tokens = [...text.matchAll(/<(\d+)>/g)].map((m) => Number(m[1]));
+      expect(tokens.length).toBeGreaterThan(20); // sanity: the flood was flowing
+      for (let k = 1; k < tokens.length; k++) {
+        if (tokens[k] !== tokens[k - 1] + 1) {
+          throw new Error(
+            `round ${round}: token gap ${tokens[k - 1]} → ${tokens[k]} — bytes were lost at the frame cut`,
+          );
+        }
+      }
+    }
+  }, 30_000);
+});
