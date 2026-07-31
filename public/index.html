@@ -489,6 +489,12 @@
     /* Keep identity on the signal lamp, not as another decorative rail. */
     .agent-card::before { display: none; }
     .agent-card:hover { background: var(--bg-hover); border-color: var(--border); transform: translateY(-1px); }
+    /* An OPEN ⋯ menu must outrank everything that paints after the card: the
+       hover lift's transform turns the card into a stacking context (trapping
+       the menu's own z-index inside it), and the NEXT .rail-group is a later
+       positioned sibling — so the dropdown rendered BEHIND the following
+       group. Ranking the card itself, menu inside, wins the whole chain. */
+    .agent-card.menu-open { z-index: 45; }
     .agent-card:active { transform: translateY(0); }
     /* A recoloured chat carries its colour around the engine portrait. */
     .agent-card.tinted .agent-portrait {

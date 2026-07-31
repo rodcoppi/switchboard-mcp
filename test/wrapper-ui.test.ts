@@ -174,6 +174,13 @@ describe("wrapper reopen loading state", () => {
     // the moment the user moves the mouse.
     expect(html).toContain(".agent-actions:has(.reopen-btn.busy)");
   });
+
+  it("an open kebab menu outranks the neighbouring rail groups", () => {
+    // The hover lift (transform) makes the card a stacking context, and the
+    // next .rail-group paints later in DOM order — without a rank on the
+    // card itself, the dropdown rendered BEHIND the following group.
+    expect(html).toContain(".agent-card.menu-open { z-index: 45; }");
+  });
 });
 
 describe("dictation waveform", () => {
