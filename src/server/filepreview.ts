@@ -63,6 +63,44 @@ const IMAGE_MIME: Record<string, string> = {
   ".ico": "image/x-icon",
 };
 
+/**
+ * Content-Type map for GET /api/files/raw — the "open in your browser" door.
+ * The browser decides how to SHOW a file purely by this header (the route
+ * sets nosniff), so the map names what a tab genuinely renders: html as the
+ * site, images at full size, PDF in the built-in viewer, media in the player.
+ * Markdown is served as plain text — a tab cannot render it, and pretending
+ * (text/html) would show garbage. Anything unknown is octet-stream, which
+ * downloads instead of rendering: still a door, never a surprise.
+ */
+const RAW_MIME: Record<string, string> = {
+  ...IMAGE_MIME,
+  ".html": "text/html; charset=utf-8",
+  ".htm": "text/html; charset=utf-8",
+  ".pdf": "application/pdf",
+  ".json": "application/json; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".mjs": "text/javascript; charset=utf-8",
+  ".txt": "text/plain; charset=utf-8",
+  ".md": "text/plain; charset=utf-8",
+  ".markdown": "text/plain; charset=utf-8",
+  ".csv": "text/plain; charset=utf-8",
+  ".log": "text/plain; charset=utf-8",
+  ".xml": "text/xml; charset=utf-8",
+  ".mp4": "video/mp4",
+  ".webm": "video/webm",
+  ".mov": "video/quicktime",
+  ".mp3": "audio/mpeg",
+  ".wav": "audio/wav",
+  ".ogg": "audio/ogg",
+  ".m4a": "audio/mp4",
+};
+
+/** Content-Type for the raw route. Octet-stream when the tab cannot render it. */
+export function rawMime(filePath: string): string {
+  return RAW_MIME[path.extname(filePath).toLowerCase()] ?? "application/octet-stream";
+}
+
 /** Expands a leading "~" to the home directory. */
 function expandHome(p: string): string {
   if (p === "~") return os.homedir();

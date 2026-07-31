@@ -8,3 +8,10 @@ PRD-switchboard.md
 
 # Loose screenshots in the repo root (keep only assets/).
 /*.png
+
+# Tool/session detritus — never product code.
+.agents/
+.claude/
+.context/
+.playwright-mcp/
+skills-lock.json

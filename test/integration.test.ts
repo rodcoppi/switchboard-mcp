@@ -1287,6 +1287,47 @@ describe("auxiliary endpoints", () => {
     expect(typeof body.version).toBe("string");
   });
 
+  it("GET /api/files/raw serves in-scope bytes with the sandbox CSP wall", async () => {
+    // The raw route puts agent-authored HTML on the dashboard's origin, so
+    // the CSP sandbox header IS the security boundary (an unsandboxed page
+    // could drive the hub API with the operator's authority). Scope: the
+    // file sits under a registered agent's cwd, like the preview.
+    await registerAgent("rawhost");
+    fs.mkdirSync("/tmp/rawhost", { recursive: true });
+    fs.writeFileSync("/tmp/rawhost/site.html", "<h1>hello site</h1>");
+    try {
+      const res = await fetch(api(`/api/files/raw?path=${encodeURIComponent("/tmp/rawhost/site.html")}`));
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toBe("text/html; charset=utf-8");
+      expect(res.headers.get("content-security-policy")).toBe("sandbox allow-scripts allow-popups");
+      expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+      expect(await res.text()).toBe("<h1>hello site</h1>");
+    } finally {
+      fs.rmSync("/tmp/rawhost", { recursive: true, force: true });
+    }
+  });
+
+  it("GET /api/files/raw refuses a path outside every scope root", async () => {
+    const res = await fetch(api(`/api/files/raw?path=${encodeURIComponent("/etc/hostname")}`));
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as any;
+    expect(body.ok).toBe(false);
+  });
+
+  it("POST /api/files/reveal refuses out-of-scope before touching Explorer", async () => {
+    const res = await fetch(api("/api/files/reveal"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: "/etc/hostname" }),
+    });
+    // 403 out-of-scope on a WSL hub; 501 when there is no Windows side at
+    // all (plain-Linux CI) — either way the answer is a refusal, and
+    // Explorer is never spawned for it.
+    expect([403, 501]).toContain(res.status);
+    const body = (await res.json()) as any;
+    expect(body.ok).toBe(false);
+  });
+
   it("GET /api/events heartbeats as a real EVENT, not only a comment", async () => {
     // The dashboard cannot see `: heartbeat` — EventSource drops comments — so
     // a stream killed by WSL2's localhost proxy (or a sleeping laptop) looks

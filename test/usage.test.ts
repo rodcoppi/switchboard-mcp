@@ -132,4 +132,42 @@ describe("createUsageProbe", () => {
     await probe.getLimits();
     expect(calls).toBe(1);
   });
+
+  it("survives a hub restart with last-good bars and honours Retry-After", async () => {
+    const credentialsPath = credsFile("t");
+    const cachePath = path.join(os.tmpdir(), `sb-usage-cache-${process.pid}-${tmpFiles.length}.json`);
+    tmpFiles.push(cachePath);
+    const good = createUsageProbe({
+      log: silentLog,
+      credentialsPath,
+      cachePath,
+      fetchFn: fakeFetch([{ kind: "session", group: "session", percent: 44, resets_at: "2026-07-18T00:00:00Z" }]),
+    });
+    const first = await good.getSnapshot();
+    expect(first.status).toBe("ok");
+    expect(first.limits[0].percent).toBe(44);
+
+    let calls = 0;
+    const restarted = createUsageProbe({
+      log: silentLog,
+      credentialsPath,
+      cachePath,
+      fetchFn: (async () => {
+        calls++;
+        return {
+          ok: false,
+          status: 429,
+          headers: { get: (name: string) => name.toLowerCase() === "retry-after" ? "900" : null },
+          json: async () => ({ error: { type: "rate_limit_error" } }),
+        } as unknown as Response;
+      }) as typeof fetch,
+    });
+    const stale = await restarted.getSnapshot();
+    expect(stale.status).toBe("rate_limited");
+    expect(stale.stale).toBe(true);
+    expect(stale.limits[0].percent).toBe(44);
+    expect(stale.retryAt).not.toBeNull();
+    await restarted.getSnapshot();
+    expect(calls).toBe(1); // the second call stays inside Retry-After
+  });
 });

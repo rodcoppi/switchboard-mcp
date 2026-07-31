@@ -36,11 +36,16 @@ import { GROUP_NAME_RE, resolveGroup, type Store } from "./store.js";
 import { LaunchError, normalizeIncomingPath, type Launcher } from "./launcher.js";
 import { PickError, pickWindowsFolder } from "./winpicker.js";
 import { TerminalError } from "./terminal.js";
-import { PreviewError, readPreview, resolveInScope } from "./filepreview.js";
+import { PreviewError, rawMime, readPreview, resolveInScope } from "./filepreview.js";
 import { isOpenable, refusalFor, type FileOpener } from "./fileopen.js";
 import { MAX_STT_BYTES, SttError, type SttProxy } from "./stt.js";
 import { parseConversation, projectDirForCwd } from "./conversation.js";
-import { codexTokensToday, findCodexRolloutForCwd, parseCodexRollout, type CodexTokens } from "./codexlog.js";
+import {
+  codexUsageSnapshot,
+  findCodexRolloutForCwd,
+  parseCodexRollout,
+  type CodexUsageSnapshot,
+} from "./codexlog.js";
 import type { UsageProbe } from "./usage.js";
 import {
   invalidAgentTypeMessage,
@@ -347,6 +352,26 @@ export interface ApiOptions {
  * (node_modules-scale) cheap to serialize and render in the dashboard.
  */
 const FS_DIRS_CAP = 500;
+/** Pathless clipboard images are scratch material, never permanent storage. */
+const UPLOAD_TTL_MS = 24 * 60 * 60 * 1000;
+
+function sweepExpiredUploads(dir: string, now = Date.now()): void {
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    const file = path.join(dir, entry.name);
+    try {
+      if (now - fs.statSync(file).mtimeMs >= UPLOAD_TTL_MS) fs.rmSync(file, { force: true });
+    } catch {
+      /* raced a deletion / unreadable scratch file — leave it alone */
+    }
+  }
+}
 
 /**
  * GET /api/agents/:name/files bounds. The walk is breadth-first and triple-
@@ -360,6 +385,95 @@ const AGENT_FILES_SKIP = new Set([
 const AGENT_FILES_MAX_DEPTH = 5;
 const AGENT_FILES_CAP = 200; // hard ceiling on ?limit
 const AGENT_FILES_SCAN_CAP = 20_000; // entries visited before the walk bails
+
+/**
+ * Downloads folders that belong to the local operator. WSL's home and the
+ * Windows profile are separate trees, while agents casually call both of them
+ * "Downloads". Keep the scope narrow: only the Downloads directories, never a
+ * whole Windows profile.
+ */
+function downloadRoots(): string[] {
+  const roots = [path.join(os.homedir(), "Downloads")];
+  let mounts: fs.Dirent[] = [];
+  try {
+    mounts = fs.readdirSync("/mnt", { withFileTypes: true });
+  } catch {
+    /* not WSL */
+  }
+  for (const mount of mounts) {
+    if (!mount.isDirectory() || !/^[a-z]$/i.test(mount.name)) continue;
+    const users = path.join("/mnt", mount.name, "Users");
+    let profiles: fs.Dirent[];
+    try {
+      profiles = fs.readdirSync(users, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const profile of profiles) {
+      if (!profile.isDirectory()) continue;
+      roots.push(path.join(users, profile.name, "Downloads"));
+    }
+  }
+  return [...new Set(roots)].filter((root) => {
+    try {
+      return fs.statSync(root).isDirectory();
+    } catch {
+      return false;
+    }
+  });
+}
+
+/**
+ * Resolves a bare filename mentioned in prose. Exact basename only, bounded
+ * breadth-first search, no symlink traversal. A Downloads hint changes root
+ * priority but never expands the allowed roots.
+ */
+function findMentionedFile(
+  filename: string,
+  agentCwd: string,
+  preferDownloads: boolean,
+): string | null {
+  const downloads = downloadRoots().map((root) => ({ root, maxDepth: 3 }));
+  const project = agentCwd.trim() === "" ? [] : [{ root: agentCwd, maxDepth: AGENT_FILES_MAX_DEPTH }];
+  const searches = preferDownloads ? [...downloads, ...project] : [...project, ...downloads];
+  const allowedRoots = searches.map((search) => search.root);
+  const needle = filename.toLowerCase();
+
+  for (const { root, maxDepth } of searches) {
+    let scanned = 0;
+    let level = [""];
+    for (let depth = 0; depth < maxDepth && level.length > 0 && scanned < AGENT_FILES_SCAN_CAP; depth++) {
+      const next: string[] = [];
+      for (const relDir of level) {
+        let entries: fs.Dirent[];
+        try {
+          entries = fs.readdirSync(path.join(root, relDir), { withFileTypes: true });
+        } catch {
+          continue;
+        }
+        for (const entry of entries) {
+          if (++scanned > AGENT_FILES_SCAN_CAP) break;
+          const isDir = entry.isDirectory();
+          if (isDir && AGENT_FILES_SKIP.has(entry.name)) continue;
+          const rel = relDir === "" ? entry.name : path.join(relDir, entry.name);
+          if (isDir) {
+            next.push(rel);
+            continue;
+          }
+          if (!entry.isFile() && !entry.isSymbolicLink()) continue;
+          if (entry.name.toLowerCase() !== needle) continue;
+          try {
+            return resolveInScope(path.join(root, rel), allowedRoots);
+          } catch {
+            /* a symlink escaped scope or raced deletion — keep looking */
+          }
+        }
+      }
+      level = next;
+    }
+  }
+  return null;
+}
 
 /**
  * Best-effort "this folder has a previous Claude Code conversation" probe for
@@ -388,6 +502,8 @@ export function createApiRouter(options: ApiOptions): express.Router {
   const heartbeatMs = options.heartbeatMs ?? 25_000;
   const claudeProjectsDir =
     options.claudeProjectsDir ?? path.join(os.homedir(), ".claude", "projects");
+  const uploadsDir = path.join(store.baseDir, "uploads");
+  sweepExpiredUploads(uploadsDir); // also cleans leftovers from an older hub
   const router = express.Router();
 
   // GET /api/agents → PublicAgent[] with aggregated unreadCount. Redacted:
@@ -800,6 +916,7 @@ export function createApiRouter(options: ApiOptions): express.Router {
           .filter((c) => typeof c === "string" && c.trim() !== ""),
       ),
       os.homedir(),
+      ...downloadRoots(),
     ];
   }
 
@@ -853,6 +970,88 @@ export function createApiRouter(options: ApiOptions): express.Router {
       const reason = err instanceof Error ? err.message : String(err);
       log.warn(`[files] could not open ${real}: ${reason}`);
       res.status(500).json({ ok: false, error: `Could not open it (${reason}).` });
+    }
+  });
+
+  // GET /api/files/raw?path=<abs> — serve the file's bytes to a BROWSER TAB:
+  // an .html an agent built opens as the actual site, an image at full size, a
+  // PDF in the built-in viewer. Same scope wall as the preview (the path came
+  // from a message, so it is untrusted) plus one wall the preview never
+  // needed: this response lives on the DASHBOARD's origin, and an
+  // agent-authored HTML page runs scripts — without a sandbox it could call
+  // this very API with the operator's authority (launch agents, nudge them,
+  // open files). `CSP: sandbox allow-scripts` gives the document an OPAQUE
+  // origin: its scripts run and the site works, but its requests to the hub
+  // stop being same-origin and gain nothing. No allowlist gate: unlike
+  // /api/files/open nothing is EXECUTED here — the tab renders bytes inside
+  // that sandbox, or downloads them.
+  router.get("/api/files/raw", (req, res) => {
+    const rawPath = typeof req.query.path === "string" ? req.query.path : "";
+    let real: string;
+    try {
+      real = resolveInScope(rawPath, fileScopeRoots());
+    } catch (err) {
+      const status = err instanceof PreviewError ? err.status : 500;
+      res.status(status).json({ ok: false, error: (err as Error).message });
+      return;
+    }
+    let stat: fs.Stats;
+    try {
+      stat = fs.statSync(real);
+    } catch {
+      res.status(404).json({ ok: false, error: `File not found: ${real}` });
+      return;
+    }
+    if (!stat.isFile()) {
+      res.status(400).json({ ok: false, error: `Not a file: ${real}` });
+      return;
+    }
+    res.setHeader("Content-Type", rawMime(real));
+    res.setHeader("Content-Security-Policy", "sandbox allow-scripts allow-popups");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("Content-Length", String(stat.size));
+    fs.createReadStream(real)
+      .on("error", (err) => {
+        log.warn(`[files] raw stream failed for ${real}: ${err.message}`);
+        res.destroy(err);
+      })
+      .pipe(res);
+  });
+
+  // POST /api/files/reveal { path } — Windows Explorer with the file SELECTED
+  // ("show in folder"). Scope-checked like the preview, and deliberately NOT
+  // allowlisted like /api/files/open: revealing never opens or runs the file,
+  // Explorer lands on the parent folder with the entry highlighted — pointing
+  // at an agent-written .bat is as inert as listing its directory.
+  router.post("/api/files/reveal", async (req, res) => {
+    if (!fileOpener) {
+      res.status(501).json({
+        ok: false,
+        error:
+          "Revealing a file in Explorer needs the hub to run under WSL " +
+          "(it hands the path to Windows).",
+      });
+      return;
+    }
+    const raw = req.body as { path?: unknown };
+    const rawPath = typeof raw?.path === "string" ? raw.path : "";
+    let real: string;
+    try {
+      real = resolveInScope(rawPath, fileScopeRoots());
+    } catch (err) {
+      const status = err instanceof PreviewError ? err.status : 500;
+      res.status(status).json({ ok: false, error: (err as Error).message });
+      return;
+    }
+    try {
+      await fileOpener.reveal(real);
+      log.info(`[files] revealed in Explorer: ${real}`);
+      res.json({ ok: true, path: real });
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      log.warn(`[files] could not reveal ${real}: ${reason}`);
+      res.status(500).json({ ok: false, error: `Could not show it in the folder (${reason}).` });
     }
   });
 
@@ -993,12 +1192,17 @@ export function createApiRouter(options: ApiOptions): express.Router {
         return;
       }
       try {
-        const uploadsDir = path.join(store.baseDir, "uploads");
         fs.mkdirSync(uploadsDir, { recursive: true });
+        sweepExpiredUploads(uploadsDir);
         const filePath = path.join(uploadsDir, `${ulid()}-${name}`);
         fs.writeFileSync(filePath, req.body);
+        const expiresAt = Date.now() + UPLOAD_TTL_MS;
+        const expiry = setTimeout(() => {
+          try { fs.rmSync(filePath, { force: true }); } catch { /* best effort scratch cleanup */ }
+        }, UPLOAD_TTL_MS);
+        expiry.unref();
         log.info(`[api] upload stored: ${filePath} (${req.body.length} bytes).`);
-        res.status(201).json({ ok: true, path: filePath, name });
+        res.status(201).json({ ok: true, path: filePath, name, expiresAt: new Date(expiresAt).toISOString() });
       } catch (err) {
         res.status(500).json({
           ok: false,
@@ -1194,6 +1398,35 @@ export function createApiRouter(options: ApiOptions): express.Router {
     bus.emit({ type: "agent_updated", payload: toPublicAgent(updated) });
     log.info(`[api] agent ${name} moved to group ${group}.`);
     res.json({ ok: true, agent: toPublicAgent(updated) });
+  });
+
+  // GET /api/agents/:name/files/resolve?file=<basename>&hint=downloads — turns
+  // a bare filename from conversation prose into one real, scoped path. The
+  // dashboard only makes the text interactive after this endpoint confirms it,
+  // so domain names and ordinary dotted words never become dead links.
+  router.get("/api/agents/:name/files/resolve", (req, res) => {
+    const agent = store.getAgent(String(req.params.name));
+    if (!agent) {
+      res.status(404).json({ ok: false, error: `Unknown agent: "${req.params.name}".` });
+      return;
+    }
+    const filename = typeof req.query.file === "string" ? req.query.file.trim() : "";
+    if (
+      filename === "" ||
+      filename !== path.basename(filename) ||
+      filename === "." ||
+      filename === ".." ||
+      !/^[A-Za-z_][\w+@. -]*\.[A-Za-z][A-Za-z0-9]{0,7}$/.test(filename)
+    ) {
+      res.status(400).json({ ok: false, error: "Expected one bare filename with an extension." });
+      return;
+    }
+    const found = findMentionedFile(filename, agent.cwd || "", req.query.hint === "downloads");
+    if (!found) {
+      res.status(404).json({ ok: false, error: `File not found for ${agent.name}: ${filename}` });
+      return;
+    }
+    res.json({ ok: true, path: found });
   });
 
   // GET /api/agents/:name/files?q=<query>&limit=50 — file autocomplete for the
@@ -1681,23 +1914,27 @@ export function createApiRouter(options: ApiOptions): express.Router {
     });
   });
 
-  // Claude /usage bars (5h session + weekly), proxied from the OAuth endpoint
-  // and cached. [] when no probe or the fetch failed — the dashboard hides it.
-  // Codex tokens today, cached — reading the day's rollouts each request would
-  // be wasteful. Only computed if any codex agent is registered (else null).
-  let codexCache: { at: number; tokens: CodexTokens } | null = null;
-  const codexUsage = (): CodexTokens | null => {
+  // Claude plan windows come from its OAuth endpoint; Codex plan windows come
+  // from the newest local token_count event. Both are cached here because the
+  // underlying sources are append-only logs / a rate-limited network probe.
+  let codexCache: { at: number; usage: CodexUsageSnapshot } | null = null;
+  const codexUsage = (): CodexUsageSnapshot | null => {
     const hasCodex = store.listAgents().some((a) => resolveAgentType(a.agentType) === "codex");
     if (!hasCodex) return null;
     if (!codexCache || Date.now() - codexCache.at > 30_000) {
-      codexCache = { at: Date.now(), tokens: codexTokensToday(new Date()) };
+      codexCache = { at: Date.now(), usage: codexUsageSnapshot(new Date()) };
     }
-    return codexCache.tokens;
+    return codexCache.usage;
   };
 
   router.get("/api/usage", async (_req, res) => {
+    const claude = usage ? await usage.getSnapshot() : {
+      limits: [], updatedAt: null, stale: true, status: "unavailable" as const, retryAt: null,
+    };
     res.json({
-      limits: usage ? await usage.getLimits() : [],
+      // Keep `limits` for old dashboards; new ones also consume freshness.
+      limits: claude.limits,
+      claude,
       codex: codexUsage(),
     });
   });

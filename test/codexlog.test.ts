@@ -5,7 +5,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { codexSessionsDir, findCodexRolloutForCwd, parseCodexRollout } from "../src/server/codexlog.js";
+import {
+  codexSessionsDir,
+  codexUsageSnapshot,
+  findCodexRolloutForCwd,
+  parseCodexRollout,
+} from "../src/server/codexlog.js";
 
 const line = (obj: unknown): string => JSON.stringify(obj);
 
@@ -152,5 +157,40 @@ describe("codexTokensToday", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "sb-ctok2-"));
     dirs.push(root);
     expect(codexTokensToday(new Date(2020, 0, 1), root)).toEqual({ total: 0, input: 0, output: 0, reasoning: 0 });
+  });
+
+  it("returns the newest real plan windows alongside token detail", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "sb-climit-"));
+    dirs.push(root);
+    const now = new Date(2026, 6, 17, 12, 0, 0);
+    const day = path.join(root, "2026", "07", "17");
+    fs.mkdirSync(day, { recursive: true });
+    const event = (used: number) => line({
+      type: "event_msg",
+      payload: {
+        type: "token_count",
+        info: { total_token_usage: { input_tokens: 80, output_tokens: 15, reasoning_output_tokens: 5, total_tokens: 100 } },
+        rate_limits: {
+          limit_id: "codex",
+          plan_type: "plus",
+          primary: { used_percent: used, window_minutes: 300, resets_at: 1_784_818_544 },
+          secondary: { used_percent: 31, window_minutes: 10_080, resets_at: 1_785_000_000 },
+        },
+      },
+    });
+    const older = path.join(day, "rollout-old.jsonl");
+    const newer = path.join(day, "rollout-new.jsonl");
+    fs.writeFileSync(older, event(4) + "\n");
+    fs.writeFileSync(newer, event(18) + "\n");
+    fs.utimesSync(older, new Date("2026-07-17T10:00:00Z"), new Date("2026-07-17T10:00:00Z"));
+    fs.utimesSync(newer, new Date("2026-07-17T11:00:00Z"), new Date("2026-07-17T11:00:00Z"));
+
+    const usage = codexUsageSnapshot(now, root);
+    expect(usage.total).toBe(200);
+    expect(usage.planType).toBe("plus");
+    expect(usage.limits).toEqual([
+      { id: "primary", usedPercent: 18, windowMinutes: 300, resetsAt: new Date(1_784_818_544_000).toISOString() },
+      { id: "secondary", usedPercent: 31, windowMinutes: 10_080, resetsAt: new Date(1_785_000_000_000).toISOString() },
+    ]);
   });
 });
