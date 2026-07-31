@@ -111,3 +111,35 @@ describe("createWindowsFileOpener", () => {
     expect(calls.map((c) => c.file)).toEqual(["wslpath", "explorer.exe", "/mnt/c/Windows/explorer.exe"]);
   });
 });
+
+describe("createWindowsFileOpener.reveal", () => {
+  const calls: { file: string; args: string[] }[] = [];
+  const exec = (stdout: string, fail?: (file: string) => Error | null) =>
+    (async (file: string, args: string[]) => {
+      calls.push({ file, args });
+      const err = fail?.(file);
+      if (err) throw err;
+      return { stdout };
+    }) as never;
+
+  it("hands explorer ONE `/select,<win>` token — Explorer's own comma syntax", async () => {
+    calls.length = 0;
+    const opener = createWindowsFileOpener({ exec: exec("\\\\wsl$\\Ubuntu\\home\\r\\shot.png\n"), distro: "Ubuntu" });
+    await opener!.reveal("/home/r/shot.png");
+    expect(calls[0]).toEqual({ file: "wslpath", args: ["-w", "/home/r/shot.png"] });
+    expect(calls[1].file).toBe("explorer.exe");
+    expect(calls[1].args).toEqual(["/select,\\\\wsl$\\Ubuntu\\home\\r\\shot.png"]);
+  });
+
+  it("falls back to the absolute explorer path when PATH lacks /mnt/c", async () => {
+    calls.length = 0;
+    const enoent = Object.assign(new Error("spawn explorer.exe ENOENT"), { code: "ENOENT" });
+    const opener = createWindowsFileOpener({
+      exec: exec("C:\\shot.png", (f) => (f === "explorer.exe" ? enoent : null)),
+      distro: "Ubuntu",
+    });
+    await opener!.reveal("/home/r/shot.png");
+    expect(calls[2].file).toBe("/mnt/c/Windows/explorer.exe");
+    expect(calls[2].args).toEqual(["/select,C:\\shot.png"]);
+  });
+});

@@ -13,9 +13,9 @@
 // yields [] and the dashboard simply hides the card. The token NEVER leaves
 // this process.
 
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { Logger } from "./log.js";
 
 /** One normalised /usage bar. */
@@ -32,6 +32,20 @@ export interface UsageLimit {
 export interface UsageProbe {
   /** The cached bars (fetches on first call / after the cache expires). */
   getLimits(): Promise<UsageLimit[]>;
+  /** Bars plus freshness/backoff metadata for an honest unavailable state. */
+  getSnapshot(): Promise<UsageSnapshot>;
+}
+
+export type UsageStatus = "ok" | "rate_limited" | "unauthorized" | "unavailable";
+
+export interface UsageSnapshot {
+  limits: UsageLimit[];
+  /** Time of the last non-empty response, persisted across hub restarts. */
+  updatedAt: string | null;
+  stale: boolean;
+  status: UsageStatus;
+  /** When the upstream asked us to try again (429 Retry-After). */
+  retryAt: string | null;
 }
 
 export const USAGE_CACHE_MS = 60_000;
@@ -43,6 +57,8 @@ export interface UsageProbeOptions {
   endpoint?: string;
   cacheMs?: number;
   fetchFn?: typeof fetch;
+  /** Optional durable last-good cache. Production places it in ~/.switchboard. */
+  cachePath?: string;
 }
 
 export function createUsageProbe(options: UsageProbeOptions): UsageProbe {
@@ -52,42 +68,155 @@ export function createUsageProbe(options: UsageProbeOptions): UsageProbe {
   const endpoint = options.endpoint ?? USAGE_ENDPOINT;
   const cacheMs = options.cacheMs ?? USAGE_CACHE_MS;
   const fetchFn = options.fetchFn ?? fetch;
+  const cachePath = options.cachePath;
 
-  let cache: { at: number; limits: UsageLimit[] } | null = null;
+  interface CacheState {
+    checkedAt: number;
+    fetchedAt: number | null;
+    retryAt: number | null;
+    status: UsageStatus;
+    limits: UsageLimit[];
+  }
 
-  async function fetchLimits(): Promise<UsageLimit[]> {
+  const readStored = (): CacheState | null => {
+    if (!cachePath) return null;
+    try {
+      const raw = JSON.parse(readFileSync(cachePath, "utf8")) as Partial<CacheState>;
+      if (!Array.isArray(raw.limits)) return null;
+      const limits = raw.limits.flatMap((item) => normalizeStoredLimit(item));
+      if (!limits.length) return null;
+      return {
+        // Always revalidate after a restart, while keeping the old bars visible.
+        checkedAt: 0,
+        fetchedAt: typeof raw.fetchedAt === "number" ? raw.fetchedAt : null,
+        retryAt: typeof raw.retryAt === "number" ? raw.retryAt : null,
+        status: raw.status === "rate_limited" ? "rate_limited" : "unavailable",
+        limits,
+      };
+    } catch {
+      return null;
+    }
+  };
+
+  const persist = (state: CacheState): void => {
+    if (!cachePath || !state.limits.length) return;
+    try {
+      mkdirSync(dirname(cachePath), { recursive: true });
+      const temp = `${cachePath}.tmp`;
+      writeFileSync(temp, JSON.stringify({ ...state, version: 1 }, null, 2) + "\n", { mode: 0o600 });
+      renameSync(temp, cachePath);
+    } catch (err) {
+      log.warn(`[usage] could not persist the last-good cache: ${err instanceof Error ? err.message : err}`);
+    }
+  };
+
+  let cache: CacheState | null = readStored();
+
+  async function fetchLimits(): Promise<{ limits: UsageLimit[]; status: UsageStatus; retryAt: number | null }> {
     const raw = readFileSync(credentialsPath, "utf8");
     const creds = JSON.parse(raw) as { claudeAiOauth?: { accessToken?: string } };
     const token = creds.claudeAiOauth?.accessToken;
-    if (!token) return [];
+    if (!token) return { limits: [], status: "unauthorized", retryAt: null };
     const res = await fetchFn(endpoint, {
       headers: { Authorization: `Bearer ${token}`, "anthropic-beta": "oauth-2025-04-20" },
     });
-    if (!res.ok) return [];
-    return parseUsageBody(await res.json());
+    if (res.status === 429) {
+      const retryAt = retryAtFromHeader(res.headers?.get?.("retry-after") ?? null);
+      return { limits: [], status: "rate_limited", retryAt };
+    }
+    if (res.status === 401 || res.status === 403) {
+      return { limits: [], status: "unauthorized", retryAt: null };
+    }
+    if (!res.ok) return { limits: [], status: "unavailable", retryAt: null };
+    const limits = parseUsageBody(await res.json());
+    return { limits, status: limits.length ? "ok" : "unavailable", retryAt: null };
+  }
+
+  const snapshot = (state: CacheState): UsageSnapshot => ({
+    limits: state.limits,
+    updatedAt: state.fetchedAt ? new Date(state.fetchedAt).toISOString() : null,
+    stale: state.status !== "ok",
+    status: state.status,
+    retryAt: state.retryAt ? new Date(state.retryAt).toISOString() : null,
+  });
+
+  async function refresh(): Promise<UsageSnapshot> {
+    const now = Date.now();
+    if (cache && now - cache.checkedAt < cacheMs) return snapshot(cache);
+    // Respect Anthropic's Retry-After instead of hammering the endpoint every
+    // minute and extending a cooldown shared by every local wrapper.
+    if (cache?.retryAt && cache.retryAt > now) {
+      cache.checkedAt = now;
+      return snapshot(cache);
+    }
+
+    try {
+      const result = await fetchLimits();
+      if (result.status === "ok") {
+        cache = {
+          checkedAt: now,
+          fetchedAt: now,
+          retryAt: null,
+          status: "ok",
+          limits: result.limits,
+        };
+      } else {
+        cache = {
+          checkedAt: now,
+          fetchedAt: cache?.fetchedAt ?? null,
+          retryAt: result.retryAt,
+          status: result.status,
+          limits: cache?.limits ?? [],
+        };
+      }
+    } catch (err) {
+      log.warn(`[usage] fetch failed: ${err instanceof Error ? err.message : err}`);
+      cache = {
+        checkedAt: now,
+        fetchedAt: cache?.fetchedAt ?? null,
+        retryAt: cache?.retryAt ?? null,
+        status: "unavailable",
+        limits: cache?.limits ?? [],
+      };
+    }
+    persist(cache);
+    return snapshot(cache);
   }
 
   return {
     async getLimits(): Promise<UsageLimit[]> {
-      if (cache && Date.now() - cache.at < cacheMs) return cache.limits;
-      let limits: UsageLimit[] = [];
-      try {
-        limits = await fetchLimits();
-      } catch (err) {
-        log.warn(`[usage] fetch failed: ${err instanceof Error ? err.message : err}`);
-      }
-      // A transient failure (no token yet, network blip, non-200) yields [] —
-      // keep the LAST GOOD bars rather than blanking them, so the dashboard's
-      // card doesn't flicker away. Only a real, non-empty read replaces them;
-      // the timestamp still advances so the cache TTL keeps ticking.
-      if (limits.length > 0 || !cache) {
-        cache = { at: Date.now(), limits };
-      } else {
-        cache = { at: Date.now(), limits: cache.limits };
-      }
-      return cache.limits;
+      return (await refresh()).limits;
     },
+    getSnapshot: refresh,
   };
+}
+
+function retryAtFromHeader(value: string | null, now = Date.now()): number {
+  if (!value) return now + 5 * 60_000;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return now + seconds * 1000;
+  const date = Date.parse(value);
+  return Number.isFinite(date) ? date : now + 5 * 60_000;
+}
+
+/** Stored limits already use our public camelCase shape, unlike API limits. */
+function normalizeStoredLimit(raw: unknown): UsageLimit[] {
+  if (typeof raw !== "object" || raw === null) return [];
+  const l = raw as Partial<UsageLimit>;
+  if (
+    typeof l.kind !== "string" ||
+    typeof l.group !== "string" ||
+    typeof l.percent !== "number" ||
+    typeof l.resetsAt !== "string"
+  ) return [];
+  return [{
+    kind: l.kind,
+    group: l.group,
+    label: typeof l.label === "string" ? l.label : null,
+    percent: l.percent,
+    severity: typeof l.severity === "string" ? l.severity : "normal",
+    resetsAt: l.resetsAt,
+  }];
 }
 
 /**

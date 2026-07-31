@@ -119,6 +119,22 @@ export interface CodexTokens {
   reasoning: number;
 }
 
+export interface CodexUsageLimit {
+  id: "primary" | "secondary";
+  usedPercent: number;
+  windowMinutes: number;
+  resetsAt: string;
+}
+
+/** Real plan-window data emitted by Codex's own token_count events. */
+export interface CodexUsageSnapshot extends CodexTokens {
+  limits: CodexUsageLimit[];
+  planType: string | null;
+  limitId: string | null;
+  limitName: string | null;
+  updatedAt: string | null;
+}
+
 /**
  * Sum of Codex tokens spent TODAY — Codex has no usage-limit API (it's OpenAI),
  * but its rollouts carry token_count events whose info.total_token_usage is the
@@ -127,59 +143,140 @@ export interface CodexTokens {
  * date folder (YYYY/MM/DD); a missing folder → zeros.
  */
 export function codexTokensToday(now: Date, sessionsDir = codexSessionsDir()): CodexTokens {
+  const { total, input, output, reasoning } = codexUsageSnapshot(now, sessionsDir);
+  return { total, input, output, reasoning };
+}
+
+/**
+ * Today's token detail plus the NEWEST Codex plan windows. The latter are the
+ * useful answer to “how much Codex do I have left?” and are already present in
+ * local rollouts — no OpenAI credential or extra network request is needed.
+ */
+export function codexUsageSnapshot(now: Date, sessionsDir = codexSessionsDir()): CodexUsageSnapshot {
   const y = now.getFullYear();
   const m = String(now.getMonth() + 1).padStart(2, "0");
   const d = String(now.getDate()).padStart(2, "0");
   const dayDir = path.join(sessionsDir, String(y), m, d);
   const acc: CodexTokens = { total: 0, input: 0, output: 0, reasoning: 0 };
-  let files: string[];
+  let files: { name: string; mtime: number }[];
   try {
-    files = fs.readdirSync(dayDir).filter((f) => f.startsWith("rollout-") && f.endsWith(".jsonl"));
+    files = fs.readdirSync(dayDir)
+      .filter((f) => f.startsWith("rollout-") && f.endsWith(".jsonl"))
+      .map((name) => {
+        try {
+          return { name, mtime: fs.statSync(path.join(dayDir, name)).mtimeMs };
+        } catch {
+          return { name, mtime: 0 };
+        }
+      })
+      .sort((a, b) => b.mtime - a.mtime);
   } catch {
-    return acc; // no folder for today yet
+    return { ...acc, limits: [], planType: null, limitId: null, limitName: null, updatedAt: null };
   }
-  for (const name of files) {
-    const last = lastTokenUsage(path.join(dayDir, name));
-    if (!last) continue;
-    acc.total += last.total;
-    acc.input += last.input;
-    acc.output += last.output;
-    acc.reasoning += last.reasoning;
+  let latestRate: RawRateLimits | null = null;
+  let latestRateMtime = 0;
+  for (const file of files) {
+    const last = lastTokenEvent(path.join(dayDir, file.name));
+    if (last.tokens) {
+      acc.total += last.tokens.total;
+      acc.input += last.tokens.input;
+      acc.output += last.tokens.output;
+      acc.reasoning += last.tokens.reasoning;
+    }
+    if (!latestRate && last.rateLimits) {
+      latestRate = last.rateLimits;
+      latestRateMtime = file.mtime;
+    }
   }
-  return acc;
+  return {
+    ...acc,
+    limits: latestRate ? normalizeCodexLimits(latestRate) : [],
+    planType: typeof latestRate?.plan_type === "string" ? latestRate.plan_type : null,
+    limitId: typeof latestRate?.limit_id === "string" ? latestRate.limit_id : null,
+    limitName: typeof latestRate?.limit_name === "string" ? latestRate.limit_name : null,
+    updatedAt: latestRateMtime > 0 ? new Date(latestRateMtime).toISOString() : null,
+  };
 }
 
-/** The last token_count's cumulative total_token_usage in a rollout, or null. */
-function lastTokenUsage(file: string): CodexTokens | null {
+interface RawRateWindow {
+  used_percent?: unknown;
+  window_minutes?: unknown;
+  resets_at?: unknown;
+}
+
+interface RawRateLimits {
+  limit_id?: unknown;
+  limit_name?: unknown;
+  primary?: RawRateWindow | null;
+  secondary?: RawRateWindow | null;
+  plan_type?: unknown;
+}
+
+function normalizeCodexLimits(raw: RawRateLimits): CodexUsageLimit[] {
+  const out: CodexUsageLimit[] = [];
+  for (const id of ["primary", "secondary"] as const) {
+    const win = raw[id];
+    if (!win) continue;
+    if (
+      typeof win.used_percent !== "number" || !Number.isFinite(win.used_percent) ||
+      typeof win.window_minutes !== "number" || !Number.isFinite(win.window_minutes)
+    ) continue;
+    const epoch = typeof win.resets_at === "number"
+      ? win.resets_at * 1000
+      : typeof win.resets_at === "string"
+        ? Date.parse(win.resets_at)
+        : NaN;
+    if (!Number.isFinite(epoch)) continue;
+    out.push({
+      id,
+      usedPercent: win.used_percent,
+      windowMinutes: win.window_minutes,
+      resetsAt: new Date(epoch).toISOString(),
+    });
+  }
+  return out;
+}
+
+/** Last cumulative tokens and newest rate_limits carried by a rollout. */
+function lastTokenEvent(file: string): { tokens: CodexTokens | null; rateLimits: RawRateLimits | null } {
   let text: string;
   try {
     text = fs.readFileSync(file, "utf8");
   } catch {
-    return null;
+    return { tokens: null, rateLimits: null };
   }
+  let tokens: CodexTokens | null = null;
+  let rateLimits: RawRateLimits | null = null;
   const lines = text.split("\n");
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i];
     if (!line.includes('"token_count"')) continue;
     try {
       const rec = JSON.parse(line) as {
-        payload?: { type?: string; info?: { total_token_usage?: Record<string, unknown> } };
+        payload?: {
+          type?: string;
+          info?: { total_token_usage?: Record<string, unknown> };
+          rate_limits?: RawRateLimits;
+        };
       };
       if (rec.payload?.type !== "token_count") continue;
+      if (!rateLimits && rec.payload.rate_limits) rateLimits = rec.payload.rate_limits;
       const u = rec.payload.info?.total_token_usage;
-      if (!u) continue;
-      const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
-      return {
-        total: num(u.total_tokens),
-        input: num(u.input_tokens),
-        output: num(u.output_tokens),
-        reasoning: num(u.reasoning_output_tokens),
-      };
+      if (!tokens && u) {
+        const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+        tokens = {
+          total: num(u.total_tokens),
+          input: num(u.input_tokens),
+          output: num(u.output_tokens),
+          reasoning: num(u.reasoning_output_tokens),
+        };
+      }
+      if (tokens && rateLimits) break;
     } catch {
       /* malformed — keep scanning upward */
     }
   }
-  return null;
+  return { tokens, rateLimits };
 }
 
 /** One-line label for a codex tool call ("exec: const p = await …"). */

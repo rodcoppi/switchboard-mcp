@@ -20,15 +20,15 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const PAGE = path.join(here, "..", "public", "index.html");
 
 /** Pulls `const FILE_PATH_RE = /…/g;` out of the page and rebuilds it. */
-function filePathRe(): RegExp {
+function regexNamed(name: string): RegExp {
   const src = fs.readFileSync(PAGE, "utf8");
-  const m = src.match(/const FILE_PATH_RE\s*=\s*\n?\s*\/(.+)\/([gimsuy]*);/);
-  if (!m) throw new Error("FILE_PATH_RE not found in public/index.html — did it move or change shape?");
+  const m = src.match(new RegExp(`const ${name}\\s*=\\s*\\n?\\s*/(.+)/([gimsuy]*);`));
+  if (!m) throw new Error(`${name} not found in public/index.html — did it move or change shape?`);
   return new RegExp(m[1], m[2]);
 }
 
 const matches = (text: string): string[] => {
-  const re = filePathRe();
+  const re = regexNamed("FILE_PATH_RE");
   re.lastIndex = 0;
   return [...text.matchAll(re)].map((m) => m[0]);
 };
@@ -60,5 +60,22 @@ describe("FILE_PATH_RE", () => {
     expect(matches("suporte 24/7 pra voce")).toEqual([]); // no extension
     expect(matches("custo ~US$0,70 (coberto)")).toEqual([]); // "~" but not a path
     expect(matches("15.7s em 1088x1920")).toEqual([]);
+  });
+});
+
+describe("BARE_FILE_RE candidates", () => {
+  const candidates = (text: string): string[] => {
+    const re = regexNamed("BARE_FILE_RE");
+    return [...text.matchAll(re)].map((match) => match[0]);
+  };
+
+  it("finds a filename cited in prose so the hub can resolve it", () => {
+    expect(candidates("o arquivo VacaGorda-IMPLEMENTACAO-FASE3.md está no Downloads")).toEqual([
+      "VacaGorda-IMPLEMENTACAO-FASE3.md",
+    ]);
+  });
+
+  it("does not take a basename out of an existing full path", () => {
+    expect(candidates("veja /home/rod/VacaGorda-IMPLEMENTACAO-FASE3.md")).toEqual([]);
   });
 });

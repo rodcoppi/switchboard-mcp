@@ -10,6 +10,7 @@ import {
   MAX_PREVIEW_BYTES,
   PreviewError,
   kindOfPath,
+  rawMime,
   readPreview,
   resolveInScope,
 } from "../src/server/filepreview.js";
@@ -150,5 +151,23 @@ describe("readPreview", () => {
     const r = readPreview(fs.realpathSync(f));
     expect(r.kind).toBe("binary");
     expect(r.content).toBeNull();
+  });
+});
+
+describe("rawMime", () => {
+  it("names what a browser tab genuinely renders", () => {
+    expect(rawMime("/a/site.html")).toBe("text/html; charset=utf-8");
+    expect(rawMime("/a/shot.PNG")).toBe("image/png");
+    expect(rawMime("/a/doc.pdf")).toBe("application/pdf");
+    expect(rawMime("/a/clip.mp4")).toBe("video/mp4");
+  });
+
+  it("serves markdown as plain text — a tab cannot render it", () => {
+    expect(rawMime("/a/notes.md")).toBe("text/plain; charset=utf-8");
+  });
+
+  it("downloads the unknown instead of guessing", () => {
+    expect(rawMime("/a/data.sqlite")).toBe("application/octet-stream");
+    expect(rawMime("/a/no-extension")).toBe("application/octet-stream");
   });
 });

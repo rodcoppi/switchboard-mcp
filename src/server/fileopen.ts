@@ -72,6 +72,13 @@ export type ExecCapture = (
 export interface FileOpener {
   /** Opens `realPath` in the Windows default app. Throws on failure. */
   open(realPath: string): Promise<void>;
+  /**
+   * Opens Windows Explorer on `realPath`'s PARENT folder with the file
+   * selected ("show in folder"). Never opens or runs the file itself, which
+   * is why the API route behind this needs no allowlist — revealing an
+   * agent-written .bat is as inert as listing its directory.
+   */
+  reveal(realPath: string): Promise<void>;
 }
 
 /**
@@ -84,27 +91,41 @@ export function createWindowsFileOpener(deps: {
 }): FileOpener | null {
   const distro = deps.distro ?? process.env.WSL_DISTRO_NAME;
   if (!distro) return null;
+
+  // A Windows program cannot read "/home/…"; wslpath turns it into the
+  // \\wsl$\<distro>\home\… UNC form the shell understands.
+  async function toWindowsPath(realPath: string): Promise<string> {
+    const { stdout } = await deps.exec("wslpath", ["-w", realPath]);
+    const win = stdout.trim();
+    if (win === "") throw new Error(`wslpath gave no Windows path for ${realPath}`);
+    return win;
+  }
+
+  async function runExplorer(arg: string): Promise<void> {
+    // cwd /mnt/c: Windows executables warn (and misbehave) when started from
+    // a \\wsl$ UNC working directory — same reason as the terminal opener.
+    const opts = { cwd: "/mnt/c" };
+    try {
+      await deps.exec("explorer.exe", [arg], opts);
+    } catch (err) {
+      // explorer.exe exits NON-ZERO even when it opened the file — a
+      // long-standing Windows quirk — so its exit code says nothing. Only a
+      // spawn failure is real, and it has one known cause: a hub booted from
+      // a bare environment has no /mnt/c/... on PATH (the same report that
+      // shaped the terminal opener). Its location is fixed on every install.
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") return;
+      await deps.exec("/mnt/c/Windows/explorer.exe", [arg], opts);
+    }
+  }
+
   return {
     async open(realPath: string): Promise<void> {
-      // A Windows program cannot read "/home/…"; wslpath turns it into the
-      // \\wsl$\<distro>\home\… UNC form the shell understands.
-      const { stdout } = await deps.exec("wslpath", ["-w", realPath]);
-      const win = stdout.trim();
-      if (win === "") throw new Error(`wslpath gave no Windows path for ${realPath}`);
-      // cwd /mnt/c: Windows executables warn (and misbehave) when started from
-      // a \\wsl$ UNC working directory — same reason as the terminal opener.
-      const opts = { cwd: "/mnt/c" };
-      try {
-        await deps.exec("explorer.exe", [win], opts);
-      } catch (err) {
-        // explorer.exe exits NON-ZERO even when it opened the file — a
-        // long-standing Windows quirk — so its exit code says nothing. Only a
-        // spawn failure is real, and it has one known cause: a hub booted from
-        // a bare environment has no /mnt/c/... on PATH (the same report that
-        // shaped the terminal opener). Its location is fixed on every install.
-        if ((err as NodeJS.ErrnoException).code !== "ENOENT") return;
-        await deps.exec("/mnt/c/Windows/explorer.exe", [win], opts);
-      }
+      await runExplorer(await toWindowsPath(realPath));
+    },
+    async reveal(realPath: string): Promise<void> {
+      // `/select,<path>` is ONE argv token (Explorer's own comma syntax):
+      // Explorer opens the parent folder and highlights the entry.
+      await runExplorer(`/select,${await toWindowsPath(realPath)}`);
     },
   };
 }

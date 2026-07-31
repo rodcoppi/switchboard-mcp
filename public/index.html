@@ -54,11 +54,12 @@
       --bg-hover:    #172232;
       --border:      #232e3d;
       --border-soft: #1a2431;
+      --border-strong: #354357;
 
       /* --- text: soft white -> dim -> faint ------------------------------ */
       --text:        #e6edf3;
       --text-dim:    #8b98a8;
-      --text-faint:  #5a6673;
+      --text-faint:  #738091;
 
       /* --- SIGNATURE: warm signal amber (the whole identity) -------------- */
       --accent:        #f5a623;
@@ -101,22 +102,23 @@
       --fs-md:  13px;
       --fs-name: 13.5px;
       --fs-wordmark: 15.5px;
+      --fs-lg: 16px;
 
       /* --- geometry ------------------------------------------------------ */
       --sidebar-w: 322px;
       --radius: 7px;
       --radius-sm: 5px;
+      --radius-lg: 12px;
       --radius-pill: 999px;
+      --shadow-popover: 0 20px 48px rgba(0, 0, 0, 0.48);
       --ease: cubic-bezier(0.4, 0, 0.2, 1);
     }
 
     * { box-sizing: border-box; }
-    html, body { height: 100%; }
+    html, body { height: 100%; color-scheme: dark; }
     body {
       margin: 0;
-      background:
-        radial-gradient(1200px 620px at 78% -10%, #0e1622 0%, transparent 60%),
-        var(--bg);
+      background: var(--bg);
       color: var(--text);
       font-family: var(--mono);
       font-size: var(--fs-body);
@@ -220,25 +222,89 @@
 
     .header-spacer { flex: 1 1 auto; }
 
-    /* Claude /usage bars in the rail's foot — the 5-hour and weekly limits,
-       each a bar coloured by burn PACE (green if under the clock, red if you're
-       spending faster than the window refills). Copied from the reference app,
-       on this dashboard's own palette. */
+    /* Plan usage lives in one compact instrument at the rail's foot. Claude
+       and Codex are sections of the same question (“how much room is left?”),
+       not unrelated dashboard cards. Token volume is a quiet footnote. */
     .usage-card {
       flex: 0 0 auto;
       margin: 8px 10px 12px;
-      padding: 10px 12px;
       border: 1px solid var(--border);
       border-radius: 10px;
       background: var(--bg-elev);
-      display: flex;
-      flex-direction: column;
-      gap: 9px;
+      overflow: hidden;
+      transition: border-color 0.16s var(--ease), background 0.16s var(--ease);
     }
     .usage-card[hidden] { display: none; }
-    .usage-card-head { display: flex; align-items: baseline; justify-content: space-between; }
+    .usage-card-head {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 9px 12px 8px;
+      border: 0;
+      border-bottom: 1px solid var(--border-soft);
+      background: color-mix(in srgb, var(--text) 2%, transparent);
+      color: inherit;
+      text-align: left;
+      cursor: pointer;
+      transition: background 0.14s var(--ease), color 0.14s var(--ease);
+    }
+    .usage-card-head:hover { background: var(--bg-hover); }
+    .usage-card-head .eyebrow { flex: 0 0 auto; }
+    .usage-card-summary {
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-family: var(--mono);
+      font-size: var(--fs-eyebrow);
+      color: var(--text-dim);
+      font-variant-numeric: tabular-nums;
+      opacity: 0;
+      transform: translateY(2px);
+      transition: opacity 0.14s var(--ease), transform 0.14s var(--ease);
+    }
     .usage-reset { font-family: var(--mono); font-size: var(--fs-eyebrow); color: var(--text-faint); }
+    .usage-card-caret {
+      flex: 0 0 auto;
+      width: 14px;
+      color: var(--text-faint);
+      text-align: center;
+      transform: rotate(90deg);
+      transition: transform 0.16s var(--ease), color 0.16s var(--ease);
+    }
+    .usage-card-head:hover .usage-card-caret { color: var(--text); }
+    .usage-card[data-collapsed="true"] { background: var(--bg-inset); }
+    .usage-card[data-collapsed="true"] .usage-card-head { border-bottom-color: transparent; }
+    .usage-card[data-collapsed="true"] .usage-card-summary { opacity: 1; transform: translateY(0); }
+    .usage-card[data-collapsed="true"] .usage-reset { display: none; }
+    .usage-card[data-collapsed="true"] .usage-card-caret { transform: rotate(0); }
+    .usage-card[data-collapsed="true"] #usage-rows { display: none; }
+    .usage-engine { padding: 9px 12px 10px; }
+    .usage-engine + .usage-engine { border-top: 1px solid var(--border-soft); }
+    .usage-engine-head { display: flex; align-items: center; gap: 7px; margin-bottom: 8px; }
+    .usage-engine-mark {
+      width: 18px; height: 18px;
+      display: grid; place-items: center;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      background: var(--bg-inset);
+      color: var(--text-dim);
+    }
+    .usage-engine-mark .agent-logo { width: 11px; height: 11px; }
+    .usage-engine-name { font-family: var(--mono); font-size: var(--fs-xs); font-weight: 650; color: var(--text); }
+    .usage-engine-meta { margin-left: auto; font-family: var(--mono); font-size: var(--fs-eyebrow); color: var(--text-faint); }
+    .usage-engine-state {
+      padding: 2px 0 1px;
+      font-family: var(--sans);
+      font-size: var(--fs-xs);
+      line-height: 1.4;
+      color: var(--text-faint);
+    }
+    .usage-engine-state.warn { color: var(--warn); }
     .usage-row { display: flex; flex-direction: column; gap: 3px; }
+    .usage-row + .usage-row { margin-top: 8px; }
     .usage-row-head {
       display: flex; justify-content: space-between; align-items: baseline;
       font-family: var(--mono); font-size: var(--fs-xs);
@@ -248,16 +314,7 @@
     .usage-bar { height: 6px; border-radius: 999px; background: var(--bg-inset); overflow: hidden; }
     .usage-bar-fill { height: 100%; border-radius: 999px; transition: width 0.4s var(--ease), background 0.3s var(--ease); }
     .usage-row-reset { font-size: var(--fs-eyebrow); color: var(--text-faint); font-family: var(--mono); }
-    /* Codex tokens today — a count, not a bar (Codex has no % limit). */
-    #usage-codex[hidden] { display: none; }
-    #usage-codex { margin-top: 9px; padding-top: 9px; border-top: 1px solid var(--border-soft); }
-    .usage-codex-row {
-      display: flex; align-items: baseline; justify-content: space-between;
-      font-family: var(--mono); font-size: var(--fs-xs);
-    }
-    .usage-codex-label { color: var(--text-dim); }
-    .usage-codex-total { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
-    .usage-codex-breakdown { margin-top: 2px; font-family: var(--mono); font-size: var(--fs-eyebrow); color: var(--text-faint); }
+    .usage-token-note { margin-top: 7px; font-family: var(--mono); font-size: var(--fs-eyebrow); color: var(--text-faint); }
     /* [hidden] LAST, and it must exist on every rule that sets `display`: the
        attribute is only a UA-stylesheet `display:none`, so any `display` of ours
        beats it and the element stays on screen while the JS believes it hid it.
@@ -290,9 +347,10 @@
       padding: 4px 11px;
       font-size: var(--fs-xs);
       white-space: nowrap;
-      transition: border-color 0.12s var(--ease), background 0.12s var(--ease), color 0.12s var(--ease);
+      transition: border-color 0.12s var(--ease), background 0.12s var(--ease), color 0.12s var(--ease), transform 0.12s var(--ease), box-shadow 0.12s var(--ease);
     }
-    .btn:hover { background: var(--bg-hover); border-color: var(--accent); }
+    .btn:hover { background: var(--bg-hover); border-color: var(--accent); transform: translateY(-1px); }
+    .btn:active { transform: translateY(0) scale(0.98); }
     .btn-copy { color: var(--accent); font-weight: 600; }
 
     /* ------------------------------- Layout ------------------------------ */
@@ -355,23 +413,22 @@
       line-height: 1.6;
     }
 
-    /* --- the JACK ROW: an agent patched into the board ------------------- */
-    /* One card = one channel strip. Each thing gets its OWN full-width line so
-       nothing fights for horizontal room: the name reads first, a quiet signal
-       line (engine · state) reads second, the description reads third. Actions
-       are not in the flow at all — they surface top-right on hover/selection. */
+    /* --- the JACK ROW: one agent, not a generic dashboard card ----------- */
+    /* Agents become channel rows inside a room. The name, engine state and
+       job description do the identification; the small face is the live
+       presence signal. Actions stay contextual instead of filling the row. */
     .agent-card {
       position: relative;
       display: flex;
       flex-direction: column;
-      gap: 3px;
-      padding: 10px 12px 11px 22px;
+      gap: 4px;
+      padding: 12px 14px 12px 24px;
       margin-bottom: 8px;
       background: var(--bg-elev);
       border: 1px solid var(--border-soft);
       border-radius: var(--radius);
       cursor: pointer;
-      transition: border-color 0.14s var(--ease), background 0.14s var(--ease), transform 0.14s var(--ease);
+      transition: border-color 0.14s var(--ease), background 0.14s var(--ease), box-shadow 0.14s var(--ease), transform 0.14s var(--ease);
     }
     /* Name line: the lamp, then the label, filling the width. */
     .agent-name-row {
@@ -379,6 +436,7 @@
       align-items: center;
       gap: 7px;
       min-width: 0;
+      padding-right: 70px;
     }
     /* Unseen reply: a small amber pip at the name's end + a brighter name, the
        familiar "unread" pairing. Quiet and static — no pulse to add to the din. */
@@ -391,7 +449,7 @@
     }
     .agent-card.unseen .agent-name { color: var(--accent-bright); font-weight: 700; }
     /* Signal line + description line align under the NAME, past the lamp. */
-    .agent-meta, .agent-role { padding-left: 16px; }
+    .agent-meta, .agent-role { padding-left: 29px; }
     /* Engine siblings (claude + its codex on the same folder) read as ONE
        project: joined vertically (no gap, shared rounded corners) with a
        "linked" bracket down the left so it is clear they are two engines of the
@@ -408,16 +466,7 @@
       border-top: none;
     }
     .agent-card.pair-top::after,
-    .agent-card.pair-bottom::after {
-      content: "";
-      position: absolute;
-      left: 0; top: -1px; bottom: -1px;
-      width: 2px;
-      background: var(--accent-line);
-      opacity: 0.6;
-    }
-    .agent-card.pair-top::after { border-radius: 2px 0 0 0; }
-    .agent-card.pair-bottom::after { border-radius: 0 0 0 2px; }
+    .agent-card.pair-bottom::after { display: none; }
 
     /* Drag handle — the ONLY reorder grip, revealed on hover on the left edge. */
     .card-grab {
@@ -437,53 +486,62 @@
     .agent-card:hover .card-grab { opacity: 0.65; }
     .card-grab:hover { opacity: 1; color: var(--text); }
     .card-grab:active { cursor: grabbing; }
-    /* the patch rail: a thin amber cable-end that lights when the row is live/active */
-    .agent-card::before {
-      content: "";
-      position: absolute;
-      left: 0; top: 9px; bottom: 9px;
-      width: 2px;
-      border-radius: 0 2px 2px 0;
-      background: transparent;
-      transition: background 0.14s var(--ease);
+    /* Keep identity on the signal lamp, not as another decorative rail. */
+    .agent-card::before { display: none; }
+    .agent-card:hover { background: var(--bg-hover); border-color: var(--border); transform: translateY(-1px); }
+    .agent-card:active { transform: translateY(0); }
+    /* A recoloured chat carries its colour around the engine portrait. */
+    .agent-card.tinted .agent-portrait {
+      outline: 1px solid var(--chat-color);
+      outline-offset: 1px;
     }
-    .agent-card:hover { background: var(--bg-hover); border-color: var(--border); }
-    .agent-card:hover::before { background: var(--border); }
-    /* A recoloured chat: its cable-end carries the chosen colour at all times,
-       so the chat is identifiable in the rail at a glance. */
-    .agent-card.tinted::before,
-    .agent-card.tinted:hover::before { background: var(--chat-color); }
-    /* Selected: the one you're looking at. It reads as "patched in" — a cool
-       cyan tint that fades left→right, a full cyan border, a soft lift, and the
-       cable-end swelling into a solid full-height bar down the left edge. Cyan,
-       NOT amber, so it never blurs into the gold leader card. */
+    /* Selection is a calm whole-card state, never another line on the left. */
     .agent-card.active {
       border-color: var(--selected);
-      background:
-        linear-gradient(90deg, var(--selected-wash), color-mix(in srgb, var(--selected-wash) 32%, transparent) 58%, transparent),
-        var(--bg-elev);
-      box-shadow: 0 0 0 1px var(--selected-line), 0 6px 18px -10px rgba(69, 184, 224, 0.5);
+      background: color-mix(in srgb, var(--selected) 8%, var(--bg-elev));
+      box-shadow: inset 0 0 0 1px var(--selected-line);
     }
-    .agent-card.active::before {
-      top: 3px; bottom: 3px;
-      width: 3px;
-      border-radius: 0 3px 3px 0;
-      background: var(--selected);
-      box-shadow: 0 0 10px 1px rgba(69, 184, 224, 0.6);
-    }
-    /* The selected card wins its left bar even when the chat is recoloured. */
-    .agent-card.active.tinted::before { background: var(--selected); }
-    .agent-card.offline { opacity: 0.66; }
+    .agent-card.active .agent-portrait { outline-color: var(--selected); }
+    /* Dim an offline card's CONTENT, never the card itself: opacity on the
+       container bleeds into everything positioned inside it — the ⋯ menu was
+       rendering translucent (cards readable through it) on offline cards. The
+       actions cluster stays full-strength: reopen/⋯ are live controls. */
+    .agent-card.offline > *:not(.agent-actions) { opacity: 0.66; }
 
-    /* the LAMP: a glowing phosphor jack indicator, not a flat circle. Now inline
-       at the head of the name line, so its working-halo rings right by the name. */
-    .status-dot {
+    /* Engine portrait + presence lamp. The real Claude/Codex mark says what
+       this agent is; the tiny corner light says whether it is reachable. */
+    .agent-portrait {
       flex: none;
-      width: 9px; height: 9px; border-radius: 50%;
-      background: var(--offline);
+      position: relative;
+      width: 22px;
+      height: 22px;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      background: var(--bg-inset);
+      color: var(--text-dim);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+      transition: border-color 0.14s var(--ease), color 0.14s var(--ease), transform 0.14s var(--ease), box-shadow 0.14s var(--ease);
     }
-    .status-dot.online  { background: var(--online); box-shadow: var(--led-online); }
-    .status-dot.offline { background: var(--offline); box-shadow: var(--led-offline); }
+    .agent-portrait .agent-logo { width: 13px; height: 13px; opacity: 0.86; }
+    .status-dot {
+      position: absolute;
+      right: -3px;
+      top: -3px;
+      width: 8px;
+      height: 8px;
+      border: 2px solid var(--bg-elev);
+      border-radius: 50%;
+      background: var(--offline);
+      box-shadow: var(--led-offline);
+    }
+    .status-dot.online { background: var(--online); box-shadow: 0 0 6px rgba(63,185,80,0.72); }
+    .agent-card:hover .agent-portrait {
+      color: var(--text);
+      border-color: var(--border-strong);
+      transform: translateY(-1px);
+    }
 
     .agent-name {
       flex: 1 1 auto;
@@ -531,6 +589,7 @@
 
     .agent-role {
       color: var(--text-dim);
+      font-family: var(--sans);
       font-size: var(--fs-xs);
       line-height: 1.35;
       display: -webkit-box;
@@ -543,14 +602,25 @@
     .agent-actions {
       position: absolute;
       top: 9px; right: 10px;
+      z-index: 5;
       display: flex; align-items: center; gap: 6px;
       opacity: 0;
       pointer-events: none;
       transition: opacity 0.12s var(--ease);
     }
+    .agent-actions > button,
+    .agent-actions > .agent-menu-wrap > .menu-btn {
+      background: var(--bg-elev-2);
+      box-shadow: 0 1px 6px rgba(0, 0, 0, 0.28);
+    }
     .agent-card:hover .agent-actions,
     .agent-card.active .agent-actions,
-    .agent-card.menu-open .agent-actions {
+    .agent-card:focus-within .agent-actions,
+    .agent-card.menu-open .agent-actions,
+    /* A relaunch in flight must stay visible after the pointer leaves the
+       card — hiding "reopening…" with the rest of the hover cluster left the
+       user staring at a card that looked like nothing was happening. */
+    .agent-actions:has(.reopen-btn.busy) {
       opacity: 1;
       pointer-events: auto;
     }
@@ -560,15 +630,13 @@
       font-size: 9px;
       font-weight: 600;
       letter-spacing: 1px;
-      padding: 2px 6px;
-      border-radius: 4px;
-      border: 1px solid var(--border);
+      padding: 0;
+      border: 0;
       color: var(--text-faint);
     }
     .mcp-icon.connected {
       color: var(--accent);
-      border-color: var(--accent-line);
-      background: var(--accent-wash);
+      background: transparent;
     }
     /* Idle vs working — the thing the operator actually watches for. Same chip
        metrics as .mcp-icon so it drops into the same badge slot. Working glows
@@ -576,31 +644,25 @@
     /* Group leader: a gold rim + glow on the card, a crown before the name. */
     .leader-crown { font-size: 12px; line-height: 1; margin-right: 5px; }
     .agent-card.leader {
-      border-color: #d9a521;
-      background:
-        linear-gradient(90deg, color-mix(in srgb, #d9a521 12%, transparent), transparent 70%),
-        var(--bg-elev);
-      box-shadow: 0 0 0 1px color-mix(in srgb, #d9a521 35%, transparent), 0 0 14px -4px #d9a521;
+      border-color: color-mix(in srgb, #d9a521 72%, var(--border));
+      background: color-mix(in srgb, #d9a521 7%, var(--bg-elev));
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, #d9a521 22%, transparent);
     }
-    .agent-card.leader::before { background: #f2c14e; box-shadow: 0 0 8px rgba(217, 165, 33, 0.7); }
     .agent-card.leader:hover { border-color: #f2c14e; }
     /* A selected leader shows the SELECTION cyan (its crown still marks it as
        leader), so "which am I looking at" wins over the gold rim. These beat the
        gold rules above on specificity, regardless of source order. */
     .agent-card.leader.active {
       border-color: var(--selected);
-      background:
-        linear-gradient(90deg, var(--selected-wash), color-mix(in srgb, var(--selected-wash) 32%, transparent) 58%, transparent),
-        var(--bg-elev);
-      box-shadow: 0 0 0 1px var(--selected-line), 0 6px 18px -10px rgba(69, 184, 224, 0.5);
+      background: color-mix(in srgb, var(--selected) 8%, var(--bg-elev));
+      box-shadow: inset 0 0 0 1px var(--selected-line);
     }
-    .agent-card.leader.active::before { background: var(--selected); box-shadow: 0 0 10px 1px rgba(69, 184, 224, 0.6); }
     .info-card {
       width: min(460px, 92vw);
       background: var(--bg-elev);
       border: 1px solid var(--border);
-      border-radius: 14px;
-      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-popover);
       overflow: hidden;
     }
     .info-card-head {
@@ -628,8 +690,10 @@
       padding: 10px;
       background: var(--bg-elev-2);
       border: 1px solid var(--border);
-      border-radius: 10px;
-      box-shadow: 0 14px 34px rgba(0, 0, 0, 0.55);
+      border-radius: 9px;
+      box-shadow: var(--shadow-popover);
+      transform-origin: top center;
+      animation: pop-in 0.13s var(--ease);
     }
     .color-grid {
       display: grid;
@@ -708,22 +772,20 @@
       0%, 100% { opacity: 1; box-shadow: 0 0 0 0 var(--accent-line); }
       50% { opacity: 0.45; box-shadow: 0 0 6px 1px var(--accent-line); }
     }
-    /* Green ALWAYS means online. Working is a separate signal: a pulsing amber
-       HALO ringing the still-green lamp — the dot never changes colour. */
-    .status-dot.working {
-      position: relative;
+    /* Green stays presence. Working adds a quiet amber pulse to the portrait,
+       so activity never changes the meaning of the status lamp. */
+    .agent-portrait:has(.status-dot.working) {
+      animation: agent-work 1.45s var(--ease) infinite;
     }
-    .status-dot.working::after {
-      content: "";
-      position: absolute;
-      inset: -4px;
-      border-radius: 50%;
-      border: 1.5px solid var(--accent);
-      animation: halo-work 1.2s ease-out infinite;
-    }
-    @keyframes halo-work {
-      0% { transform: scale(0.7); opacity: 0.9; }
-      100% { transform: scale(1.5); opacity: 0; }
+    @keyframes agent-work {
+      0%, 100% {
+        border-color: var(--border);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.04), 0 0 0 0 transparent;
+      }
+      50% {
+        border-color: var(--accent-line);
+        box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), 0 0 0 2px var(--accent-wash);
+      }
     }
     .unread-badge {
       min-width: 19px;
@@ -747,7 +809,27 @@
       border-color: var(--accent-line);
       color: var(--accent);
     }
-    .open-btn:hover, .reopen-btn:hover { background: var(--accent-wash); }
+    .open-btn:hover, .reopen-btn:hover {
+      background: color-mix(in srgb, var(--accent) 13%, var(--bg-elev-2));
+    }
+    /* Relaunch in flight. The rail is rebuilt on every SSE event, so this
+       state must be re-derivable from state.reopening (a label swapped on
+       the live node gets wiped by the next render) — and it must LOOK like
+       loading: a spinner, not just different text. */
+    .reopen-btn.busy { pointer-events: none; opacity: 0.85; }
+    .reopen-btn.busy::before {
+      content: "";
+      display: inline-block;
+      width: 9px;
+      height: 9px;
+      margin-right: 6px;
+      vertical-align: -1px;
+      border-radius: 50%;
+      border: 1.5px solid var(--accent);
+      border-top-color: transparent;
+      animation: reopen-spin 0.7s linear infinite;
+    }
+    @keyframes reopen-spin { to { transform: rotate(360deg); } }
     .agent-menu-wrap { position: relative; }
     .agent-menu {
       position: absolute;
@@ -760,6 +842,9 @@
     }
     /* `hidden` must beat display:flex, else every card's menu renders at once. */
     .agent-menu[hidden] { display: none; }
+    /* Flip: a low card's menu opens UPWARD (set by the kebab handler when the
+       space below can't hold it). */
+    .agent-menu.drop-up { top: auto; bottom: calc(100% + 5px); transform-origin: bottom right; }
     .agent-menu:not([hidden]) {
       padding: 5px;
       background: var(--bg-elev-2);
@@ -767,6 +852,8 @@
       border-radius: 8px;
       box-shadow: 0 10px 26px rgba(0, 0, 0, 0.55);
       min-width: 176px;
+      transform-origin: top right;
+      animation: pop-in 0.13s var(--ease);
     }
     .agent-menu-item { text-align: left; }
     /* Inside the ⋯ menu the items are clean full-width ROWS — icon + label on
@@ -810,9 +897,10 @@
       font-size: var(--fs-xs);
       padding: 3px 9px;
       line-height: 1.3;
-      transition: border-color 0.12s var(--ease), color 0.12s var(--ease), background 0.12s var(--ease);
+      transition: border-color 0.12s var(--ease), color 0.12s var(--ease), background 0.12s var(--ease), transform 0.12s var(--ease);
     }
     .mute-toggle:hover, .nudge-btn:hover, .open-btn:hover, .reopen-btn:hover, .rename-btn:hover, .remove-btn:hover, .menu-btn:hover { color: var(--text); border-color: var(--accent); }
+    .mute-toggle:active, .nudge-btn:active, .open-btn:active, .reopen-btn:active, .rename-btn:active, .remove-btn:active, .menu-btn:active { transform: scale(0.96); }
     .menu-btn { padding: 3px 7px; letter-spacing: 1px; }
     .mute-toggle.muted { color: var(--warn); border-color: var(--accent-line); }
     .remove-btn:hover { border-color: var(--danger); color: var(--danger); }
@@ -1074,21 +1162,22 @@
       flex-wrap: wrap;
     }
     .group-tab {
-      padding: 3px 10px;
-      border: 1px solid var(--border);
-      border-radius: 999px;
+      padding: 4px 9px;
+      border: 0;
+      border-radius: var(--radius-sm);
       background: transparent;
       color: var(--text-faint);
       font-family: var(--mono);
       font-size: var(--fs-xs);
       cursor: pointer;
-      transition: color 0.12s var(--ease), border-color 0.12s var(--ease);
+      transition: color 0.12s var(--ease), background 0.12s var(--ease), transform 0.12s var(--ease);
     }
-    .group-tab:hover { color: var(--text); border-color: var(--accent-line); }
+    .group-tab:hover { color: var(--text); background: var(--bg-hover); }
+    .group-tab:active { transform: scale(0.97); }
     .group-tab.active {
       color: var(--accent);
-      border-color: var(--accent);
       background: var(--accent-wash);
+      box-shadow: inset 0 -1px 0 var(--accent-line);
     }
     .group-tab .count { color: var(--text-faint); margin-left: 5px; }
 
@@ -1111,6 +1200,7 @@
     .tab-strip { display: flex; align-items: stretch; gap: 2px; min-width: 0; overflow-x: auto; }
 
     .tab {
+      position: relative;
       display: flex;
       align-items: center;
       gap: 7px;
@@ -1126,29 +1216,45 @@
       font-family: var(--mono);
       font-size: var(--fs-sm);
       cursor: pointer;
+      user-select: none;
       white-space: nowrap;
       transition: color 0.12s var(--ease), border-color 0.12s var(--ease);
     }
     .tab:hover { color: var(--text); }
-    .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+    .tab::after {
+      content: "";
+      position: absolute;
+      left: 12px;
+      right: 12px;
+      bottom: -2px;
+      height: 2px;
+      border-radius: 2px 2px 0 0;
+      background: var(--accent);
+      transform: scaleX(0);
+      transform-origin: center;
+      opacity: 0;
+      transition: transform 0.18s var(--ease), opacity 0.18s var(--ease);
+    }
+    .tab.active { color: var(--accent); border-bottom-color: transparent; }
+    .tab.active::after { transform: scaleX(1); opacity: 1; }
     .tab-mark { color: var(--accent); font-weight: 700; }
     /* The hub tab (the agents' own chat) is not an agent — give it a standing
        pill look so it reads as the fixed room, distinct from the agent tabs. */
     .tab-hub {
-      margin: 5px 6px 5px 0;
-      padding: 5px 13px;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      background: var(--bg-inset);
+      margin: 0 6px 0 0;
+      padding: 9px 12px;
+      border: none;
+      border-bottom: 2px solid transparent;
+      border-radius: 0;
+      background: transparent;
       font-weight: 600;
       letter-spacing: 0.2px;
     }
     .tab-hub.active {
-      border-color: var(--accent-line);
-      background: var(--accent-wash);
-      border-bottom-color: var(--accent-line);
+      background: transparent;
+      border-bottom-color: transparent;
     }
-    .tab-hub:hover { color: var(--text); border-color: var(--border-strong); }
+    .tab-hub:hover { color: var(--text); background: var(--bg-hover); }
     .tab .name { overflow: hidden; text-overflow: ellipsis; }
     .tab .dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
     .tab .dot.online { background: var(--online); }
@@ -1188,26 +1294,35 @@
       justify-content: center;
       padding: 8vh 16px 16px;
       background: rgba(4, 7, 11, 0.72);
+      backdrop-filter: blur(3px);
       overflow-y: auto;
       animation: lightin 0.12s var(--ease);
     }
     .lightbox[hidden] { display: none; }
     @keyframes lightin { from { opacity: 0 } to { opacity: 1 } }
+    @keyframes pop-in {
+      from { opacity: 0; transform: translateY(-4px) scale(0.985); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
     .lightbox-card {
       width: 100%;
       max-width: 560px;
       background: var(--bg-elev);
-      border: 1px solid var(--accent-line);
-      border-radius: var(--radius);
-      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-popover);
+      overflow: hidden;
+      animation: pop-in 0.16s var(--ease);
     }
     .lightbox-head {
       display: flex;
       align-items: center;
-      padding: 12px 14px 0;
+      min-height: 48px;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border-soft);
     }
     .lightbox-head .dirpicker-close { margin-left: auto; }
-    .lightbox .launcher { border: none; background: none; padding: 12px 14px 14px; }
+    .lightbox .launcher { border: none; background: none; padding: 16px; }
     .lightbox .launcher-title { display: none; } /* the head says it already */
 
     /* ------------------------- the agent's screen ------------------------
@@ -1227,18 +1342,58 @@
       flex: 0 0 auto;
       display: flex;
       align-items: center;
-      gap: 10px;
-      padding: 8px 14px;
+      gap: 14px;
+      min-height: 58px;
+      padding: 7px 18px;
       border-bottom: 1px solid var(--border);
-      background: var(--bg-elev);
+      background: var(--bg);
+      box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.018);
     }
+    .screen-identity {
+      flex: 0 1 230px;
+      min-width: 150px;
+      display: grid;
+      grid-template-columns: 24px minmax(0, auto);
+      grid-template-rows: auto auto;
+      column-gap: 8px;
+      align-items: center;
+      padding-right: 16px;
+      border-right: 1px solid var(--border-soft);
+    }
+    .screen-engine-mark {
+      grid-row: 1 / 3;
+      width: 24px; height: 24px;
+      display: grid; place-items: center;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      background: var(--bg-inset);
+      color: var(--text-dim);
+    }
+    .screen-engine-mark .agent-logo { width: 14px; height: 14px; }
     .screen-name {
       font-family: var(--mono);
-      font-size: var(--fs-sm);
+      font-size: var(--fs-name);
       font-weight: 600;
-      color: var(--accent);
+      color: var(--text);
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
+    .screen-activity {
+      font-family: var(--mono);
+      font-size: var(--fs-eyebrow);
+      color: var(--text-faint);
+      text-transform: uppercase;
+      letter-spacing: 0.7px;
+    }
+    .screen-activity::before { content: ""; display: inline-block; width: 5px; height: 5px; margin-right: 5px; border-radius: 50%; background: currentColor; vertical-align: 1px; }
+    .screen-activity.ready { color: var(--online); }
+    .screen-activity.working { color: var(--accent); }
+    .screen-activity.offline { color: var(--text-faint); }
     .screen-hint {
+      flex: 1 1 auto;
+      min-width: 0;
       font-family: var(--sans);
       font-size: var(--fs-xs);
       color: var(--text-faint);
@@ -1283,57 +1438,154 @@
       background: var(--pill-color, var(--text-dim));
     }
     .status-pill.goal { --pill-color: var(--accent); }
-    .screen-head .btn { margin-left: auto; }
+    .screen-head .btn { margin-left: 0; }
     .screen-head .dirpicker-close { margin-left: 0; }
 
-    /* Chat|Terminal toggle. */
-    .screen-modes { display: inline-flex; gap: 2px; margin-left: 14px; }
+    /* View and engine are separate controls with explicit labels. */
+    .screen-control { display: flex; flex-direction: column; gap: 3px; }
+    .screen-control-label {
+      padding-left: 2px;
+      font-family: var(--mono);
+      font-size: 8px;
+      line-height: 1;
+      text-transform: uppercase;
+      letter-spacing: 0.9px;
+      color: var(--text-faint);
+      opacity: 0.82;
+    }
+    .screen-modes {
+      display: inline-flex;
+      gap: 2px;
+      padding: 2px;
+      border: 1px solid var(--border-soft);
+      border-radius: 5px;
+      background: var(--bg-inset);
+    }
+    .screen-modes.engine-tabs { margin-left: 0; }
     .screen-mode {
-      padding: 3px 12px;
+      min-height: 25px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 10px;
       background: transparent;
-      border: 1px solid var(--border);
+      border: none;
+      border-radius: 3px;
       color: var(--text-faint);
       font-family: var(--mono);
       font-size: var(--fs-xs);
       cursor: pointer;
+      transition: color 0.12s var(--ease), border-color 0.12s var(--ease), background 0.12s var(--ease), transform 0.12s var(--ease);
     }
-    .screen-mode:first-child { border-radius: 5px 0 0 5px; }
-    .screen-mode:last-child { border-radius: 0 5px 5px 0; border-left: none; }
-    .screen-mode:hover { color: var(--text); }
-    .screen-mode.active { color: var(--accent); border-color: var(--accent-line); background: var(--accent-wash); }
+    .screen-mode .agent-logo { width: 11px; height: 11px; }
+    .screen-mode:hover { color: var(--text); background: color-mix(in srgb, var(--text) 4%, transparent); }
+    .screen-mode:active { transform: scale(0.97); }
+    .screen-mode.active { color: var(--accent); background: var(--accent-wash); box-shadow: inset 0 0 0 1px var(--accent-line); }
+    .engine-tabs .screen-mode.active { color: var(--selected); background: var(--selected-wash); box-shadow: inset 0 0 0 1px var(--selected-line); }
+    .screen-head .btn,
+    .screen-head .dirpicker-close {
+      min-height: 28px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
 
-    /* ---------------------- the chat casca (conversation) ---------------- */
+    /* --------------------- conversation ledger / workbench ---------------
+       This is a running operational record, not a consumer chat app. Turns
+       share one continuous sheet; identity, time and actions sit in stable
+       columns while the prose gets the width. */
     .screen-chat {
       flex: 1 1 auto;
       min-height: 0;
       overflow-y: auto;
-      padding: 14px 18px 20px;
+      padding: 18px 18px 26px;
       display: flex;
       flex-direction: column;
-      gap: 12px;
+      gap: 0;
+      background:
+        linear-gradient(90deg, transparent calc(50% - 441px), var(--border-soft) calc(50% - 440px), transparent calc(50% - 439px)),
+        linear-gradient(90deg, transparent calc(50% + 439px), var(--border-soft) calc(50% + 440px), transparent calc(50% + 441px)),
+        var(--bg-inset);
     }
     .screen-chat[hidden] { display: none; }
     .chat-empty { color: var(--text-faint); font-family: var(--sans); font-size: var(--fs-sm); margin: auto; }
 
-    /* Composer: the bar spans the panel (border + background), but its CONTENT
-       lines up with the centred message column above — same 880px, same centre.
-       That alignment was the ask: read and write in the same column. */
+    /* Command deck: explicit recipient + keyboard contract above the input.
+       It is anchored to the same 880px rail as the ledger. */
     .chat-composer {
       flex: 0 0 auto;
       display: block;
       padding: 10px 18px 12px;
       border-top: 1px solid var(--border);
-      background: var(--bg-elev);
+      background: var(--bg);
     }
     .chat-composer[hidden] { display: none; }
     .chat-composer-inner {
-      display: flex;
-      gap: 8px;
-      align-items: flex-end;
+      display: block;
       width: 100%;
       max-width: 880px;
       margin: 0 auto;
       position: relative; /* anchors the slash-command popover */
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      background: var(--bg-inset);
+      transition: border-color 0.14s var(--ease), box-shadow 0.14s var(--ease), background 0.14s var(--ease);
+    }
+    .chat-composer-inner:focus-within { border-color: var(--accent-line); box-shadow: 0 0 0 3px var(--accent-wash); }
+    .chat-composer-context {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      min-height: 28px;
+      padding: 5px 9px;
+      border-bottom: 1px solid var(--border-soft);
+      background: color-mix(in srgb, var(--text) 2%, transparent);
+      color: var(--text-faint);
+      font-family: var(--mono);
+      font-size: var(--fs-eyebrow);
+    }
+    .composer-route {
+      display: inline-flex;
+      align-items: center;
+      min-width: 0;
+      gap: 7px;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+    }
+    .composer-route::before {
+      content: "";
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: var(--led-amber);
+    }
+    .composer-target {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--text);
+      text-transform: none;
+      letter-spacing: 0;
+      font-weight: 650;
+    }
+    .composer-keys { margin-left: auto; white-space: nowrap; color: var(--text-faint); }
+    .composer-keys kbd {
+      padding: 1px 4px;
+      border: 1px solid var(--border);
+      border-bottom-color: var(--border-strong);
+      border-radius: 3px;
+      background: var(--bg-elev);
+      color: var(--text-dim);
+      font: inherit;
+    }
+    .chat-composer-row {
+      display: flex;
+      gap: 4px;
+      align-items: flex-end;
+      padding: 5px;
     }
     /* Slash-command autocomplete popover — opens ABOVE the textarea. */
     .slash-menu {
@@ -1348,7 +1600,9 @@
       background: var(--bg-elev);
       border: 1px solid var(--border);
       border-radius: 10px;
-      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+      box-shadow: var(--shadow-popover);
+      transform-origin: bottom center;
+      animation: pop-in 0.13s var(--ease);
     }
     .slash-menu[hidden] { display: none; }
     .slash-item {
@@ -1378,23 +1632,35 @@
       flex: 1 1 auto;
       resize: none;
       max-height: 140px;
-      padding: 9px 12px;
-      background: var(--bg-inset);
-      border: 1px solid var(--border);
-      border-radius: 9px;
+      min-height: 38px;
+      padding: 8px 10px;
+      background: transparent;
+      border: none;
+      border-radius: 3px;
       color: var(--text);
       font-family: var(--sans);
       font-size: var(--fs-body);
       line-height: 1.5;
+      transition: background 0.14s var(--ease);
     }
-    #chat-input:focus { outline: none; border-color: var(--accent-line); }
+    #chat-input:focus { outline: none; }
     #chat-input:disabled { opacity: 0.5; }
     /* Drop target feedback: dashed accent ring while a file is dragged over. */
-    #chat-input.drag-over {
-      border: 1px dashed var(--accent);
+    .chat-composer-inner:has(#chat-input.drag-over) { border-style: dashed; border-color: var(--accent); background: var(--accent-wash); }
+    .chat-send {
+      flex: none;
+      align-self: stretch;
+      min-width: 64px;
+      padding: 0 14px;
+      border-color: var(--accent-line);
       background: var(--accent-wash);
+      color: var(--accent);
+      border-radius: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      font-size: var(--fs-xs);
     }
-    .chat-send { flex: none; align-self: stretch; padding: 0 16px; }
+    .chat-send:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent-bright); }
     /* Interrupt the open agent mid-turn — a danger square beside send, shown
        only while that agent is working. */
     .chat-stop {
@@ -1423,27 +1689,60 @@
       padding: 0 12px;
       font-size: 13px;
       line-height: 1;
+      border-color: transparent;
     }
+    .chat-mic:hover:not(:disabled) { border-color: var(--border); background: var(--bg-hover); }
     .chat-mic[hidden] { display: none; }
+    /* Live waveform while dictating — your voice, visibly arriving (the
+       watchdog's analyser drawn as marching bars, voice-note style). */
+    .chat-wave {
+      flex: none;
+      align-self: center;
+      width: 120px;
+      height: 30px;
+      border: 1px solid color-mix(in srgb, var(--danger) 55%, transparent);
+      border-radius: 6px;
+      background: color-mix(in srgb, var(--danger) 8%, var(--bg-elev-2));
+    }
+    .chat-wave[hidden] { display: none; }
     .chat-mic.rec {
       color: var(--danger);
       border-color: var(--danger);
       animation: pulse-work 1.15s ease-in-out infinite;
     }
 
-    /* A centred reading column — the messages the operator liked. The composer
-       below is constrained to the SAME column so the place you type lines up
-       with the place you read (that mismatch was the complaint). */
+    /* One continuous session sheet. No speech bubbles, no alternating chat
+       geometry; the operator and agent are entries in the same record. */
     .chat-thread {
       width: 100%;
       max-width: 880px;
       margin: 0 auto;
       display: flex;
       flex-direction: column;
-      gap: 16px;
+      gap: 0;
+      border-top: 1px solid var(--border-soft);
+      border-bottom: 1px solid var(--border-soft);
+      background: var(--bg);
     }
-    .chat-turn { display: flex; gap: 10px; align-items: flex-start; max-width: 100%; }
-    .chat-turn.user { flex-direction: row-reverse; }
+    .chat-turn {
+      position: relative;
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+      max-width: 100%;
+      padding: 16px 18px 18px;
+      border-bottom: 1px solid var(--border-soft);
+      background: var(--bg);
+      transition: background 0.14s var(--ease);
+    }
+    .chat-turn:last-child { border-bottom: 0; }
+    .chat-turn:hover { background: color-mix(in srgb, var(--text) 2.2%, var(--bg)); }
+    .chat-turn.user {
+      flex-direction: row;
+      background: color-mix(in srgb, var(--accent) 4.5%, var(--bg));
+      box-shadow: inset 2px 0 0 var(--accent);
+    }
+    .chat-turn.user:hover { background: color-mix(in srgb, var(--accent) 7%, var(--bg)); }
     /* Optimistic-echo lane: your just-sent message, same column as the thread,
        dimmed with a dashed bubble until the agent logs it for real. */
     .chat-pending {
@@ -1452,11 +1751,12 @@
       margin: 16px auto 0;
       display: flex;
       flex-direction: column;
-      gap: 16px;
+      gap: 0;
+      border-block: 1px dashed var(--border);
     }
     .chat-pending:empty { display: none; }
     .chat-turn.pending { opacity: 0.72; }
-    .chat-turn.pending .chat-bubble { border-style: dashed; }
+    .chat-turn.pending { box-shadow: inset 2px 0 0 var(--border-strong); }
     .chat-sending {
       font-family: var(--mono);
       font-size: var(--fs-eyebrow);
@@ -1482,22 +1782,41 @@
       background: var(--bg-elev);
     }
     .chat-interrupt-mark { color: var(--danger); font-style: normal; font-size: 8px; }
-    /* "Agent is working" — three bouncing dots at the foot of the chat. */
+    /* Harness marker (worked-for / task events / away-summary): quieter than the
+       interrupt divider — no border, just a faint centred mono line. */
+    .chat-marker {
+      align-self: center;
+      max-width: 82%;
+      display: inline-flex;
+      align-items: baseline;
+      gap: 7px;
+      margin: 2px auto;
+      font-family: var(--mono);
+      font-size: var(--fs-eyebrow);
+      color: var(--text-faint);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .chat-marker > span:last-child { overflow: hidden; text-overflow: ellipsis; }
+    .chat-marker-mark { color: var(--accent); opacity: 0.6; font-size: 10px; flex: none; }
+    /* "Agent is working" — three bouncing dots at the foot of the chat. A
+       FLOATING line (no border, no own background): it used to be a full-width
+       band with a bottom rule, and on a short conversation that rule plus the
+       composer's top edge framed the leftover empty space like a broken box. */
     .chat-typing {
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 12px;
       width: 100%;
       max-width: 880px;
-      margin: 6px auto 0;
+      margin: 0 auto;
+      padding: 10px 18px 0;
     }
     .chat-typing-dots {
       display: inline-flex;
       gap: 4px;
-      padding: 11px 14px;
-      background: var(--bg-elev);
-      border: 1px solid var(--border);
-      border-radius: 12px 12px 12px 3px;
+      padding: 7px 3px;
     }
     .chat-typing-dots span {
       width: 6px;
@@ -1533,14 +1852,14 @@
     }
     .chat-apierror-msg { font-family: var(--mono); font-size: var(--fs-sm); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); }
     .chat-apierror-hint { font-size: var(--fs-xs); color: var(--text-dim); margin-top: 6px; }
-    /* Per-agent identity disc: initials on the signature amber. The operator's
-       own disc is quiet slate — you are not one of the agents. */
+    /* Fixed identity rail: agents read as active participants in the ledger,
+       while the operator gets a quiet dispatch mark. */
     .chat-avatar {
       flex: 0 0 auto;
-      width: 30px;
-      height: 30px;
-      margin-top: 2px;
-      border-radius: 9px;
+      width: 32px;
+      height: 32px;
+      margin-top: 0;
+      border-radius: 6px;
       display: grid;
       place-items: center;
       font-family: var(--mono);
@@ -1548,35 +1867,40 @@
       font-weight: 700;
       letter-spacing: 0.5px;
       text-transform: uppercase;
-      background: var(--accent-wash);
-      color: var(--accent);
-      border: 1px solid var(--accent-line);
+      background: var(--bg-elev-2);
+      color: var(--selected);
+      border: 1px solid var(--border-strong);
+      box-shadow: inset 0 -6px 12px rgba(0, 0, 0, 0.16);
     }
     .chat-avatar.you {
-      background: var(--bg-elev);
-      color: var(--text-dim);
-      border-color: var(--border);
+      background: var(--accent-wash);
+      color: var(--accent);
+      border-color: var(--accent-line);
       font-size: 8.5px;
       letter-spacing: 0;
     }
+    .chat-avatar .agent-logo { width: 15px; height: 15px; opacity: 0.92; }
     .chat-turn-body {
+      flex: 1 1 auto;
       display: flex;
       flex-direction: column;
-      gap: 4px;
+      gap: 7px;
       min-width: 0;
-      max-width: calc(100% - 42px);
+      max-width: none;
     }
-    .chat-turn.user .chat-turn-body { align-items: flex-end; }
-    .chat-meta { display: flex; gap: 8px; align-items: baseline; padding: 0 2px; }
-    .chat-turn.user .chat-meta { flex-direction: row-reverse; }
+    .chat-turn.user .chat-turn-body { align-items: stretch; }
+    .chat-meta { display: flex; gap: 8px; align-items: baseline; padding: 0; }
+    .chat-turn.user .chat-meta { flex-direction: row; }
     .chat-role {
       font-family: var(--mono);
       font-size: var(--fs-eyebrow);
       text-transform: uppercase;
       letter-spacing: 1px;
-      color: var(--text-faint);
+      color: var(--selected);
     }
     .chat-turn.user .chat-role { color: var(--accent); }
+    .chat-role::after { content: " / entry"; color: var(--text-faint); font-weight: 400; }
+    .chat-turn.user .chat-role::after { content: " / dispatch"; }
     .chat-time {
       font-family: var(--mono);
       font-size: var(--fs-eyebrow);
@@ -1584,10 +1908,11 @@
       opacity: 0.7;
     }
     .chat-bubble {
-      padding: 9px 13px;
-      border-radius: 12px;
-      border: 1px solid var(--border);
-      background: var(--bg-elev);
+      width: 100%;
+      padding: 0;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
       color: var(--text);
       font-family: var(--sans);
       font-size: var(--fs-body);
@@ -1626,9 +1951,10 @@
     }
     .chat-bubble th { background: var(--bg-inset); color: var(--text); font-weight: 600; }
     .chat-turn.user .chat-bubble {
-      border-color: var(--accent-line);
-      background: var(--accent-wash);
-      border-radius: 12px 12px 3px 12px;
+      border: 0;
+      background: transparent;
+      border-radius: 0;
+      color: color-mix(in srgb, var(--text) 92%, var(--accent));
     }
     /* Edit pencil on your own recent user turns — reveals on hover, no reflow. */
     .chat-edit-btn {
@@ -1681,6 +2007,66 @@
     .chat-fwd-btn[aria-expanded="true"] { opacity: 1; pointer-events: auto; }
     .chat-fwd-btn:hover { color: var(--accent); }
 
+    /* One quiet action rail per message. Copy / WhatsApp / edit / forward use
+       the same 26px rhythm and appear together, so hover never sprouts a row
+       of unrelated controls that shifts the bubble. */
+    /* Hover toolbar, OUT of the layout flow: in-flow (a 28px flex column of
+       24px buttons) it was the TALLEST child of any short turn, so a one-line
+       message carried ~50px of invisible belly below the text. Absolute in the
+       turn's top-right corner instead — it overlays on hover, exactly like the
+       agent-card's action cluster. (.chat-turn is position:relative.) */
+    .chat-turn-actions {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      gap: 2px;
+      opacity: 0;
+      pointer-events: none;
+      transform: translateX(3px);
+      transition: opacity 0.14s var(--ease), transform 0.14s var(--ease);
+    }
+    .chat-turn:hover .chat-turn-actions,
+    .chat-turn:focus-within .chat-turn-actions,
+    .chat-turn-actions:has([aria-expanded="true"]) {
+      opacity: 1;
+      pointer-events: auto;
+      transform: translateX(0);
+    }
+    .chat-turn-actions .chat-edit-btn,
+    .chat-turn-actions .chat-fwd-btn,
+    .chat-copy-btn {
+      width: 24px;
+      height: 24px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      border: none;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--text-faint);
+      opacity: 1;
+      pointer-events: auto;
+      cursor: pointer;
+      transition: color 0.12s var(--ease), background 0.12s var(--ease), transform 0.12s var(--ease);
+    }
+    .chat-turn-actions .chat-edit-btn:hover,
+    .chat-turn-actions .chat-fwd-btn:hover,
+    .chat-copy-btn:hover { color: var(--text); background: var(--bg-hover); }
+    .chat-copy-btn:active { transform: scale(0.92); }
+    .chat-copy-btn svg { width: 13px; height: 13px; }
+    .chat-copy-btn.whatsapp {
+      font-family: var(--mono);
+      font-size: 8px;
+      font-weight: 800;
+      letter-spacing: -0.4px;
+    }
+    .chat-copy-btn.whatsapp:hover { color: #5cdb8b; }
+    .chat-copy-btn.copied { color: var(--online); background: color-mix(in srgb, var(--online) 10%, transparent); }
+
     /* The popover: same recipe as .agent-menu (hidden must beat display:flex). */
     .fwd-menu {
       position: absolute;
@@ -1700,8 +2086,8 @@
       min-width: 148px;
     }
     /* Opens INTO the column, never past its edge. */
-    .chat-turn.assistant .fwd-menu { right: 0; }
-    .chat-turn.user .fwd-menu { left: 0; }
+    .chat-turn.assistant .fwd-menu,
+    .chat-turn.user .fwd-menu { right: 0; }
     .fwd-menu.up { top: auto; bottom: calc(100% + 5px); }
     .fwd-menu-label {
       font-family: var(--mono);
@@ -1734,7 +2120,7 @@
       padding: 3px 4px;
       white-space: nowrap;
     }
-    .chat-turn.assistant .chat-bubble { border-radius: 12px 12px 12px 3px; }
+    .chat-turn.assistant .chat-bubble { border-radius: 0; }
     /* Minimal markdown: inline code, code fences, bold. */
     .chat-bubble code { font-family: var(--mono); font-size: 0.92em; background: var(--bg-inset); padding: 1px 5px; border-radius: 4px; }
     .chat-bubble pre { margin: 6px 0; padding: 9px 11px; background: var(--bg-inset); border: 1px solid var(--border-soft); border-radius: 7px; overflow-x: auto; }
@@ -1743,22 +2129,24 @@
     .chat-bubble pre code.hljs { background: transparent; padding: 0; }
     .chat-bubble strong { color: var(--text); font-weight: 600; }
 
-    /* Tool call: a compact chip that expands to input + result. */
+    /* Tool calls are entries in the same ledger, not floating AI chips. */
     .chat-tool {
       align-self: stretch;
       max-width: 100%;
-      margin-left: 40px;
-      border: 1px solid var(--border-soft);
-      border-radius: 8px;
-      background: var(--bg-inset);
+      margin-left: 0;
+      border: 0;
+      border-bottom: 1px solid var(--border-soft);
+      border-radius: 0;
+      background: color-mix(in srgb, var(--selected) 2.5%, var(--bg));
       overflow: hidden;
     }
-    .chat-tool.error { border-color: var(--accent-line); }
+    .chat-tool.error { box-shadow: inset 2px 0 0 var(--danger); }
     .chat-tool-head {
       display: flex;
       align-items: center;
       gap: 8px;
-      padding: 6px 11px;
+      min-height: 36px;
+      padding: 8px 18px 8px 62px;
       cursor: pointer;
       font-family: var(--mono);
       font-size: var(--fs-xs);
@@ -1767,7 +2155,17 @@
     .chat-tool-head:hover { background: var(--bg-hover); }
     .chat-tool-caret { width: 8px; color: var(--text-faint); transition: transform 0.12s var(--ease); }
     .chat-tool.open .chat-tool-caret { transform: rotate(90deg); }
-    .chat-tool-icon { font-size: 12px; line-height: 1; }
+    .chat-tool-icon {
+      width: 18px;
+      height: 18px;
+      display: inline-grid;
+      place-items: center;
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      background: var(--bg-inset);
+      font-size: 10px;
+      line-height: 1;
+    }
     .chat-tool-name { color: var(--accent); font-weight: 600; }
     .chat-tool-summary { color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .chat-tool.error .chat-tool-name { color: var(--danger); }
@@ -1813,8 +2211,15 @@
     /* Code blocks in assistant markdown get the same hover copy button. */
     .code-wrap { position: relative; }
 
-    /* Thinking: the agent's reasoning, folded away, dim and set to the side. */
-    .chat-thinking { align-self: stretch; max-width: 100%; margin-left: 40px; }
+    /* Thinking: one quiet, foldable ledger entry. */
+    .chat-thinking {
+      align-self: stretch;
+      max-width: 100%;
+      margin-left: 0;
+      padding: 7px 18px 7px 62px;
+      border-bottom: 1px solid var(--border-soft);
+      background: color-mix(in srgb, var(--text) 1.4%, var(--bg));
+    }
     .chat-thinking-head {
       display: flex;
       align-items: center;
@@ -1839,32 +2244,23 @@
     }
     .chat-thinking.open .chat-thinking-body { display: block; }
 
-    /* Action group: a run of tool calls folded into one card, stacked look. */
+    /* A folded run of actions is one indexed ledger section. */
     .chat-tool-group {
       align-self: stretch;
       max-width: 100%;
-      margin-left: 40px;
+      margin-left: 0;
       position: relative;
-      border: 1px solid var(--border-soft);
-      border-radius: 8px;
-      background: var(--bg-inset);
-    }
-    .chat-tool-group::before {
-      content: "";
-      position: absolute;
-      inset: -3px 6px auto 6px;
-      height: 12px;
-      border: 1px solid var(--border-soft);
-      border-radius: 8px 8px 0 0;
-      background: var(--bg-inset);
-      opacity: 0.5;
-      z-index: -1;
+      border: 0;
+      border-bottom: 1px solid var(--border-soft);
+      border-radius: 0;
+      background: color-mix(in srgb, var(--selected) 2.5%, var(--bg));
     }
     .chat-tool-group-head {
       display: flex;
       align-items: center;
       gap: 8px;
-      padding: 7px 11px;
+      min-height: 38px;
+      padding: 8px 18px 8px 62px;
       cursor: pointer;
       font-family: var(--mono);
       font-size: var(--fs-xs);
@@ -1873,11 +2269,11 @@
     .chat-tool-group-head:hover { background: var(--bg-hover); }
     .chat-tool-group-head .chat-tool-name { color: var(--text); }
     .chat-tool-group.open .chat-tool-group-head .chat-tool-caret { transform: rotate(90deg); }
-    .chat-tool-group-body { display: none; border-top: 1px solid var(--border-soft); padding: 4px 6px; }
+    .chat-tool-group-body { display: none; border-top: 1px solid var(--border-soft); padding: 0; }
     .chat-tool-group.open .chat-tool-group-body { display: block; }
     /* Chips inside a group: no double left-margin, tighter. */
-    .chat-tool-group-body .chat-tool { margin-left: 0; margin-bottom: 4px; }
-    .chat-tool-group-body .chat-tool:last-child { margin-bottom: 0; }
+    .chat-tool-group-body .chat-tool { margin-left: 0; margin-bottom: 0; background: var(--bg-inset); }
+    .chat-tool-group-body .chat-tool:last-child { border-bottom: 0; }
     /* xterm paints its own grid; it just needs a box that does not collapse.
        CENTRED, and on the terminal's own colour: while mirroring, the grid is
        the pane's and its shape rarely matches the panel's, so something is
@@ -1889,9 +2285,9 @@
        NOTHING forcing the .xterm's dimensions — the FitAddon reads this box and
        sizes the grid to it. Forcing width/height:100% on .xterm fought the
        addon and was the source of the "gigante" mis-sizing. */
-    /* The wrap fills the panel in the terminal's own colour; the grid inside is
-       capped to the chat's 880px column and centred, so its side gaps read as
-       margin (not the grid "fallen into a corner"). */
+    /* The terminal stays a centred 880px work canvas. Its dark side gutters
+       separate the live PTY from the wrapper instead of stretching it into a
+       wall of text across the whole desktop. */
     .screen-term-wrap {
       flex: 1 1 auto;
       min-height: 0;
@@ -1905,7 +2301,8 @@
       min-height: 0;
       width: 100%;
       max-width: 880px;
-      padding: 4px 8px;
+      padding: 5px 8px;
+      border-inline: 1px solid var(--border-soft);
     }
 
     /* The Groups panel — the body of its lightbox now. It used to drop under
@@ -1953,8 +2350,18 @@
       padding: 8px 0 24px;
     }
     .preview-blocked .preview-status { padding-bottom: 4px; }
-    .preview-open { border-color: var(--accent-line); color: var(--accent); }
-    .preview-open:hover:not(:disabled) { background: var(--accent-wash); }
+    .preview-open, .preview-browser, .preview-reveal { border-color: var(--accent-line); color: var(--accent); }
+    .preview-open:hover:not(:disabled), .preview-browser:hover:not(:disabled),
+    .preview-reveal:hover:not(:disabled) { background: var(--accent-wash); }
+    /* Header furniture on both preview surfaces (lightbox head + inline dock
+       head): every previewed file gets these two doors, whatever its kind —
+       the inline image render was a dead end (no way to see it full size, no
+       way to reach the file on disk). */
+    .preview-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+    .preview-actions .btn { padding: 3px 10px; font-size: var(--fs-xs); white-space: nowrap; }
+    /* The lightbox head pushes its ✕ right with margin-left:auto; with the
+       actions cluster present, the cluster owns that push. */
+    .preview-actions + .dirpicker-close { margin-left: 8px; }
     .preview-image { max-width: 100%; height: auto; display: block; margin: 0 auto; image-rendering: auto; }
     .preview-text {
       margin: 0;
@@ -1964,6 +2371,11 @@
       color: var(--text);
       white-space: pre;
       tab-size: 2;
+    }
+    .preview-line { display: block; min-height: 1.5em; padding: 0 4px; margin: 0 -4px; }
+    .preview-line.target {
+      background: var(--accent-wash);
+      box-shadow: inset 2px 0 0 var(--accent);
     }
 
     /* Inline file dock — sits between the chat and the composer (markup order
@@ -2103,9 +2515,10 @@
       align-items: center;
       gap: 8px;
       width: 100%;
-      padding: 10px 12px 4px;
-      background: none;
+      padding: 11px 12px 10px;
+      background: color-mix(in srgb, var(--group-color, var(--accent)) 5%, transparent);
       border: none;
+      border-bottom: 1px solid var(--border-soft);
       text-align: left;
       cursor: pointer;
       font-family: var(--mono);
@@ -2113,9 +2526,12 @@
       text-transform: uppercase;
       letter-spacing: 1.2px;
       color: var(--text-faint);
-      transition: color 0.12s var(--ease);
+      transition: color 0.12s var(--ease), background 0.12s var(--ease);
     }
-    .group-head:hover { color: var(--text-dim); }
+    .group-head:hover {
+      color: var(--text-dim);
+      background: color-mix(in srgb, var(--group-color, var(--accent)) 9%, transparent);
+    }
     .group-head .caret {
       display: inline-block;
       width: 8px;
@@ -2127,46 +2543,64 @@
     .group-head .tally {
       font-variant-numeric: tabular-nums;
       color: var(--text-faint);
+      margin-left: auto;
     }
     .group-head.collapsed .tally { color: var(--accent); }
-    .group-head .rule {
-      flex: 1;
-      height: 1px;
-      background: var(--border-soft);
-    }
+    .group-head .rule { display: none; }
 
-    /* A group HUGS its agents: head and cards share one container with the
-       group's colour running down the left as a rail, and a faint wash of that
-       colour behind them. This is what makes a group read as a container in the
-       sidebar and not just a label that happens to sit above some rows. */
+    /* A group is a real room: one framed rack with a tinted header and agent
+       rows inside. Colour lives across the TOP, never as another left rail. */
     .rail-group {
       position: relative;
-      margin: 3px 6px 8px 8px;
-      padding-left: 2px;
-      border-left: 2px solid var(--group-color, var(--accent-line));
-      border-radius: 0 9px 9px 0;
-      background: linear-gradient(
-        to right,
-        color-mix(in srgb, var(--group-color, var(--accent)) 9%, transparent),
-        transparent 62%
-      );
+      margin: 6px 4px 16px;
+      padding: 0 4px 4px;
+      border: 1px solid var(--border-soft);
+      border-radius: 10px;
+      background: color-mix(in srgb, var(--group-color, var(--accent)) 2.5%, var(--bg-elev));
+      box-shadow:
+        inset 0 2px 0 color-mix(in srgb, var(--group-color, var(--accent)) 48%, transparent),
+        inset 0 1px 0 rgba(255,255,255,0.02);
+      /* NO overflow:hidden here: it guillotined every popover that opens inside
+         the box (the card's ⋯ menu showed 2 items in a 1-agent group). The only
+         square-cornered full-bleed child is the head — it rounds ITSELF below. */
+      transition: border-color 0.16s var(--ease), background 0.16s var(--ease), box-shadow 0.16s var(--ease);
     }
-    .rail-group .group-head { padding-left: 10px; }
+    .rail-group:has(.group-head:hover) {
+      border-color: color-mix(in srgb, var(--group-color, var(--accent)) 28%, var(--border));
+      box-shadow:
+        inset 0 2px 0 color-mix(in srgb, var(--group-color, var(--accent)) 72%, transparent),
+        inset 0 1px 0 rgba(255,255,255,0.03);
+    }
+    .rail-group:last-child { margin-bottom: 8px; }
+    .rail-group .group-head {
+      margin: 0 -4px 4px;
+      width: calc(100% + 8px);
+      /* Matches the box's 10px radius (minus the 1px border) — this is what the
+         group's overflow:hidden used to do, without clipping the popovers. */
+      border-radius: 9px 9px 0 0;
+    }
     .rail-group .group-head > span:nth-child(2) {
       color: color-mix(in srgb, var(--group-color, var(--text-dim)) 78%, var(--text));
       font-weight: 600;
     }
     .rail-group .group-head .caret { color: var(--group-color, var(--text-faint)); }
+    .group-head .caret { order: 0; }
+    .group-head .group-swatch { order: 1; }
+    .group-head .rail-group-name { order: 2; }
+    .group-head .tally { order: 3; }
+    .group-head .group-rename { order: 4; }
+    .group-head .unread-badge { order: 5; }
+    .group-head .rule { order: 6; }
     /* The colour dot on the head doubles as the "recolour this group" control. */
     .group-swatch {
       flex: 0 0 auto;
-      width: 11px;
-      height: 11px;
-      border-radius: 4px;
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
       border: 1px solid color-mix(in srgb, var(--group-color, var(--accent)) 60%, transparent);
       background: var(--group-color, var(--accent));
       cursor: pointer;
-      opacity: 0.55;
+      opacity: 0.72;
       transition: opacity 0.12s var(--ease), transform 0.12s var(--ease);
     }
     .group-head:hover .group-swatch { opacity: 1; }
@@ -2192,6 +2626,40 @@
       letter-spacing: 1px;
       max-width: 140px;
     }
+
+    /* Inside a room, agents are rows in the rack — no stack of floating cards. */
+    .rail-group .agent-card {
+      margin: 0;
+      border-color: transparent;
+      border-bottom-color: var(--border-soft);
+      border-radius: 0;
+      background: transparent;
+      box-shadow: none;
+    }
+    .rail-group .agent-card:last-child { border-bottom-color: transparent; }
+    .rail-group .agent-card:hover {
+      border-color: transparent;
+      border-bottom-color: var(--border-soft);
+      background: color-mix(in srgb, var(--text) 4%, transparent);
+      transform: translateX(2px);
+    }
+    .rail-group .agent-card.active,
+    .rail-group .agent-card.active:hover {
+      z-index: 1;
+      border-color: var(--selected);
+      border-radius: 6px;
+      background: color-mix(in srgb, var(--selected) 8%, var(--bg-elev));
+      box-shadow: inset 0 0 0 1px var(--selected-line);
+      transform: none;
+    }
+    .rail-group .agent-card.leader:not(.active) {
+      border-color: transparent;
+      border-bottom-color: var(--border-soft);
+      border-radius: 0;
+      background: transparent;
+      box-shadow: none;
+    }
+    .rail-group .agent-card.leader:not(.active) .agent-name { color: #efd27a; }
 
     /* Drag-to-reorder: the lifted card fades and shows a dashed berth so the gap
        it will leave is legible while you place it. */
@@ -2223,8 +2691,8 @@
       flex-direction: column;
       background: var(--bg-elev);
       border: 1px solid var(--border);
-      border-radius: 14px;
-      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-popover);
       overflow: hidden;
     }
     .palette-input {
@@ -2406,7 +2874,7 @@
     .msg-avatar {
       flex: none;
       width: 26px; height: 26px;
-      border-radius: 50%;
+      border-radius: 6px;
       display: flex; align-items: center; justify-content: center;
       font-family: var(--mono);
       font-size: 9px;
@@ -2421,13 +2889,13 @@
       max-width: min(104ch, 88%);
       min-width: 0;
       padding: 8px 12px 6px;
-      border: 1px solid var(--border);
-      border-radius: 12px 12px 12px 3px;   /* the tail points at the sender */
+      border: 1px solid var(--border-soft);
+      border-radius: 8px 8px 8px 3px;   /* the tail points at the sender */
       background: var(--bg-elev);
     }
-    .msg-row:hover .msg-bubble { border-color: var(--border); background: var(--bg-elev-2); }
+    .msg-row:hover .msg-bubble { border-color: var(--border-strong); background: var(--bg-elev-2); }
     .msg-row.from-operator .msg-bubble {
-      border-radius: 12px 12px 3px 12px;
+      border-radius: 8px 8px 3px 8px;
       border-color: var(--accent-line);
       background: var(--accent-wash);
     }
@@ -2435,7 +2903,7 @@
     .msg-row.broadcast .msg-bubble {
       max-width: none;
       flex: 1;
-      border-radius: 12px;
+      border-radius: 8px;
       border-style: dashed;
       border-color: var(--accent-line);
       background: linear-gradient(90deg, var(--accent-wash), transparent 70%);
@@ -2467,9 +2935,9 @@
     .msg-to.all { color: var(--accent); }
     .msg-body {
       color: var(--text);
-      font-family: var(--mono);
-      font-size: var(--fs-body);
-      line-height: 1.55;
+      font-family: var(--sans);
+      font-size: var(--fs-md);
+      line-height: 1.58;
       white-space: pre-wrap;
       overflow-wrap: anywhere;
       word-break: break-word;
@@ -2479,8 +2947,8 @@
     .msg-body.clamped {
       max-height: 7.75em;
       overflow: hidden;
-      -webkit-mask-image: linear-gradient(180deg, #000 60%, transparent);
-      mask-image: linear-gradient(180deg, #000 60%, transparent);
+      -webkit-mask-image: linear-gradient(180deg, #000 0, #000 calc(100% - 22px), transparent 100%);
+      mask-image: linear-gradient(180deg, #000 0, #000 calc(100% - 22px), transparent 100%);
     }
     .msg-more {
       margin-top: 2px;
@@ -2598,7 +3066,7 @@
   <header class="app-header">
     <div class="brand"><span class="brand-jack" aria-hidden="true">⇄</span><span class="wordmark">SWITCHBOARD</span></div>
     <div class="hub-status">
-      <span class="conn-state" id="conn-state" data-state="connecting">
+      <span class="conn-state" id="conn-state" data-state="connecting" role="status" aria-live="polite">
         <span class="dot"></span><span id="conn-label">connecting</span>
       </span>
     </div>
@@ -2637,17 +3105,18 @@
 
       <div class="agents" id="agents"></div>
 
-      <!-- Claude /usage bars (5h session + weekly), like the reference app —
-           filled by /api/usage, coloured by burn pace. Hidden until it has data. -->
-      <div class="usage-card" id="usage-card" hidden>
-        <div class="usage-card-head">
-          <span class="eyebrow">Claude usage</span>
+      <!-- Real plan windows for both engines. The card remains present during
+           upstream cooldowns so “unavailable” never looks like “the feature
+           disappeared”. -->
+      <div class="usage-card" id="usage-card" data-collapsed="false" hidden>
+        <button class="usage-card-head" id="usage-toggle" type="button"
+          aria-expanded="true" aria-controls="usage-rows" aria-label="Collapse usage details">
+          <span class="eyebrow">Usage</span>
+          <span class="usage-card-summary" id="usage-summary"></span>
           <span class="usage-reset" id="usage-updated"></span>
-        </div>
+          <span class="usage-card-caret" aria-hidden="true">›</span>
+        </button>
         <div id="usage-rows"></div>
-        <!-- Codex has no limit API — its tokens-today go here when a codex agent
-             exists. Filled by renderUsage. -->
-        <div id="usage-codex" hidden></div>
       </div>
 
     </aside>
@@ -2657,11 +3126,12 @@
            agent you open becomes one beside it. The transcript used to be
            "whatever the panel showed when no screen was open", which made the
            one view that is not an agent behave unlike everything next to it. -->
-      <div class="tabs" id="tabs">
+      <div class="tabs" id="tabs" role="tablist" aria-label="Open views">
         <button class="tab tab-hub active" id="tab-messages" type="button"
+          role="tab" aria-selected="true"
           title="The chat between your agents — what they send each other">
           <span class="tab-mark">⇄</span>
-          <span>Intra-agents Chat</span>
+          <span>Agent traffic</span>
           <span class="tab-unread" id="tab-messages-unread" hidden></span>
         </button>
         <div class="tab-strip" id="tab-strip"></div>
@@ -2670,7 +3140,7 @@
       <div class="feed-head">
         <span class="sub">what your agents said to each other — newest at the bottom</span>
         <input class="feed-search" id="feed-search" type="search"
-          placeholder="Search the transcript…" autocomplete="off" spellcheck="false" />
+          aria-label="Search the transcript" placeholder="Search the transcript…" autocomplete="off" spellcheck="false" />
         <div class="group-tabs" id="group-tabs"></div>
       </div>
 
@@ -2687,22 +3157,33 @@
            you have to juggle. -->
       <div class="screen" id="screen" hidden>
         <div class="screen-head">
-          <span class="screen-name" id="screen-name"></span>
+          <div class="screen-identity">
+            <span class="screen-engine-mark" id="screen-engine-mark"></span>
+            <span class="screen-name" id="screen-name"></span>
+            <span class="screen-activity" id="screen-activity"></span>
+          </div>
           <!-- Chat = the clean casca (read the agent's own conversation log);
                Terminal = its raw screen (type into it). Chat is the default. -->
-          <div class="screen-modes" id="screen-modes">
-            <button class="screen-mode active" data-mode="chat" type="button">Chat</button>
-            <button class="screen-mode" data-mode="terminal" type="button">Terminal</button>
+          <div class="screen-control">
+            <span class="screen-control-label">view</span>
+            <div class="screen-modes" id="screen-modes">
+              <button class="screen-mode active" data-mode="chat" type="button">Chat</button>
+              <button class="screen-mode" data-mode="terminal" type="button">Terminal</button>
+            </div>
           </div>
           <!-- Engine tabs: when this agent has a codex sibling (same cwd, its own
                tmux session), switch which engine's screen is shown. Both stay
                alive — the tab only changes the view. Filled by renderEngineTabs. -->
-          <div class="screen-modes engine-tabs" id="engine-tabs" hidden></div>
+          <div class="screen-control" id="engine-control" hidden>
+            <span class="screen-control-label">engine</span>
+            <div class="screen-modes engine-tabs" id="engine-tabs"></div>
+          </div>
           <span class="screen-hint" id="screen-hint"></span>
           <button class="btn" id="screen-window" type="button"
-            title="Open this agent in a real Windows terminal window instead">window</button>
+            title="Open this agent in a real Windows terminal window instead">open window</button>
           <button class="dirpicker-close" id="screen-close" type="button"
-            title="Back to the messages (Esc)">✕</button>
+            aria-label="Close the agent screen"
+            title="Back to agent traffic (Esc)">✕</button>
         </div>
         <!-- Chat view: rendered conversation. -->
         <div class="screen-chat" id="screen-chat"></div>
@@ -2720,7 +3201,14 @@
           <div class="inline-file-head">
             <span class="inline-file-name" id="inline-file-name"></span>
             <span class="inline-file-path" id="inline-file-path"></span>
+            <span class="preview-actions">
+              <button class="btn preview-browser" id="inline-file-browser" type="button" hidden
+                title="Open this file in a browser tab — an .html opens as the site, an image at full size">browser</button>
+              <button class="btn preview-reveal" id="inline-file-reveal" type="button" hidden
+                title="Show this file in its folder (Windows Explorer)">folder</button>
+            </span>
             <button class="dirpicker-close" id="inline-file-close" type="button"
+              aria-label="Close the file preview"
               title="Close the file (keep chatting)">✕</button>
           </div>
           <div class="inline-file-body" id="inline-file-body"></div>
@@ -2730,13 +3218,21 @@
             <div class="slash-menu" id="slash-menu" hidden></div>
             <div class="slash-menu" id="mention-menu" hidden></div>
             <div class="slash-menu" id="agentref-menu" hidden></div>
-            <textarea id="chat-input" rows="1"
-              placeholder="Message this agent…  (Enter sends · Shift+Enter for a newline)"></textarea>
-            <button class="btn chat-mic" id="chat-mic" type="button"
-              aria-label="Dictate a message" title="Dictate (Chrome speech, pt-BR) — click to start/stop">🎤</button>
-            <button class="btn chat-send" id="chat-send" type="submit">send</button>
-            <button class="btn chat-stop" id="chat-stop" type="button"
-              aria-label="Stop the agent (Esc)" title="Stop (Esc)">■</button>
+            <div class="chat-composer-context">
+              <span class="composer-route">dispatch to <span class="composer-target" id="composer-target">agent</span></span>
+              <span class="composer-keys"><kbd>Enter</kbd> send · <kbd>Shift Enter</kbd> newline · <kbd>Esc</kbd> stop</span>
+            </div>
+            <div class="chat-composer-row">
+              <textarea id="chat-input" name="message" rows="1" autocomplete="off"
+                aria-label="Message this agent"
+                placeholder="Write a dispatch…"></textarea>
+              <canvas class="chat-wave" id="chat-wave" hidden aria-hidden="true"></canvas>
+              <button class="btn chat-mic" id="chat-mic" type="button"
+                aria-label="Dictate a message" title="Dictate (Chrome speech, pt-BR) — click to start/stop">🎤</button>
+              <button class="btn chat-send" id="chat-send" type="submit">Send</button>
+              <button class="btn chat-stop" id="chat-stop" type="button"
+                aria-label="Stop the agent (Esc)" title="Stop (Esc)">■</button>
+            </div>
           </div>
         </form>
         <!-- Session status read from the CLI footer — under the composer, like a
@@ -2786,6 +3282,7 @@
       group: null,         // active group tab, or null for "all groups"
       search: "",          // free-text filter over the transcript, or ""
       unseen: new Set(),   // agents that finished a turn you haven't opened yet
+      reopening: new Set(), // agents with a relaunch in flight (see reopenAgent)
       sse: null,
       uptimeBase: null,    // { seconds, at }  — server uptime + local anchor
     };
@@ -3152,20 +3649,61 @@
       const d = new Date(iso);
       return d.toLocaleString(undefined, { weekday: "short", hour: "2-digit", minute: "2-digit" });
     }
-    let usageLimits = [];
-    let usageUpdatedAt = null; // epoch ms of the last SUCCESSFUL (non-empty) fetch
-    let usageCodex = null; // { total, input, output, reasoning } | null (no codex agent)
+    let usageClaude = null; // { limits, status, stale, updatedAt, retryAt }
+    let usageCodex = null;  // tokens + real rate-limit windows from local rollouts
+    const USAGE_COLLAPSED_KEY = "sb.usageCollapsed";
+    function setUsageCollapsed(collapsed, persist = true) {
+      const card = $("#usage-card");
+      const toggle = $("#usage-toggle");
+      if (!card || !toggle) return;
+      card.dataset.collapsed = String(collapsed);
+      toggle.setAttribute("aria-expanded", String(!collapsed));
+      toggle.setAttribute("aria-label", collapsed ? "Expand usage details" : "Collapse usage details");
+      if (persist) {
+        try { localStorage.setItem(USAGE_COLLAPSED_KEY, String(collapsed)); } catch { /* private mode */ }
+      }
+    }
+    function loadUsageCollapsed() {
+      let collapsed = false;
+      try { collapsed = localStorage.getItem(USAGE_COLLAPSED_KEY) === "true"; } catch { /* private mode */ }
+      setUsageCollapsed(collapsed, false);
+    }
+    function usagePeak(limits, field) {
+      const values = (Array.isArray(limits) ? limits : [])
+        .map((limit) => Number(limit[field]))
+        .filter(Number.isFinite);
+      return values.length ? Math.max(...values) : null;
+    }
+    function renderUsageSummary() {
+      const summary = $("#usage-summary");
+      if (!summary) return;
+      const claude = usageClaude ? usagePeak(usageClaude.limits, "percent") : null;
+      const codex = usageCodex ? usagePeak(usageCodex.limits, "usedPercent") : null;
+      const parts = [];
+      if (usageClaude) parts.push(`Claude ${claude == null ? "—" : `${Math.round(claude)}%`}`);
+      if (usageCodex) parts.push(`Codex ${codex == null ? "—" : `${Math.round(codex)}%`}`);
+      summary.textContent = parts.join(" · ");
+      summary.title = parts.join(" · ");
+    }
     async function refreshUsage() {
       try {
         const r = await fetch("/api/usage");
         const body = r.ok ? await r.json() : null;
-        const next = Array.isArray(body && body.limits) ? body.limits : [];
-        // A transient hiccup (offline, OAuth blip, empty cache) returns [] —
-        // keep the last good bars instead of blanking the card. Only a real,
-        // non-empty read replaces them.
-        if (next.length) {
-          usageLimits = next;
-          usageUpdatedAt = Date.now();
+        if (body && body.claude && typeof body.claude === "object") {
+          usageClaude = {
+            ...body.claude,
+            limits: Array.isArray(body.claude.limits) ? body.claude.limits : [],
+          };
+        } else if (body) {
+          // Backward-compatible shape from a hub that has not restarted yet.
+          const limits = Array.isArray(body.limits) ? body.limits : [];
+          usageClaude = {
+            limits,
+            status: limits.length ? "ok" : "unavailable",
+            stale: !limits.length,
+            updatedAt: limits.length ? new Date().toISOString() : null,
+            retryAt: null,
+          };
         }
         if (body && "codex" in body) usageCodex = body.codex; // null = no codex agent
       } catch {
@@ -3184,56 +3722,118 @@
       if (n >= 1e3) return Math.round(n / 1e3) + "k";
       return String(Math.round(n));
     }
+    function usageWindowFromMinutes(minutes) {
+      if (!Number.isFinite(minutes) || minutes <= 0) return null;
+      return {
+        windowMs: minutes * 60_000,
+        chunkMs: minutes <= 300 ? 20 * 60_000 : USAGE_HOUR,
+      };
+    }
+    function usageWindowLabel(minutes) {
+      if (minutes === 300) return "5h window";
+      if (minutes === 10_080) return "weekly";
+      if (minutes % 1_440 === 0) return `${minutes / 1_440}d window`;
+      if (minutes % 60 === 0) return `${minutes / 60}h window`;
+      return `${minutes}m window`;
+    }
+    function untilText(iso) {
+      const ms = Date.parse(iso) - Date.now();
+      if (!Number.isFinite(ms)) return "soon";
+      if (ms <= 0) return "now";
+      if (ms < USAGE_HOUR) return `${Math.max(1, Math.ceil(ms / 60_000))}m`;
+      return `${Math.ceil(ms / USAGE_HOUR)}h`;
+    }
+    function appendUsageRow(container, item) {
+      const row = el("div", "usage-row");
+      const head = el("div", "usage-row-head");
+      head.append(
+        el("span", "usage-row-label", item.label),
+        el("span", "usage-row-pct", `${Math.round(item.percent)}%`),
+      );
+      const bar = el("div", "usage-bar");
+      const fill = el("div", "usage-bar-fill");
+      fill.style.width = `${Math.min(100, Math.max(0, item.percent))}%`;
+      fill.style.background = item.color;
+      bar.appendChild(fill);
+      row.append(head, bar, el("div", "usage-row-reset", `resets ${usageResetText(item.resetsAt)}`));
+      container.appendChild(row);
+    }
+    function usageEngine(type, name, meta) {
+      const section = el("section", "usage-engine");
+      const head = el("div", "usage-engine-head");
+      const mark = el("span", "usage-engine-mark");
+      mark.appendChild(agentLogo(type));
+      head.append(mark, el("span", "usage-engine-name", name));
+      if (meta) head.appendChild(el("span", "usage-engine-meta", meta));
+      section.appendChild(head);
+      return section;
+    }
     function renderUsage() {
       const card = $("#usage-card");
-      const hasCodex = usageCodex && usageCodex.total > 0;
-      if (!usageLimits.length && !hasCodex) {
+      if (!usageClaude && !usageCodex) {
         card.hidden = true;
         return;
       }
-      // Codex tokens today — Codex has no % limit (it's OpenAI), so a token
-      // count, not a bar. Shown only when a codex agent is around.
-      const cbox = $("#usage-codex");
-      if (cbox) {
-        cbox.textContent = "";
-        if (hasCodex) {
-          const row = el("div", "usage-codex-row");
-          row.append(
-            el("span", "usage-codex-label", "◆ codex today"),
-            el("span", "usage-codex-total", `${fmtTokensShort(usageCodex.total)} tok`),
-          );
-          const bd = el("div", "usage-codex-breakdown",
-            `${fmtTokensShort(usageCodex.input)} in · ${fmtTokensShort(usageCodex.output)} out · ${fmtTokensShort(usageCodex.reasoning)} reasoning`);
-          cbox.append(row, bd);
-          cbox.hidden = false;
-        } else {
-          cbox.hidden = true;
-        }
-      }
       const updated = $("#usage-updated");
-      if (updated) updated.textContent = usageUpdatedAt ? `updated ${fmtAgo(usageUpdatedAt)}` : "";
+      const latestIso = usageCodex && usageCodex.updatedAt || usageClaude && usageClaude.updatedAt;
+      if (updated) updated.textContent = latestIso ? fmtAgo(Date.parse(latestIso)) : "";
+      renderUsageSummary();
       const now = Date.now();
-      const order = { session: 0, weekly: 1 };
-      const sorted = [...usageLimits].sort(
-        (a, b) => (order[a.group] ?? 9) - (order[b.group] ?? 9) || a.percent - b.percent,
-      );
       const rows = $("#usage-rows");
       rows.textContent = "";
-      for (const l of sorted) {
-        const win = usageWindow(l.group);
-        const color = win
-          ? usagePaceColor(l.percent, usageExpected(l.resetsAt, win.windowMs, win.chunkMs, now))
-          : "var(--accent)";
-        const row = el("div", "usage-row");
-        const head = el("div", "usage-row-head");
-        head.append(el("span", "usage-row-label", usageLabel(l)), el("span", "usage-row-pct", `${l.percent}%`));
-        const bar = el("div", "usage-bar");
-        const fill = el("div", "usage-bar-fill");
-        fill.style.width = `${Math.min(100, l.percent)}%`;
-        fill.style.background = color;
-        bar.appendChild(fill);
-        row.append(head, bar, el("div", "usage-row-reset", `resets ${usageResetText(l.resetsAt)}`));
-        rows.appendChild(row);
+
+      if (usageClaude) {
+        const meta = usageClaude.stale && usageClaude.updatedAt ? "last known" : "plan";
+        const section = usageEngine("claude", "Claude", meta);
+        const order = { session: 0, weekly: 1 };
+        const limits = [...usageClaude.limits].sort(
+          (a, b) => (order[a.group] ?? 9) - (order[b.group] ?? 9) || a.percent - b.percent,
+        );
+        for (const l of limits) {
+          const win = usageWindow(l.group);
+          appendUsageRow(section, {
+            label: usageLabel(l), percent: l.percent, resetsAt: l.resetsAt,
+            color: win
+              ? usagePaceColor(l.percent, usageExpected(l.resetsAt, win.windowMs, win.chunkMs, now))
+              : "var(--accent)",
+          });
+        }
+        if (usageClaude.stale || limits.length === 0) {
+          let message = "Usage temporarily unavailable";
+          if (usageClaude.status === "rate_limited" && usageClaude.retryAt) {
+            message = `${limits.length ? "Last known · " : "Endpoint cooling down · "}retry in ${untilText(usageClaude.retryAt)}`;
+          } else if (usageClaude.status === "unauthorized") {
+            message = "Open Claude once to refresh its sign-in";
+          } else if (limits.length && usageClaude.updatedAt) {
+            message = `Last updated ${fmtAgo(Date.parse(usageClaude.updatedAt))}`;
+          }
+          section.appendChild(el("div", `usage-engine-state${usageClaude.status === "rate_limited" ? " warn" : ""}`, message));
+        }
+        rows.appendChild(section);
+      }
+
+      if (usageCodex) {
+        const meta = usageCodex.planType ? `${usageCodex.planType} plan` : "local rollout";
+        const section = usageEngine("codex", "Codex", meta);
+        const limits = Array.isArray(usageCodex.limits) ? usageCodex.limits : [];
+        for (const l of limits) {
+          const win = usageWindowFromMinutes(l.windowMinutes);
+          appendUsageRow(section, {
+            label: usageWindowLabel(l.windowMinutes), percent: l.usedPercent, resetsAt: l.resetsAt,
+            color: win
+              ? usagePaceColor(l.usedPercent, usageExpected(l.resetsAt, win.windowMs, win.chunkMs, now))
+              : "var(--selected)",
+          });
+        }
+        if (!limits.length) section.appendChild(el("div", "usage-engine-state", "Waiting for a Codex limit event"));
+        if (usageCodex.total > 0) {
+          section.appendChild(el(
+            "div",
+            "usage-token-note",
+            `${fmtTokensShort(usageCodex.total)} tokens today · ${fmtTokensShort(usageCodex.output)} output`,
+          ));
+        }
+        rows.appendChild(section);
       }
       card.hidden = false;
     }
@@ -3503,7 +4103,7 @@
     function paletteActions() {
       return [
         {
-          kind: "action", mark: "⇄", name: "Messages",
+          kind: "action", mark: "⇄", name: "Agent traffic",
           desc: "the transcript of what agents said",
           run: () => { closePalette(); if (screenState.name) closeScreen(); },
         },
@@ -3738,6 +4338,7 @@
       const collapsed = collapsedGroups.has(group);
       const head = el("button", `group-head${collapsed ? " collapsed" : ""}`);
       head.type = "button";
+      head.setAttribute("aria-expanded", String(!collapsed));
       // Drag a group head to reorder the rooms in the rail.
       if (group !== DEFAULT_GROUP) {
         head.draggable = true;
@@ -3865,6 +4466,14 @@
     function buildAgentCard(agent) {
       const card = el("div", "agent-card");
       card.classList.add(agent.status === "online" ? "online" : "offline");
+      card.tabIndex = 0;
+      card.setAttribute("role", "button");
+      card.setAttribute(
+        "aria-label",
+        agent.status === "online"
+          ? `Open ${displayOf(agent)} agent screen`
+          : `Filter messages from offline agent ${displayOf(agent)}`,
+      );
       // Reorder ONLY via the grabber on the left — dragging the whole card
       // fought the click that opens the agent. The card itself is not draggable.
       const grab = el("div", "card-grab", "⠿");
@@ -3893,6 +4502,7 @@
       // "which one am I looking at" is never a guess.
       if (screenState.name === agent.name || (screenState.name === null && state.filter === agent.name)) {
         card.classList.add("active");
+        card.setAttribute("aria-current", "page");
       }
       card.dataset.name = agent.name;
       const tint = chatColor(agent.name);
@@ -3903,8 +4513,12 @@
 
       const online = agent.status === "online";
       const working = online && agent.activity === "working";
+      const type = agentTypeOf(agent);
       const dot = el("span", `status-dot ${online ? "online" : "offline"}${working ? " working" : ""}`);
       dot.title = online ? (working ? "online · working" : "online · idle") : "offline";
+      const portrait = el("span", "agent-portrait");
+      portrait.title = `${AGENT_TYPE_TITLES[type]} · ${dot.title}`;
+      portrait.append(agentLogo(type), dot);
 
       // NAME LINE: lamp, then the label filling the width. The leader crown
       // sits BEFORE the name (its own thing, never lost among metadata), and the
@@ -3921,7 +4535,7 @@
       }
       name.appendChild(document.createTextNode(displayOf(agent)));
       name.title = agent.displayName ? `${agent.displayName} (${agent.name})` : agent.name;
-      nameRow.append(dot, name);
+      nameRow.append(portrait, name);
       // Unseen output: a glowing amber pip at the name's end. Set when the agent
       // finished a turn (working → idle) and cleared the moment you open it.
       if (state.unseen.has(agent.name)) {
@@ -3937,11 +4551,9 @@
       // agent still surfaces as the unread count.) The unread count rides the far
       // right of this line as a lit "signal present" LED.
       const meta = el("div", "agent-meta");
-      const type = agentTypeOf(agent);
-      const logo = agentLogo(type);
       const engine = el("span", "engine", AGENT_TYPE_LABELS[type].toLowerCase());
       engine.title = `This agent runs ${AGENT_TYPE_TITLES[type]}`;
-      meta.append(logo, engine);
+      meta.append(engine);
       if (online) {
         meta.appendChild(el("span", "sep", "·"));
         const act = el("span", `activity${working ? " working" : ""}`, working ? "working" : "idle");
@@ -3971,11 +4583,23 @@
       // The agent's screen is the CARD's job now (one click, no button), so the
       // primary here is the thing the card cannot do: pop a real Windows
       // terminal, for when you want an actual window rather than the panel.
-      const primary = el("button", online ? "open-btn" : "reopen-btn", online ? "window" : "reopen");
+      // Re-derived from state.reopening on every render: the rail re-renders
+      // on each SSE event mid-launch, and a loading label set on the live
+      // button node would be wiped by the rebuild (the old "reopen blinks and
+      // looks dead" bug).
+      const reopening = !online && state.reopening.has(agent.name);
+      const primary = el(
+        "button",
+        online ? "open-btn" : reopening ? "reopen-btn busy" : "reopen-btn",
+        online ? "window" : reopening ? "reopening…" : "reopen",
+      );
       primary.type = "button";
+      primary.disabled = reopening;
       primary.title = online
         ? `Open a Windows terminal window attached to "${agent.name}" (the card alone shows its screen here)`
-        : `Relaunch "${agent.name}" in ${agent.cwd} (continues its conversation) and open its window`;
+        : reopening
+          ? `Relaunching "${agent.name}"…`
+          : `Relaunch "${agent.name}" in ${agent.cwd} (continues its conversation) and open its window`;
       primary.addEventListener("click", (ev) => {
         ev.stopPropagation();
         if (online) openAgentTerminal(agent.name, primary);
@@ -4256,6 +4880,20 @@
         // can render past the card's edge, and losing :hover there would yank
         // the whole cluster (and the open menu) out from under the cursor.
         card.classList.toggle("menu-open", !menu.hidden);
+        // Flip UP when the menu doesn't fit below (a low card's 11-item menu
+        // fell past the viewport / the rail's scrollport and looked truncated).
+        // Measured with the menu already visible; falls back to drop-down when
+        // above doesn't fit either.
+        if (!menu.hidden) {
+          menu.classList.remove("drop-up");
+          const menuH = menu.getBoundingClientRect().height;
+          const br = kebab.getBoundingClientRect();
+          const port = kebab.closest(".sidebar, aside")?.getBoundingClientRect() ??
+            { top: 0, bottom: window.innerHeight };
+          const fitsBelow = br.bottom + 5 + menuH <= Math.min(port.bottom, window.innerHeight);
+          const fitsAbove = br.top - 5 - menuH >= Math.max(port.top, 0);
+          if (!fitsBelow && fitsAbove) menu.classList.add("drop-up");
+        }
       });
       menuWrap.append(kebab, menu);
 
@@ -4273,9 +4911,15 @@
       // This used to filter the transcript instead. That is still there, but as
       // what it always was: a filter, living inside Messages where filters
       // belong (see renderFilterBar).
-      card.addEventListener("click", () => {
+      const activateCard = () => {
         if (agent.status === "online") openScreen(agent.name);
         else setFilter(agent.name); // no screen to show — fall back to its traffic
+      };
+      card.addEventListener("click", activateCard);
+      card.addEventListener("keydown", (ev) => {
+        if (ev.target !== card || (ev.key !== "Enter" && ev.key !== " ")) return;
+        ev.preventDefault();
+        activateCard();
       });
       return card;
     }
@@ -4312,7 +4956,12 @@
     }
 
     async function reopenAgent(agent, btn) {
+      if (state.reopening.has(agent.name)) return;
+      state.reopening.add(agent.name);
+      // Immediate feedback on the clicked node; every re-render from here on
+      // re-derives the same look from state.reopening (see the card renderer).
       btn.disabled = true;
+      btn.classList.add("busy");
       btn.textContent = "reopening…";
       try {
         const res = await fetch("/api/agents/launch", {
@@ -4345,8 +4994,11 @@
       } catch (err) {
         toast(`Reopen failed: ${err && err.message ? err.message : err}`, "warn");
       } finally {
-        btn.disabled = false;
-        btn.textContent = "reopen";
+        // `btn` may be an orphaned node by now (the rail re-renders on SSE
+        // events mid-launch) — the render below restores whichever card
+        // exists NOW: online → "window", still offline (failure) → "reopen".
+        state.reopening.delete(agent.name);
+        renderAgents();
       }
     }
 
@@ -4751,8 +5403,10 @@
       strip.textContent = "";
       for (const name of openTabs) {
         const agent = state.agents.get(name);
-        const tab = el("button", `tab${screenState.name === name ? " active" : ""}`);
-        tab.type = "button";
+        const tab = el("div", `tab${screenState.name === name ? " active" : ""}`);
+        tab.tabIndex = 0;
+        tab.setAttribute("role", "tab");
+        tab.setAttribute("aria-selected", String(screenState.name === name));
         tab.title = agent ? `${name} — ${agent.role || "no role"}` : name;
         tab.append(
           el("span", `dot ${agent && agent.status === "online" ? "online" : "offline"}`),
@@ -4762,10 +5416,16 @@
           tab.appendChild(el("span", "tab-unread", String(agent.unreadCount)));
         }
         tab.addEventListener("click", () => openScreen(name));
+        tab.addEventListener("keydown", (ev) => {
+          if (ev.target !== tab || (ev.key !== "Enter" && ev.key !== " ")) return;
+          ev.preventDefault();
+          openScreen(name);
+        });
 
         const close = el("button", "tab-close", "✕");
         close.type = "button";
         close.title = `Close the ${name} tab`;
+        close.setAttribute("aria-label", `Close the ${name} tab`);
         close.addEventListener("click", (ev) => {
           ev.stopPropagation();
           closeTab(name);
@@ -4774,6 +5434,7 @@
         strip.appendChild(tab);
       }
       $("#tab-messages").classList.toggle("active", screenState.name === null);
+      $("#tab-messages").setAttribute("aria-selected", String(screenState.name === null));
     }
 
     function closeTab(name) {
@@ -4805,6 +5466,9 @@
       $("#screen").hidden = false;
       $("#screen-name").textContent = displayOf(name);
       $("#screen-name").title = name; // the kebab id stays one hover away
+      $("#composer-target").textContent = displayOf(name);
+      $("#composer-target").title = name;
+      $("#chat-input").placeholder = "Write a dispatch…";
 
       // Default to the CHAT casca. The mode is remembered across agents so
       // switching tabs keeps you in the view you chose.
@@ -4823,7 +5487,10 @@
       if (!name) return;
       screenState.mode = mode;
       for (const b of document.querySelectorAll(".screen-mode")) {
-        b.classList.toggle("active", b.dataset.mode === mode);
+        if (!b.dataset.mode) continue;
+        const active = b.dataset.mode === mode;
+        b.classList.toggle("active", active);
+        b.setAttribute("aria-pressed", String(active));
       }
       if (mode === "terminal") {
         teardownChat();
@@ -4839,6 +5506,13 @@
         mountChat(name);
         updateChatTyping();
         updateStopButton();
+        // This is a desktop operator console: opening an agent means you are
+        // ready to dispatch to it. Wait until the chat surface is visible, then
+        // place the caret in its primary control without moving the transcript.
+        requestAnimationFrame(() => {
+          if (screenState.name !== name || screenState.mode !== "chat") return;
+          $("#chat-input").focus({ preventScroll: true });
+        });
       }
       renderScreenStatus(); // show the footer pills in chat, hide in terminal
     }
@@ -4850,6 +5524,13 @@
      * after a beat: Claude Code's TUI takes text+Enter in one write as typing
      * without submitting (pitfall P1), exactly like the nudge.
      */
+    // A real slash command is one command token (`/review`, `/model opus`). An
+    // absolute file path also begins with slash, but its next separator is `/`,
+    // so it must stay in Chat instead of flipping the wrapper to Terminal.
+    function isSlashCommand(text) {
+      return /^\/[A-Za-z][\w-]*(?:\s|$)/.test(String(text || "").trimStart());
+    }
+
     async function sendChatMessage(name, text) {
       const bytesOf = (s) => {
         const b64 = btoa(unescape(encodeURIComponent(s)));
@@ -5133,11 +5814,15 @@
             ? buildToolChip(it)
             : it.kind === "thinking"
               ? buildThinkingBlock(it)
-              : buildChatTurn(it, name);
+              : it.kind === "marker"
+                ? buildChatMarker(it)
+                : buildChatTurn(it, name);
         thread.appendChild(node);
       }
       thread.__count = items.length;
       groupActions(thread);
+      for (const rail of thread.querySelectorAll(".chat-turn-actions")) rail.remove();
+      markCopyableTurns(thread);
       markEditableUserTurns(thread);
       markForwardableTurns(thread);
       reconcilePending(view);
@@ -5145,7 +5830,7 @@
 
     /**
      * Folds runs of ≥3 consecutive tool cards into one collapsible group, like
-     * the reference transcript ("🧰 5 actions · Bash ×2 · Read"). Only CLOSED
+     * the reference transcript ("5 actions · Bash ×2 · Read"). Only CLOSED
      * runs group — a run at the very end is the still-growing tail and stays
      * open so the operator watches the live action. Idempotent: already-grouped
      * chips (dataset.grouped) are skipped, so it re-runs cheaply each render.
@@ -5173,7 +5858,7 @@
       const head = el("div", "chat-tool-group-head");
       head.append(
         el("span", "chat-tool-caret", "▸"),
-        el("span", "chat-tool-icon", "🧰"),
+        el("span", "chat-tool-icon", "∷"),
         el("span", "chat-tool-name", `${run.length} actions`),
         el("span", "chat-tool-summary", groupSummary(run)),
       );
@@ -5184,7 +5869,7 @@
         body.appendChild(node);
       }
       group.append(head, body);
-      head.addEventListener("click", () => group.classList.toggle("open"));
+      wireDisclosure(head, group, `${run.length} grouped actions`);
     }
 
     /** "Bash ×2 · Read · Edit" — tool names in first-seen order, up to 4. */
@@ -5241,7 +5926,7 @@
         const box = el("div", "chat-typing");
         const dots = el("div", "chat-typing-dots");
         dots.append(el("span"), el("span"), el("span"));
-        box.append(el("div", "chat-avatar", initialsOf(screenState.name)), dots);
+        box.append(buildChatAvatar(false, screenState.name), dots);
         const atBottom = view.scrollHeight - view.scrollTop - view.clientHeight < 120;
         view.appendChild(box);
         if (atBottom) view.scrollTop = view.scrollHeight;
@@ -5282,23 +5967,26 @@
     /** Engine tabs in the screen head — shown only when the pair exists. */
     function renderEngineTabs() {
       const box = $("#engine-tabs");
+      const control = $("#engine-control");
       if (!box) return;
       const pair = screenState.name ? enginePairOf(screenState.name) : null;
       box.textContent = "";
       if (!pair) {
-        box.hidden = true;
+        if (control) control.hidden = true;
         return;
       }
       for (const [label, agent] of [["Claude", pair.claude], ["Codex", pair.codex]]) {
-        const btn = el("button", `screen-mode${screenState.name === agent.name ? " active" : ""}`, label);
+        const btn = el("button", `screen-mode${screenState.name === agent.name ? " active" : ""}`);
         btn.type = "button";
+        btn.append(agentLogo(label.toLowerCase()), document.createTextNode(label));
+        btn.setAttribute("aria-pressed", String(screenState.name === agent.name));
         btn.title = `${label} engine of ${pair.base} (${agent.status}${agent.activity ? " · " + agent.activity : ""})`;
         btn.addEventListener("click", () => {
           if (screenState.name !== agent.name) openScreen(agent.name);
         });
         box.appendChild(btn);
       }
-      box.hidden = false;
+      if (control) control.hidden = false;
     }
 
     /** Launches the codex sibling of a claude agent: same cwd, same group. */
@@ -5337,7 +6025,27 @@
       if (!id) return null;
       return id.replace(/^claude-/, "").replace(/-\d{8}$/, "");
     }
+    function renderScreenIdentity() {
+      const agent = screenState.name ? state.agents.get(screenState.name) : null;
+      const mark = $("#screen-engine-mark");
+      const activity = $("#screen-activity");
+      if (!mark || !activity) return;
+      mark.textContent = "";
+      if (!agent) {
+        activity.textContent = "";
+        return;
+      }
+      mark.appendChild(agentLogo(agentTypeOf(agent)));
+      const stateLabel = agent.status !== "online"
+        ? "offline"
+        : agent.activity === "working"
+          ? "working"
+          : "ready";
+      activity.textContent = stateLabel;
+      activity.className = `screen-activity ${stateLabel}`;
+    }
     function renderScreenStatus() {
+      renderScreenIdentity();
       const box = $("#chat-statusbar");
       if (!box) return;
       const agent = screenState.name === null ? null : state.agents.get(screenState.name);
@@ -5379,20 +6087,46 @@
       if (!pend || !pend.children.length) return;
       const thread = view.querySelector(".chat-thread");
       if (!thread) return;
+      // RAW against RAW: the real turn keeps its source text on __text. The
+      // old compare used the rendered bubble's textContent — markdown turns a
+      // newline into <br>, whose textContent is NOTHING, so any MULTILINE
+      // message never matched its echo and showed duplicated ("sending…")
+      // forever. Whitespace is collapsed on both sides for the same reason:
+      // rendering reflows it, and it carries no identity.
+      const norm = (s) => String(s).replace(/\s+/g, " ").trim();
       const realTexts = new Set(
-        [...thread.querySelectorAll(".chat-turn.user .chat-bubble")].map((b) => b.textContent.trim()),
+        [...thread.querySelectorAll(".chat-turn.user")]
+          .map((t) => (typeof t.__text === "string" ? norm(t.__text) : ""))
+          .filter((t) => t !== ""),
       );
       for (const node of [...pend.children]) {
-        if (realTexts.has(node.dataset.echo)) node.remove();
+        if (realTexts.has(norm(node.dataset.echo))) node.remove();
       }
     }
 
-    /** Two-letter identity mark for an agent — "ai-panorama" -> "AP". */
-    function initialsOf(name) {
-      if (!name) return "AI";
-      const parts = name.split(/[^a-zA-Z0-9]+/).filter(Boolean);
-      const s = parts.length >= 2 ? parts[0][0] + parts[1][0] : name.slice(0, 2);
-      return s.toUpperCase();
+    function buildChatAvatar(isUser, agentName) {
+      const avatar = el("div", `chat-avatar${isUser ? " you" : ""}`);
+      if (isUser) {
+        avatar.textContent = "you";
+        avatar.title = "You";
+      } else {
+        const agent = agentName ? state.agents.get(agentName) : null;
+        avatar.appendChild(agentLogo(agentTypeOf(agent)));
+        avatar.title = agentName ? `${displayOf(agentName)} · ${agentTypeOf(agent)}` : "Agent";
+      }
+      return avatar;
+    }
+
+    /**
+     * A harness happening (worked-for, monitor/task event, away-summary) as a
+     * quiet centred line — the terminal shows these between turns, and hiding
+     * them made the casca look disconnected from what the pane was doing.
+     */
+    function buildChatMarker(it) {
+      const div = el("div", "chat-marker");
+      div.append(el("span", "chat-marker-mark", "✻"), el("span", null, it.text));
+      if (it.ts) div.title = fmtFull(it.ts);
+      return div;
     }
 
     function buildChatTurn(it, agentName) {
@@ -5420,7 +6154,7 @@
       }
       const turn = el("div", `chat-turn ${it.kind}`);
       const shown = agentName ? displayOf(agentName) : "agent";
-      const avatar = el("div", `chat-avatar${isUser ? " you" : ""}`, isUser ? "you" : initialsOf(shown));
+      const avatar = buildChatAvatar(isUser, agentName);
       const body = el("div", "chat-turn-body");
       const meta = el("div", "chat-meta");
       meta.appendChild(el("span", "chat-role", isUser ? "you" : shown));
@@ -5460,10 +6194,150 @@
       input.focus();
       input.setSelectionRange(input.value.length, input.value.length);
     }
+
+    function actionRailFor(turn) {
+      let rail = turn.querySelector(":scope > .chat-turn-actions");
+      if (!rail) {
+        rail = el("div", "chat-turn-actions");
+        turn.appendChild(rail);
+      }
+      return rail;
+    }
+
+    function copyGlyphSvg() {
+      const ns = "http://www.w3.org/2000/svg";
+      const svg = document.createElementNS(ns, "svg");
+      for (const [k, v] of Object.entries({ viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", "stroke-width": "2", "stroke-linecap": "round", "stroke-linejoin": "round" })) svg.setAttribute(k, v);
+      const front = document.createElementNS(ns, "rect");
+      front.setAttribute("x", "8"); front.setAttribute("y", "8"); front.setAttribute("width", "12"); front.setAttribute("height", "12"); front.setAttribute("rx", "2");
+      const back = document.createElementNS(ns, "path");
+      back.setAttribute("d", "M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2");
+      svg.append(back, front);
+      return svg;
+    }
+
+    /**
+     * Un-hard-wraps text for WhatsApp: agents draft messages wrapped at ~75
+     * columns (and often INSIDE a code fence), and pasting that into WhatsApp
+     * shows every ragged line break. Per paragraph block, when MOST lines are
+     * long (the hard-wrap signature) the plain lines are joined into one —
+     * bullets/numbered/quoted lines keep their own line, and their indented
+     * continuations fold back into them. Blocks of short lines are left alone:
+     * those breaks are intentional writing, not wrapping.
+     */
+    function unwrapForWhatsApp(sourceText) {
+      const isMarker = (l) => /^\s*(?:•|☐|☑|>|\d+[.)]\s|[-*+]\s)/.test(l) || /^[BCP]\d+$/.test(l.trim());
+      return String(sourceText)
+        .split(/\n{2,}/)
+        .map((block) => {
+          const lines = block.split("\n");
+          const plainLines = lines.filter((l) => l.trim() !== "" && !isMarker(l));
+          const hardWrapped =
+            plainLines.length >= 2 && plainLines.filter((l) => l.trim().length >= 55).length >= plainLines.length * 0.6;
+          if (!hardWrapped) return block;
+          const out = [];
+          let buf = [];
+          let lastWasMarker = false;
+          for (const l of lines) {
+            if (isMarker(l)) {
+              if (buf.length) { out.push(buf.join(" ")); buf = []; }
+              out.push(l.trimEnd());
+              lastWasMarker = true;
+            } else if (l.trim() === "") {
+              if (buf.length) { out.push(buf.join(" ")); buf = []; }
+            } else if (!buf.length && lastWasMarker && /^\s+/.test(l)) {
+              out[out.length - 1] += " " + l.trim(); // a wrapped bullet's continuation
+            } else {
+              buf.push(l.trim());
+              lastWasMarker = false;
+            }
+          }
+          if (buf.length) out.push(buf.join(" "));
+          return out.join("\n");
+        })
+        .join("\n\n");
+    }
+
+    /** Markdown → the small formatting subset WhatsApp actually understands. */
+    function toWhatsAppText(source) {
+      let text = String(source || "").replace(/\r\n?/g, "\n");
+      const code = [];
+      const bold = [];
+      const plain = [];
+      const hold = (list, value, kind) => {
+        const token = `${kind}${list.length}`;
+        list.push(value);
+        return token;
+      };
+      // Fences: an agent drafting a MESSAGE often puts the prose in a fence,
+      // and it must unwrap like any other text (fence markers dropped) — while
+      // real code keeps its fence and every byte (``` is WhatsApp monospace).
+      text = text.replace(/```[^\n]*\n?([\s\S]*?)```/g, (whole, body) => {
+        const looksLikeCode =
+          /[{};=\\]|<[a-zA-Z/]|^\s{4,}\S|\/\/|#!|^\s*(?:import|const|let|var|function|def|class|SELECT|curl|npm|git)\b/m.test(body);
+        const lines = body.split("\n").filter((l) => l.trim() !== "");
+        const avg = lines.length ? lines.reduce((s, l) => s + l.length, 0) / lines.length : 0;
+        if (!looksLikeCode && avg >= 40) return hold(plain, unwrapForWhatsApp(body.trim()), "P");
+        return hold(code, whole, "C");
+      });
+      // Inline code still passes through byte-for-byte: markdown punctuation
+      // inside it is content, not formatting.
+      text = text.replace(/`[^`\n]+`/g, (v) => hold(code, v, "C"));
+      text = text.replace(/^#{1,6}\s+(.+)$/gm, (_, v) => hold(bold, v.replace(/^\*\*|\*\*$/g, ""), "B"));
+      text = text.replace(/\*\*([^*\n](?:.*?[^*\n])?)\*\*/g, (_, v) => hold(bold, v, "B"));
+      text = text.replace(/__([^_\n](?:.*?[^_\n])?)__/g, (_, v) => hold(bold, v, "B"));
+      // Markdown's single-asterisk italic would become WhatsApp bold.
+      text = text.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1_$2_");
+      text = text.replace(/~~([^~\n]+)~~/g, "~$1~");
+      text = text.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, "$1 — $2");
+      text = text.replace(/^\s*[-*+]\s+\[ \]\s+/gm, "☐ ");
+      text = text.replace(/^\s*[-*+]\s+\[[xX]\]\s+/gm, "☑ ");
+      text = text.replace(/^\s*[-*+]\s+/gm, "• ");
+      text = text.replace(/\n{3,}/g, "\n\n").trim();
+      // Join the hard-wrapped lines (tokens survive as opaque line content).
+      text = unwrapForWhatsApp(text);
+      text = text.replace(/B(\d+)/g, (_, i) => `*${bold[Number(i)]}*`);
+      text = text.replace(/C(\d+)/g, (_, i) => code[Number(i)]);
+      text = text.replace(/P(\d+)/g, (_, i) => plain[Number(i)]);
+      return text;
+    }
+
+    async function copyChatText(btn, text, whatsapp) {
+      const value = whatsapp ? toWhatsAppText(text) : text;
+      try {
+        await navigator.clipboard.writeText(value);
+        btn.classList.add("copied");
+        const old = btn.title;
+        btn.title = whatsapp ? "Copied for WhatsApp" : "Copied";
+        setTimeout(() => { btn.classList.remove("copied"); btn.title = old; }, 1200);
+      } catch {
+        toast("Clipboard access was blocked by the browser.", "warn");
+      }
+    }
+
+    function markCopyableTurns(threadEl) {
+      if (!threadEl) return;
+      for (const turn of threadEl.querySelectorAll(".chat-turn.user, .chat-turn.assistant")) {
+        if (typeof turn.__text !== "string") continue;
+        const rail = actionRailFor(turn);
+        const copy = el("button", "chat-copy-btn");
+        copy.type = "button";
+        copy.title = "Copy message";
+        copy.setAttribute("aria-label", "Copy message");
+        copy.appendChild(copyGlyphSvg());
+        copy.addEventListener("click", (ev) => { ev.stopPropagation(); copyChatText(copy, turn.__text, false); });
+        const wa = el("button", "chat-copy-btn whatsapp", "WA");
+        wa.type = "button";
+        wa.title = "Copy for WhatsApp — convert Markdown formatting";
+        wa.setAttribute("aria-label", "Copy message formatted for WhatsApp");
+        wa.addEventListener("click", (ev) => { ev.stopPropagation(); copyChatText(wa, turn.__text, true); });
+        rail.append(copy, wa);
+      }
+    }
+
     // After each render, only the LAST 5 user turns carry an edit pencil.
     function markEditableUserTurns(threadEl) {
       if (!threadEl) return;
-      for (const b of threadEl.querySelectorAll(".chat-edit-btn")) b.remove();
       const turns = threadEl.querySelectorAll(".chat-turn.user");
       for (let i = Math.max(0, turns.length - 5); i < turns.length; i++) {
         const turn = turns[i];
@@ -5471,9 +6345,10 @@
         const btn = el("button", "chat-edit-btn");
         btn.type = "button";
         btn.title = "Edit — load this message into the composer";
+        btn.setAttribute("aria-label", "Edit and resend this message");
         btn.appendChild(editPencilSvg());
         btn.addEventListener("click", (e) => { e.stopPropagation(); loadIntoComposer(turn.__text); });
-        turn.appendChild(btn);
+        actionRailFor(turn).appendChild(btn);
       }
     }
 
@@ -5542,7 +6417,6 @@
     // forward arrow. Same remove-and-recreate pass as markEditableUserTurns.
     function markForwardableTurns(threadEl) {
       if (!threadEl) return;
-      for (const w of threadEl.querySelectorAll(".chat-fwd-wrap")) w.remove();
       const turns = threadEl.querySelectorAll(".chat-turn.user, .chat-turn.assistant");
       for (let i = Math.max(0, turns.length - 8); i < turns.length; i++) {
         const turn = turns[i];
@@ -5551,6 +6425,7 @@
         const btn = el("button", "chat-fwd-btn");
         btn.type = "button";
         btn.title = "Forward — send this message to another agent";
+        btn.setAttribute("aria-label", "Forward this message to another agent");
         btn.setAttribute("aria-expanded", "false");
         btn.appendChild(fwdArrowSvg());
         const menu = el("div", "fwd-menu");
@@ -5573,19 +6448,36 @@
           }
         });
         wrap.append(btn, menu);
-        turn.appendChild(wrap);
+        actionRailFor(turn).appendChild(wrap);
       }
     }
 
-    // A glyph per tool, like the reference app's transcript — so the eye reads
-    // the KIND of action before the name.
+    // Monochrome operator marks, not a row of unrelated emoji. The eye still
+    // reads the kind of action first, but it belongs to the terminal surface.
     const TOOL_ICON = {
-      Bash: "💻", Read: "📖", Edit: "✏️", Write: "📝", MultiEdit: "✏️",
-      NotebookEdit: "✏️", Grep: "🔍", Glob: "🔍", WebFetch: "🌐",
-      WebSearch: "🌐", Task: "🤖", TodoWrite: "📋",
+      Bash: "$", exec: "$", Read: "R", Edit: "Δ", Write: "W", MultiEdit: "Δ",
+      NotebookEdit: "Δ", Grep: "⌕", Glob: "⌕", WebFetch: "↗",
+      WebSearch: "↗", Task: "⇥", TodoWrite: "✓",
     };
     function toolIcon(name) {
-      return TOOL_ICON[name] || (name && name.startsWith("mcp__") ? "🔌" : "🔧");
+      return TOOL_ICON[name] || (name && name.startsWith("mcp__") ? "◇" : "·");
+    }
+
+    function wireDisclosure(trigger, owner, label) {
+      trigger.tabIndex = 0;
+      trigger.setAttribute("role", "button");
+      trigger.setAttribute("aria-label", label);
+      trigger.setAttribute("aria-expanded", "false");
+      const toggle = () => {
+        const open = owner.classList.toggle("open");
+        trigger.setAttribute("aria-expanded", String(open));
+      };
+      trigger.addEventListener("click", toggle);
+      trigger.addEventListener("keydown", (ev) => {
+        if (ev.key !== "Enter" && ev.key !== " ") return;
+        ev.preventDefault();
+        toggle();
+      });
     }
 
     // The agent's reasoning — a collapsible block, dim and set aside, like the
@@ -5593,11 +6485,11 @@
     function buildThinkingBlock(it) {
       const box = el("div", "chat-thinking");
       const head = el("div", "chat-thinking-head");
-      head.append(el("span", "chat-tool-caret", "▸"), el("span", "chat-thinking-label", "💭 thinking"));
+      head.append(el("span", "chat-tool-caret", "▸"), el("span", "chat-thinking-label", "thinking"));
       const body = el("div", "chat-thinking-body");
       renderMarkdownInto(body, it.text);
       box.append(head, body);
-      head.addEventListener("click", () => box.classList.toggle("open"));
+      wireDisclosure(head, box, "Show agent thinking");
       return box;
     }
 
@@ -5618,7 +6510,7 @@
       // … then its result, diff-coloured for edits.
       if (it.result) body.appendChild(buildToolPre(null, it.result, it.name));
       chip.append(head, body);
-      head.addEventListener("click", () => chip.classList.toggle("open"));
+      wireDisclosure(head, chip, `Show ${it.name} action details`);
       return chip;
     }
 
@@ -5627,6 +6519,7 @@
       const btn = el("button", "copy-btn", "copy");
       btn.type = "button";
       btn.title = "Copy to clipboard";
+      btn.setAttribute("aria-label", "Copy action output");
       btn.addEventListener("click", (e) => {
         e.stopPropagation();
         navigator.clipboard.writeText(text).then(
@@ -5698,6 +6591,8 @@
       const doc = new DOMParser().parseFromString(html, "text/html");
       sanitizeNode(doc.body);
       linkifyPaths(doc.body);
+      linkifyBareFiles(doc.body);
+      wireMarkdownLinks(doc.body);
       while (doc.body.firstChild) container.appendChild(doc.body.firstChild);
       // Syntax colours for fenced code, once it is in the live document.
       if (window.hljs) {
@@ -5757,6 +6652,79 @@
       }
     }
 
+    /**
+     * Markdown links whose href is a LOCAL file must never fall through to the
+     * browser. `/home/x/file:48` otherwise becomes
+     * `http://localhost:4577/home/x/file:48`, which looks like a broken site.
+     * Return the actual path plus an optional source line.
+     */
+    function localFileTarget(value) {
+      if (typeof value !== "string") return null;
+      let raw = value.trim();
+      if (!raw) return null;
+      let filePath = null;
+      let hashLine = null;
+      if (/^file:/i.test(raw)) {
+        try {
+          const url = new URL(raw);
+          if (url.protocol !== "file:") return null;
+          filePath = decodeURIComponent(url.pathname);
+          if (url.hostname && url.hostname !== "localhost") filePath = `//${url.hostname}${filePath}`;
+          const hm = url.hash.match(/^#L?(\d+)$/i);
+          if (hm) hashLine = Number(hm[1]);
+        } catch {
+          return null;
+        }
+      } else {
+        try { raw = decodeURIComponent(raw); } catch { /* keep the literal href */ }
+        // Known workstation roots only: a site-relative `/docs` link stays a
+        // normal web link, while real local files route to the preview dock.
+        if (!/^(?:~\/|\/(?:home|root|tmp|mnt|Users|opt|workspace|var\/tmp)\/)/.test(raw)) return null;
+        filePath = raw.replace(/#L?\d+$/i, (h) => {
+          hashLine = Number(h.replace(/\D/g, ""));
+          return "";
+        });
+      }
+      const suffix = filePath.match(/^(.*):(\d+)(?::\d+)?$/);
+      if (suffix) {
+        filePath = suffix[1];
+        hashLine = Number(suffix[2]);
+      }
+      return filePath ? { path: filePath, line: hashLine } : null;
+    }
+
+    function wireLocalPathLink(link, filePath, line) {
+      const open = (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        openInlineFile(filePath, line);
+      };
+      link.classList.add("path-link");
+      link.removeAttribute("href");
+      link.setAttribute("role", "button");
+      link.tabIndex = 0;
+      link.title = `Preview ${filePath}${line ? ` at line ${line}` : ""}`;
+      link.addEventListener("click", open);
+      link.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter" || ev.key === " ") open(ev);
+      });
+    }
+
+    function wireMarkdownLinks(root) {
+      for (const link of root.querySelectorAll("a[href]")) {
+        const target = localFileTarget(link.getAttribute("href"));
+        if (target) {
+          wireLocalPathLink(link, target.path, target.line);
+          continue;
+        }
+        // Genuine web links should not replace the live dashboard.
+        if (/^https?:/i.test(link.getAttribute("href") || "")) {
+          link.target = "_blank";
+          link.rel = "noopener noreferrer";
+        }
+      }
+    }
+
     // Plain text, but file paths become clickable preview links (same detection
     // as the transcript). A relative path resolves against the agent whose chat
     // this is — its own cwd is what it was talking about.
@@ -5768,14 +6736,65 @@
         if (match.index > last) container.appendChild(document.createTextNode(text.slice(last, match.index)));
         const full = resolveAgentPath(p, screenState.name);
         const link = el("span", "path-link", p); // shows what the agent wrote
-        link.title = `Preview ${full}`;          // reveals where that actually is
-        // Chat links open the inline DOCK (read the file while chatting); the
-        // Messages feed's links keep the lightbox.
-        link.addEventListener("click", (ev) => { ev.stopPropagation(); openInlineFile(full); });
+        wireLocalPathLink(link, full, null);
         container.appendChild(link);
         last = match.index + p.length;
       }
       if (last < text.length) container.appendChild(document.createTextNode(text.slice(last)));
+    }
+
+    // Bare filenames ("report.md") are ambiguous until the hub proves which
+    // real file the agent meant. They stay plain text during resolution and
+    // become interactive only after an exact, scoped match — no dead links for
+    // domains such as example.com or ordinary dotted prose such as node.js.
+    const mentionedFileCache = new Map();
+    function resolveMentionedFile(agentName, filename, downloadsHint) {
+      if (!agentName) return Promise.resolve(null);
+      const key = `${agentName}\n${downloadsHint ? "downloads" : "project"}\n${filename.toLowerCase()}`;
+      if (!mentionedFileCache.has(key)) {
+        const params = new URLSearchParams({ file: filename });
+        if (downloadsHint) params.set("hint", "downloads");
+        mentionedFileCache.set(
+          key,
+          fetch(`/api/agents/${encodeURIComponent(agentName)}/files/resolve?${params}`)
+            .then(async (res) => {
+              const data = await res.json().catch(() => null);
+              return res.ok && data && data.ok && typeof data.path === "string" ? data.path : null;
+            })
+            .catch(() => null),
+        );
+      }
+      return mentionedFileCache.get(key);
+    }
+
+    function linkifyBareFiles(root) {
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      const targets = [];
+      let node;
+      while ((node = walker.nextNode())) {
+        if (node.parentElement.closest("pre, a, .path-link")) continue;
+        BARE_FILE_RE.lastIndex = 0;
+        if (!BARE_FILE_RE.test(node.nodeValue)) continue;
+        const context = node.parentElement.closest("p, li, blockquote")?.textContent || node.nodeValue;
+        targets.push({ node, downloadsHint: /\bdownloads?\b/i.test(context) });
+      }
+      for (const { node: textNode, downloadsHint } of targets) {
+        const frag = document.createDocumentFragment();
+        let last = 0;
+        BARE_FILE_RE.lastIndex = 0;
+        for (const match of textNode.nodeValue.matchAll(BARE_FILE_RE)) {
+          const filename = match[0];
+          if (match.index > last) frag.appendChild(document.createTextNode(textNode.nodeValue.slice(last, match.index)));
+          const candidate = el("span", null, filename);
+          frag.appendChild(candidate);
+          resolveMentionedFile(screenState.name, filename, downloadsHint).then((filePath) => {
+            if (filePath) wireLocalPathLink(candidate, filePath, null);
+          });
+          last = match.index + filename.length;
+        }
+        if (last < textNode.nodeValue.length) frag.appendChild(document.createTextNode(textNode.nodeValue.slice(last)));
+        textNode.replaceWith(frag);
+      }
     }
 
     // =====================================================================
@@ -5787,6 +6806,7 @@
       $("#preview-box").hidden = false;
       $("#preview-name").textContent = filePath.split("/").pop() || filePath;
       $("#preview-path").textContent = "";
+      wirePreviewActions("#preview-browser", "#preview-reveal", null);
       const body = $("#preview-body");
       body.textContent = "";
       body.appendChild(el("div", "preview-status", "Loading…"));
@@ -5800,6 +6820,7 @@
         }
         $("#preview-name").textContent = data.name;
         $("#preview-path").textContent = `${data.path} · ${fmtBytes(data.size)}`;
+        wirePreviewActions("#preview-browser", "#preview-reveal", data.path);
         renderPreview(body, data);
       } catch (err) {
         body.textContent = "";
@@ -5809,7 +6830,46 @@
       }
     }
 
-    function renderPreview(body, data) {
+    /**
+     * Shows and wires the "browser" / "folder" pair on a preview head; null
+     * hides the pair (loading, failure). These are STATIC nodes reused across
+     * previews, so handlers are assigned (onclick), never stacked with
+     * addEventListener. Every previewed file gets both doors — the server
+     * decides what a browser tab does with it (render or download).
+     */
+    function wirePreviewActions(browserSel, revealSel, realPath) {
+      const browser = $(browserSel);
+      const reveal = $(revealSel);
+      browser.hidden = reveal.hidden = realPath === null;
+      browser.onclick = realPath === null
+        ? null
+        : () => window.open(`/api/files/raw?path=${encodeURIComponent(realPath)}`, "_blank", "noopener");
+      reveal.onclick = realPath === null ? null : () => revealInFolder(realPath, reveal);
+    }
+
+    /** Windows Explorer opened on the file's folder with the file selected. */
+    async function revealInFolder(filePath, btn) {
+      btn.disabled = true;
+      try {
+        const res = await fetch("/api/files/reveal", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ path: filePath }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.ok) {
+          toast(data.error || `Could not show it in the folder (HTTP ${res.status}).`, "warn", 8000);
+          return;
+        }
+        toast(`Showing ${filePath.split("/").pop()} in Explorer.`, "ok");
+      } catch (err) {
+        toast(`Could not show it in the folder: ${err && err.message ? err.message : err}`, "warn");
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    function renderPreview(body, data, focusLine) {
       if (data.kind === "image") {
         const img = el("img", "preview-image");
         img.src = data.content; // a data: URL from the hub; loads nothing off-machine
@@ -5846,8 +6906,20 @@
       // syntax highlighting — that would be a dependency; the raw file is the
       // honest preview and 90% of the value.
       const pre = el("pre", "preview-text");
-      pre.textContent = data.content; // textContent: server data never touches innerHTML
+      if (Number.isInteger(focusLine) && focusLine > 0) {
+        const lines = String(data.content).split("\n");
+        for (let i = 0; i < lines.length; i++) {
+          const line = el("span", `preview-line${i + 1 === focusLine ? " target" : ""}`, lines[i] || "\u200b");
+          line.dataset.line = String(i + 1);
+          pre.appendChild(line);
+        }
+      } else {
+        pre.textContent = data.content; // textContent: server data never touches innerHTML
+      }
       body.appendChild(pre);
+      if (Number.isInteger(focusLine) && focusLine > 0) {
+        requestAnimationFrame(() => pre.querySelector(`.preview-line[data-line="${focusLine}"]`)?.scrollIntoView({ block: "center" }));
+      }
     }
 
     /**
@@ -5931,7 +7003,7 @@
       $("#inline-file").style.maxHeight = `${(f * 100).toFixed(1)}vh`;
     }
 
-    async function openInlineFile(filePath) {
+    async function openInlineFile(filePath, focusLine) {
       // The dock only makes sense over an open chat; anywhere else, fall back
       // to the lightbox.
       if (screenState.name === null || screenState.mode !== "chat") {
@@ -5941,7 +7013,8 @@
       $("#inline-file").hidden = false;
       applyInlineFrac(inlineFileFrac());
       $("#inline-file-name").textContent = filePath.split("/").pop() || filePath;
-      $("#inline-file-path").textContent = filePath;
+      $("#inline-file-path").textContent = `${filePath}${focusLine ? ` · line ${focusLine}` : ""}`;
+      wirePreviewActions("#inline-file-browser", "#inline-file-reveal", null);
       const body = $("#inline-file-body");
       body.textContent = "";
       body.appendChild(el("div", "preview-status", "Loading…"));
@@ -5954,8 +7027,9 @@
           return;
         }
         $("#inline-file-name").textContent = data.name;
-        $("#inline-file-path").textContent = `${data.path} · ${fmtBytes(data.size)}`;
-        renderPreview(body, data); // the lightbox's renderer: text/image/pdf/binary
+        $("#inline-file-path").textContent = `${data.path}${focusLine ? `:${focusLine}` : ""} · ${fmtBytes(data.size)}`;
+        wirePreviewActions("#inline-file-browser", "#inline-file-reveal", data.path);
+        renderPreview(body, data, focusLine); // lightbox renderer + optional source line
       } catch (err) {
         body.textContent = "";
         body.appendChild(
@@ -6295,6 +7369,11 @@
     //     is not, so the space loses.
     const FILE_PATH_RE =
       /~?\/[\w.\-+@]+(?:\/[\w.\-+@]+)*\.[A-Za-z0-9]{1,8}|(?<![\w:/@.\-])[\w.\-+@]+(?:\/[\w.\-+@]+)+\.[A-Za-z0-9]{1,8}/g;
+    // A filename without a directory is only a CANDIDATE. The UI asks the hub
+    // to resolve it before adding link semantics, so this can be permissive
+    // without turning every domain or version string into a false action.
+    const BARE_FILE_RE =
+      /(?<![\w\/@.:-])[A-Za-z_][\w+@.-]*\.[A-Za-z][A-Za-z0-9]{0,7}(?![\w\/@.-])/g;
 
     /**
      * A RELATIVE path an agent named is relative to THAT agent's cwd — resolving
@@ -6903,6 +7982,10 @@
 
     async function boot() {
       setupMcpCommand();
+      loadUsageCollapsed();
+      $("#usage-toggle").addEventListener("click", () => {
+        setUsageCollapsed($("#usage-card").dataset.collapsed !== "true");
+      });
 
       // Composer wiring.
       $("#filter-clear").addEventListener("click", () => setFilter(state.filter));
@@ -6981,21 +8064,72 @@
       };
       chatInput.addEventListener("input", autogrow);
 
-      // ---- Attachments: drag-drop / paste files onto the composer ---------
-      // A dropped or pasted file is uploaded to the hub (POST /api/uploads),
-      // an inline "[📎 name]" token marks the spot until send, and on submit
-      // each token expands to the uploaded file's ABSOLUTE path so the agent
-      // can read it from disk.
-      const CHAT_PLACEHOLDER = chatInput.placeholder;
+      // ---- Attachments: paths first, bytes only when no path exists --------
+      // Files copied from the local file manager usually expose text/uri-list.
+      // In that case the composer references the ORIGINAL absolute path — no
+      // duplicate in ~/.switchboard. Only an in-memory clipboard image (a real
+      // screenshot, with no source path) is staged through POST /api/uploads.
+      const chatPlaceholder = () => screenState.name ? "Write a dispatch…" : "Write a message…";
       const attachments = new Map(); // "[📎 name]" -> absolute path on the hub
       let uploading = 0;
       const attachToken = (name) => `[📎 ${name}]`;
+
+      function uniqueAttachToken(name) {
+        let token = attachToken(name);
+        let n = 2;
+        while (attachments.has(token)) token = attachToken(`${name} · ${n++}`);
+        return token;
+      }
+
+      function pathsFromTransfer(data) {
+        if (!data) return [];
+        const raw = [];
+        for (const type of ["text/uri-list", "text/plain"]) {
+          try {
+            const value = data.getData(type);
+            if (value) raw.push(...value.split(/\r?\n/));
+          } catch { /* the browser may gate one clipboard flavour */ }
+        }
+        for (const file of Array.from(data.files || [])) {
+          // Electron exposes File.path; browsers generally do not. Honour it
+          // when present without depending on it.
+          if (typeof file.path === "string" && file.path.startsWith("/")) raw.push(file.path);
+          if (typeof file.webkitRelativePath === "string" && file.webkitRelativePath.startsWith("/")) raw.push(file.webkitRelativePath);
+        }
+        const paths = [];
+        for (const value of raw) {
+          const candidate = value.trim();
+          if (!candidate || candidate.startsWith("#")) continue;
+          const target = localFileTarget(candidate);
+          if (target && !paths.includes(target.path)) paths.push(target.path);
+        }
+        return paths;
+      }
+
+      function insertPathAttachments(paths) {
+        if (!paths.length) return;
+        let pos = chatInput.selectionStart ?? chatInput.value.length;
+        for (const filePath of paths) {
+          const name = filePath.split(/[\\/]/).filter(Boolean).pop() || filePath;
+          const token = uniqueAttachToken(name);
+          attachments.set(token, filePath);
+          const value = chatInput.value;
+          const at = Math.min(pos, value.length);
+          const before = at > 0 && !/\s/.test(value[at - 1]) ? " " : "";
+          const after = at < value.length && !/\s/.test(value[at]) ? " " : "";
+          chatInput.value = value.slice(0, at) + before + token + after + value.slice(at);
+          pos = at + before.length + token.length + after.length;
+        }
+        chatInput.setSelectionRange(pos, pos);
+        chatInput.dispatchEvent(new Event("input"));
+        chatInput.focus();
+      }
 
       function setUploading(delta) {
         uploading += delta;
         const busy = uploading > 0;
         $("#chat-send").disabled = busy;
-        chatInput.placeholder = busy ? "Uploading attachment…" : CHAT_PLACEHOLDER;
+        chatInput.placeholder = busy ? "Staging screenshot…" : chatPlaceholder();
       }
 
       async function uploadFile(file, name) {
@@ -7019,12 +8153,17 @@
         for (const file of list) {
           setUploading(+1);
           try {
-            // A pasted screenshot arrives with a generic name — stamp it.
+            // A pasted screenshot is an in-memory bitmap, not a copied file:
+            // there is no original path to reference, so stage that one case.
             const stamp = new Date().toTimeString().slice(0, 8).replace(/:/g, "");
-            const isPastedImage = file.name === "" || file.name === "image.png";
-            const name = isPastedImage ? `pasted-${stamp}.png` : file.name;
+            const isPastedImage = file.type.startsWith("image/") && (file.name === "" || file.name === "image.png");
+            if (!isPastedImage) {
+              toast(`The browser hid ${file.name || "this file"}'s original path. Use “Copy path” and paste it — no duplicate was created.`, "warn", 7500);
+              continue;
+            }
+            const name = `pasted-${stamp}.png`;
             const saved = await uploadFile(file, name);
-            const tok = attachToken(saved.name);
+            const tok = uniqueAttachToken(saved.name);
             attachments.set(tok, saved.path);
             const v = chatInput.value;
             const at = Math.min(pos, v.length);
@@ -7032,6 +8171,7 @@
             pos = at + tok.length;
             chatInput.setSelectionRange(pos, pos);
             chatInput.dispatchEvent(new Event("input")); // autogrow + menus
+            toast("Screenshot staged for 24h — copied files keep their original path.", "ok", 4500);
           } catch (err) {
             toast(`Attachment failed: ${err && err.message ? err.message : err}`, "warn");
           } finally {
@@ -7042,6 +8182,12 @@
       }
 
       chatInput.addEventListener("paste", (ev) => {
+        const paths = pathsFromTransfer(ev.clipboardData);
+        if (paths.length) {
+          ev.preventDefault();
+          insertPathAttachments(paths);
+          return;
+        }
         if (ev.clipboardData && ev.clipboardData.files && ev.clipboardData.files.length) {
           ev.preventDefault();
           attachFiles(ev.clipboardData.files);
@@ -7055,6 +8201,11 @@
       chatInput.addEventListener("drop", (ev) => {
         ev.preventDefault();
         chatInput.classList.remove("drag-over");
+        const paths = pathsFromTransfer(ev.dataTransfer);
+        if (paths.length) {
+          insertPathAttachments(paths);
+          return;
+        }
         if (ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files.length) {
           attachFiles(ev.dataTransfer.files);
         }
@@ -7337,8 +8488,8 @@
         ev.preventDefault();
         const name = screenState.name;
         if (uploading > 0) return; // attachments still in flight (send is disabled too)
-        // Expand each [📎 name] token to the uploaded file's absolute path —
-        // this is what actually reaches the agent (and the echo/history).
+        // Expand each [📎 name] token to its absolute path — normally the
+        // original file; only pathless clipboard screenshots use staging.
         let raw = chatInput.value;
         for (const [tok, p] of attachments) raw = raw.split(tok).join(p);
         const text = raw.trim();
@@ -7349,7 +8500,7 @@
         // So a "/…" is sent and we FLIP to the terminal, where its menu is: the
         // command actually does something you can see and finish, instead of
         // vanishing into a view that will never render it.
-        const isSlash = text.startsWith("/");
+        const isSlash = isSlashCommand(text);
         chatInput.disabled = true;
         // Echo the message into the chat AT ONCE — the agent may be mid-turn and
         // won't log it (so won't mirror it back) until it finishes, and a chat
@@ -7378,63 +8529,192 @@
         if (screenState.name) sendScreenInput(screenState.name, "\x1b");
       });
 
-      // ---- Dictation mic (Chrome's built-in speech recognition) ------------
-      // Zero backend: SpeechRecognition is the browser's own service (needs
-      // mic permission + network). Interim results land AT THE CARET, replacing
-      // the same span as they refine — the reference app's live-dictation feel.
-      // The button hides entirely where the API doesn't exist.
-      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      // ---- Dictation mic (MediaRecorder -> hub -> Groq Whisper) ------------
+      // This used Chrome's Web Speech API, which transcribes on GOOGLE's
+      // servers — and on this network that endpoint is unreachable, so the mic
+      // was simply dead ("speech service unreachable"). Now the page records
+      // the audio itself and the HUB transcribes it (POST /api/stt, a Groq
+      // Whisper proxy — see src/server/stt.ts). Click = record, click again =
+      // stop + transcribe; the text lands at the caret position captured when
+      // recording started. The button hides where recording isn't possible.
       const micBtn = $("#chat-mic");
-      if (!SR) {
+      if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder)) {
         micBtn.hidden = true;
       } else {
-        let rec = null;
-        let recBase = { before: "", after: "" };
-        const micCleanup = () => {
+        let rec = null; // { recorder, stream, chunks, base } while recording
+        let transcribing = false;
+        const micReset = () => {
           rec = null;
           micBtn.classList.remove("rec");
+          micBtn.disabled = false;
           micBtn.textContent = "🎤";
         };
-        micBtn.addEventListener("click", () => {
+        micBtn.addEventListener("click", async () => {
+          if (transcribing) return; // one at a time
           if (rec) {
-            rec.stop(); // onend does the cleanup
+            rec.recorder.stop(); // onstop transcribes + cleans up
             return;
           }
-          rec = new SR();
-          rec.lang = "pt-BR";
-          rec.continuous = true;
-          rec.interimResults = true;
+          let stream;
+          try {
+            stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          } catch (err) {
+            toast(
+              err && err.name === "NotAllowedError"
+                ? "Dictation: microphone permission denied — allow it in the address bar."
+                : `Dictation: could not open the microphone (${err && err.message ? err.message : err}).`,
+              "warn",
+            );
+            return;
+          }
+          const mime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+            ? "audio/webm;codecs=opus"
+            : MediaRecorder.isTypeSupported("audio/webm")
+              ? "audio/webm"
+              : ""; // let the browser pick (Safari → mp4)
+          const recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
           const pos = chatInput.selectionStart ?? chatInput.value.length;
-          recBase = { before: chatInput.value.slice(0, pos), after: chatInput.value.slice(pos) };
+          // Signal-level watchdog: an AnalyserNode samples the mic while
+          // recording. If the peak never leaves the noise floor, the device
+          // Chrome picked is muted/wrong — say THAT instead of the useless
+          // "no speech heard" (this exact failure happened: 1.4 KB of pure
+          // silence looked like a transcription bug).
+          let peak = 0;
+          let levelTimer = null;
+          let audioCtx = null;
+          let waveRaf = null;
+          const waveEl = $("#chat-wave");
+          try {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const analyser = audioCtx.createAnalyser();
+            analyser.fftSize = 512;
+            audioCtx.createMediaStreamSource(stream).connect(analyser);
+            const buf = new Uint8Array(analyser.fftSize);
+            levelTimer = setInterval(() => {
+              analyser.getByteTimeDomainData(buf);
+              for (const v of buf) {
+                const dev = Math.abs(v - 128) / 128; // 0..1 deviation from silence
+                if (dev > peak) peak = dev;
+              }
+              // Live feedback on the button: filled dot = signal, hollow = silence.
+              micBtn.textContent = peak > 0.02 ? "⏺" : "◌";
+            }, 150);
+            // Waveform (#40): recent peaks march left, voice-note style. Same
+            // analyser as the watchdog, own buffer, drawn on rAF; pushes are
+            // throttled so the wave scrolls at a readable pace. The interval
+            // above stays the watchdog authority — rAF pauses in a background
+            // tab and a mid-recording tab switch must not fake "pure silence".
+            const dpr = window.devicePixelRatio || 1;
+            waveEl.width = 120 * dpr;
+            waveEl.height = 30 * dpr;
+            const wctx = waveEl.getContext("2d");
+            const barColor =
+              getComputedStyle(document.documentElement).getPropertyValue("--danger").trim() || "#e05555";
+            const bars = new Array(24).fill(0);
+            const wbuf = new Uint8Array(analyser.fftSize);
+            let lastPush = 0;
+            const drawWave = (ts) => {
+              analyser.getByteTimeDomainData(wbuf);
+              let p = 0;
+              for (const v of wbuf) {
+                const dev = Math.abs(v - 128) / 128;
+                if (dev > p) p = dev;
+              }
+              if (ts - lastPush >= 50) {
+                lastPush = ts;
+                bars.push(Math.min(1, p * 3)); // speech peaks rarely pass ~0.3
+                bars.shift();
+              }
+              wctx.clearRect(0, 0, waveEl.width, waveEl.height);
+              wctx.fillStyle = barColor;
+              const bw = waveEl.width / bars.length;
+              for (let i = 0; i < bars.length; i++) {
+                const h = Math.max(2 * dpr, bars[i] * (waveEl.height - 6 * dpr));
+                wctx.fillRect(i * bw + bw * 0.2, (waveEl.height - h) / 2, bw * 0.6, h);
+              }
+              waveRaf = requestAnimationFrame(drawWave);
+            };
+            waveEl.hidden = false;
+            waveRaf = requestAnimationFrame(drawWave);
+          } catch { /* analyser is best-effort — recording works without it */ }
+          rec = {
+            recorder,
+            stream,
+            chunks: [],
+            base: { before: chatInput.value.slice(0, pos), after: chatInput.value.slice(pos) },
+            stopLevel: () => {
+              if (levelTimer) clearInterval(levelTimer);
+              if (waveRaf) cancelAnimationFrame(waveRaf);
+              waveEl.hidden = true;
+              if (audioCtx) audioCtx.close().catch(() => {});
+              return peak;
+            },
+          };
+          recorder.ondataavailable = (e) => {
+            if (e.data && e.data.size > 0) rec && rec.chunks.push(e.data);
+          };
+          recorder.onstop = async () => {
+            const { stream: s, chunks, base, stopLevel } = rec;
+            const heardPeak = stopLevel();
+            s.getTracks().forEach((t) => t.stop()); // release the mic (tab indicator off)
+            const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+            rec = null;
+            if (blob.size === 0) {
+              micReset();
+              toast("Dictation: nothing was recorded.", "warn");
+              return;
+            }
+            // The mic never left the noise floor: the recording is silence, so
+            // transcribing it is pointless — name the REAL problem instead.
+            if (heardPeak < 0.02) {
+              micReset();
+              toast(
+                "Dictation: the microphone captured pure silence — Chrome is likely on the wrong " +
+                  "input device. Check Windows Sound → Input, and the mic icon in the address bar.",
+                "warn",
+                10000,
+              );
+              return;
+            }
+            transcribing = true;
+            micBtn.classList.remove("rec");
+            micBtn.disabled = true;
+            micBtn.textContent = "…";
+            try {
+              const res = await fetch("/api/stt", {
+                method: "POST",
+                headers: { "content-type": blob.type || "audio/webm" },
+                body: blob,
+              });
+              const data = await res.json().catch(() => ({}));
+              if (!res.ok || !data.ok) {
+                toast(data.error || `Dictation failed (HTTP ${res.status}).`, "warn", 8000);
+                return;
+              }
+              if (!data.text) {
+                toast("Dictation: no speech heard.", "warn");
+                return;
+              }
+              // Insert at the caret captured when recording STARTED, with a
+              // space seam only where one is actually needed.
+              const seamL = base.before && !/\s$/.test(base.before) ? " " : "";
+              const seamR = base.after && !/^\s/.test(base.after) ? " " : "";
+              chatInput.value = base.before + seamL + data.text + seamR + base.after;
+              const caret = (base.before + seamL + data.text).length;
+              chatInput.setSelectionRange(caret, caret);
+              chatInput.focus();
+              autogrow();
+            } catch (err) {
+              toast(`Dictation failed: ${err && err.message ? err.message : err}`, "warn");
+            } finally {
+              transcribing = false;
+              micReset();
+            }
+          };
+          recorder.start();
           micBtn.classList.add("rec");
           micBtn.textContent = "⏺";
-          rec.onresult = (e) => {
-            let text = "";
-            for (const r of e.results) text += r[0].transcript;
-            chatInput.value = recBase.before + text + recBase.after;
-            const caret = (recBase.before + text).length;
-            chatInput.setSelectionRange(caret, caret);
-            autogrow();
-          };
-          rec.onerror = (e) => {
-            const why =
-              e.error === "not-allowed"
-                ? "microphone permission denied"
-                : e.error === "no-speech"
-                  ? "no speech heard"
-                  : e.error === "network"
-                    ? "speech service unreachable"
-                    : e.error;
-            toast(`Dictation: ${why}.`, "warn");
-          };
-          rec.onend = micCleanup; // fires after stop(), errors, or silence
-          try {
-            rec.start();
-            chatInput.focus();
-          } catch (err) {
-            toast(`Dictation could not start: ${err && err.message ? err.message : err}`, "warn");
-            micCleanup();
-          }
+          chatInput.focus();
         });
       }
       // ---- end dictation ---------------------------------------------------
@@ -7518,7 +8798,7 @@
       setInterval(refreshUsage, 60000);
       // A lighter tick just re-renders (the "updated Xs ago" label and the pace
       // colour, which shift as the window elapses) between the 60s fetches.
-      setInterval(() => { if (usageLimits.length) renderUsage(); }, 10000);
+      setInterval(() => { if (!$("#usage-card").hidden) renderUsage(); }, 10000);
       window.addEventListener("focus", refreshUsage);
     }
 
@@ -7565,6 +8845,12 @@
       <div class="lightbox-head">
         <span class="eyebrow" id="preview-name">file</span>
         <span class="preview-path" id="preview-path"></span>
+        <span class="preview-actions">
+          <button class="btn preview-browser" id="preview-browser" type="button" hidden
+            title="Open this file in a browser tab — an .html opens as the site, an image at full size">browser</button>
+          <button class="btn preview-reveal" id="preview-reveal" type="button" hidden
+            title="Show this file in its folder (Windows Explorer)">folder</button>
+        </span>
         <button class="dirpicker-close" id="preview-close" type="button"
           title="Close (Esc)">✕</button>
       </div>
