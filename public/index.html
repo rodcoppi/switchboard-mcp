@@ -46,49 +46,55 @@
        chat room's "everyone hears everything" would be a lie here.
        ===================================================================== */
     :root {
-      /* --- surfaces: cool near-black slate, raised panels, hairlines ------ */
-      --bg:          #0a0e13;
-      --bg-elev:     #111823;
-      --bg-elev-2:   #141c28;
-      --bg-inset:    #070b10;
-      --bg-hover:    #172232;
-      --border:      #232e3d;
-      --border-soft: #1a2431;
-      --border-strong: #354357;
+      /* --- surfaces: zinc, tone-on-tone (owner-approved restyle 01/08) ----
+         The room goes quiet: every surface is a step of the same near-black
+         zinc, elevation is a shade, borders are one uniform hairline. The
+         only colour left on screen is DATA — status LEDs, agent identity,
+         the mascot. shadcn temperament throughout. */
+      --bg:          #09090b;
+      --bg-elev:     #101013;
+      --bg-elev-2:   #141417;
+      --bg-inset:    #050506;
+      --bg-hover:    #17171a;
+      --border:      #26262a;
+      --border-soft: #1d1d20;
+      --border-strong: #3a3a40;
 
       /* --- text: soft white -> dim -> faint ------------------------------ */
-      --text:        #e6edf3;
-      --text-dim:    #8b98a8;
-      --text-faint:  #738091;
+      --text:        #f4f4f5;
+      --text-dim:    #a1a1aa;
+      --text-faint:  #70707a;
 
-      /* --- SIGNATURE: warm signal amber (the whole identity) -------------- */
-      --accent:        #f5a623;
-      --accent-bright: #ffbf5e;
-      --accent-fg:     #120b02;               /* text on filled amber */
-      --accent-wash:   rgba(245, 166, 35, 0.13);
-      --accent-line:   rgba(245, 166, 35, 0.42);
+      /* --- accent: quiet zinc "primary" (shadcn-style), no more amber ---- */
+      --accent:        #e4e4e7;
+      --accent-bright: #fafafa;
+      --accent-fg:     #09090b;               /* text on filled primary */
+      --accent-wash:   rgba(244, 244, 245, 0.06);
+      --accent-line:   rgba(244, 244, 245, 0.28);
 
-      /* --- selection: a cool "patched-in" cyan, deliberately NOT amber so the
-             selected card never reads like the gold leader card ------------- */
-      --selected:      #45b8e0;
-      --selected-line: rgba(69, 184, 224, 0.45);
-      --selected-wash: rgba(69, 184, 224, 0.14);
+      /* --- selection: a lighter step of the same zinc -------------------- */
+      --selected:      #d4d4d8;
+      --selected-line: rgba(212, 212, 216, 0.42);
+      --selected-wash: rgba(212, 212, 216, 0.06);
 
-      /* --- status LEDs (glowing lamps, not flat dots) -------------------- */
+      /* --- status LEDs: small true dots, no glow halos ------------------- */
       --online:      #3fb950;
-      --offline:     #5a6673;
-      --led-online:  0 0 0 3px rgba(63, 185, 80, 0.13), 0 0 9px 1px rgba(63, 185, 80, 0.55);
-      --led-offline: 0 0 0 3px rgba(90, 102, 115, 0.10);
-      --led-amber:   0 0 0 3px rgba(245, 166, 35, 0.14), 0 0 9px 1px rgba(245, 166, 35, 0.55);
+      --offline:     #52525b;
+      --led-online:  0 0 0 3px rgba(63, 185, 80, 0.10);
+      --led-offline: 0 0 0 3px rgba(82, 82, 91, 0.10);
+      --led-amber:   0 0 0 3px rgba(217, 161, 61, 0.12);
 
       /* --- semantic roles (kept as the JS/markup expect) ---------------- */
-      --unread-bg:   #f5a623;
-      --unread-fg:   #120b02;
-      --danger:      #e5534b;
-      --warn:        #f5a623;                  /* caution == the signal amber */
+      --unread-bg:   #fafafa;
+      --unread-fg:   #09090b;
+      --danger:      #e05252;
+      --warn:        #d9a13d;                  /* caution amber, muted */
       --ok:          #3fb950;
 
-      /* --- type: mono-forward console; sans reserved for operator voice -- */
+      /* --- type: UI speaks sans; mono is reserved for DATA (paths, times,
+             terminal, code) — the chique contrast of the zinc restyle ------ */
+      --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+        "Helvetica Neue", Arial, sans-serif;
       --mono: "JetBrains Mono", "SF Mono", "Cascadia Code", ui-monospace,
         SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
       --sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial,
@@ -106,15 +112,19 @@
 
       /* --- geometry ------------------------------------------------------ */
       --sidebar-w: 322px;
-      --radius: 7px;
-      --radius-sm: 5px;
-      --radius-lg: 12px;
+      --radius: 8px;
+      --radius-sm: 6px;
+      --radius-lg: 10px;
       --radius-pill: 999px;
       --shadow-popover: 0 20px 48px rgba(0, 0, 0, 0.48);
       --ease: cubic-bezier(0.4, 0, 0.2, 1);
     }
 
     * { box-sizing: border-box; }
+    /* Zinc restyle: interface chrome speaks sans; mono is DATA's voice. */
+    .btn, .agent-name, .agent-role, .eyebrow, .launcher-label, .launcher-title,
+    .composer-route, .agent-menu button, .chat-composer-context { font-family: var(--sans); }
+    .agent-name { font-weight: 600; letter-spacing: 0; }
     html, body { height: 100%; color-scheme: dark; }
     body {
       margin: 0;
@@ -349,9 +359,9 @@
       white-space: nowrap;
       transition: border-color 0.12s var(--ease), background 0.12s var(--ease), color 0.12s var(--ease), transform 0.12s var(--ease), box-shadow 0.12s var(--ease);
     }
-    .btn:hover { background: var(--bg-hover); border-color: var(--accent); transform: translateY(-1px); }
+    .btn:hover { background: var(--bg-hover); border-color: var(--border-strong); transform: translateY(-1px); }
     .btn:active { transform: translateY(0) scale(0.98); }
-    .btn-copy { color: var(--accent); font-weight: 600; }
+    .btn-copy { color: var(--text); font-weight: 600; }
 
     /* ------------------------------- Layout ------------------------------ */
     .layout { flex: 1 1 auto; display: flex; min-height: 0; }
@@ -812,8 +822,8 @@
 
     /* Card actions: one primary button + a compact menu. */
     .open-btn, .reopen-btn {
-      border-color: var(--accent-line);
-      color: var(--accent);
+      border-color: var(--border);
+      color: var(--text);
     }
     .open-btn:hover, .reopen-btn:hover {
       background: color-mix(in srgb, var(--accent) 13%, var(--bg-elev-2));
@@ -1745,10 +1755,9 @@
     .chat-turn:hover { background: color-mix(in srgb, var(--text) 2.2%, var(--bg)); }
     .chat-turn.user {
       flex-direction: row;
-      background: color-mix(in srgb, var(--accent) 4.5%, var(--bg));
-      box-shadow: inset 2px 0 0 var(--accent);
+      background: color-mix(in srgb, var(--text) 3%, var(--bg));
     }
-    .chat-turn.user:hover { background: color-mix(in srgb, var(--accent) 7%, var(--bg)); }
+    .chat-turn.user:hover { background: color-mix(in srgb, var(--text) 4.5%, var(--bg)); }
     /* Optimistic-echo lane: your just-sent message, same column as the thread,
        dimmed with a dashed bubble until the agent logs it for real. */
     .chat-pending {
@@ -1762,7 +1771,6 @@
     }
     .chat-pending:empty { display: none; }
     .chat-turn.pending { opacity: 0.72; }
-    .chat-turn.pending { box-shadow: inset 2px 0 0 var(--border-strong); }
     .chat-sending {
       font-family: var(--mono);
       font-size: var(--fs-eyebrow);
@@ -2356,7 +2364,7 @@
       padding: 8px 0 24px;
     }
     .preview-blocked .preview-status { padding-bottom: 4px; }
-    .preview-open, .preview-browser, .preview-reveal { border-color: var(--accent-line); color: var(--accent); }
+    .preview-open, .preview-browser, .preview-reveal { border-color: var(--border); color: var(--text); }
     .preview-open:hover:not(:disabled), .preview-browser:hover:not(:disabled),
     .preview-reveal:hover:not(:disabled) { background: var(--accent-wash); }
     /* Header furniture on both preview surfaces (lightbox head + inline dock
@@ -2522,12 +2530,12 @@
       gap: 8px;
       width: 100%;
       padding: 11px 12px 10px;
-      background: color-mix(in srgb, var(--group-color, var(--accent)) 5%, transparent);
+      background: transparent;
       border: none;
       border-bottom: 1px solid var(--border-soft);
       text-align: left;
       cursor: pointer;
-      font-family: var(--mono);
+      font-family: var(--sans);
       font-size: var(--fs-eyebrow);
       text-transform: uppercase;
       letter-spacing: 1.2px;
@@ -2562,20 +2570,17 @@
       padding: 0 4px 4px;
       border: 1px solid var(--border-soft);
       border-radius: 10px;
-      background: color-mix(in srgb, var(--group-color, var(--accent)) 2.5%, var(--bg-elev));
-      box-shadow:
-        inset 0 2px 0 color-mix(in srgb, var(--group-color, var(--accent)) 48%, transparent),
-        inset 0 1px 0 rgba(255,255,255,0.02);
+      /* One quiet surface, one uniform border — the group's colour lives ONLY
+         in its swatch dot (zinc restyle: the coloured inset top line and the
+         tinted wash were the "AI-looking" trim the owner asked to kill). */
+      background: var(--bg-elev);
       /* NO overflow:hidden here: it guillotined every popover that opens inside
          the box (the card's ⋯ menu showed 2 items in a 1-agent group). The only
          square-cornered full-bleed child is the head — it rounds ITSELF below. */
-      transition: border-color 0.16s var(--ease), background 0.16s var(--ease), box-shadow 0.16s var(--ease);
+      transition: border-color 0.16s var(--ease), background 0.16s var(--ease);
     }
     .rail-group:has(.group-head:hover) {
-      border-color: color-mix(in srgb, var(--group-color, var(--accent)) 28%, var(--border));
-      box-shadow:
-        inset 0 2px 0 color-mix(in srgb, var(--group-color, var(--accent)) 72%, transparent),
-        inset 0 1px 0 rgba(255,255,255,0.03);
+      border-color: var(--border);
     }
     .rail-group:last-child { margin-bottom: 8px; }
     .rail-group .group-head {
@@ -2586,10 +2591,10 @@
       border-radius: 9px 9px 0 0;
     }
     .rail-group .group-head > span:nth-child(2) {
-      color: color-mix(in srgb, var(--group-color, var(--text-dim)) 78%, var(--text));
+      color: var(--text-dim);
       font-weight: 600;
     }
-    .rail-group .group-head .caret { color: var(--group-color, var(--text-faint)); }
+    .rail-group .group-head .caret { color: var(--text-faint); }
     .group-head .caret { order: 0; }
     .group-head .group-swatch { order: 1; }
     .group-head .rail-group-name { order: 2; }
