@@ -2328,7 +2328,11 @@
       min-height: 0;
       display: flex;
       justify-content: center;
-      background: #070b10; /* xterm's own background (see the theme below) */
+      /* Darker than ANY chat surface: the chat is the room's paper sheet,
+         the terminal is the machine — the deepest black on screen, and the
+         grid sits inside a bezel instead of bleeding into the panel. */
+      background: #000;
+      padding: 14px 16px 16px;
     }
     .screen-term-wrap[hidden] { display: none; }
     .screen-term {
@@ -2336,8 +2340,10 @@
       min-height: 0;
       width: 100%;
       max-width: 880px;
-      padding: 5px 8px;
-      border-inline: 1px solid var(--border-soft);
+      padding: 8px 10px;
+      background: #050506; /* xterm's own background (see the theme below) */
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
     }
 
     /* The Groups panel — the body of its lightbox now. It used to drop under
@@ -5603,10 +5609,10 @@
         fontFamily: getComputedStyle(document.body).getPropertyValue("--mono").trim(),
         fontSize: SCREEN_FONT_PX,
         theme: {
-          background: "#070b10",
-          foreground: "#e6edf3",
-          cursor: "#f5a623",
-          selectionBackground: "rgba(245,166,35,0.3)",
+          background: "#050506",
+          foreground: "#f4f4f5",
+          cursor: "#e4e4e7",
+          selectionBackground: "rgba(212,212,216,0.25)",
         },
       });
       const fit = new FitAddon.FitAddon();
