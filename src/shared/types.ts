@@ -35,6 +35,15 @@ export interface Agent {
   cwd: string; // directory where the agent CLI was opened
   status: AgentStatus; // derived from tmux has-session during polling
   activity?: AgentActivity; // idle vs working, derived from the live pane (ephemeral)
+  /**
+   * The TUI's "Waiting for N background agents to finish" line, verbatim,
+   * while it shows — the turn LOOKS over ("esc to interrupt" is gone) but the
+   * harness is still waiting on spawned work, and the chat casca must say so
+   * instead of rendering the conversation as finished. Ephemeral, like
+   * activity; "" (or absent) when nothing is pending — the empty string is
+   * the CLEAR value because updateAgent ignores undefined keys.
+   */
+  waitingFor?: string;
   permission?: AgentPermission; // permission/plan mode from the TUI footer (ephemeral)
   goalActive?: boolean; // a /goal is active in the session (ephemeral)
   goalFor?: string; // how long the goal has run, e.g. "21m" (ephemeral)
