@@ -90,6 +90,10 @@
       --danger:      #e05252;
       --warn:        #d9a13d;                  /* caution amber, muted */
       --ok:          #3fb950;
+      /* Links announce themselves in blue — the one convention the zinc
+         tone-on-tone must not swallow (owner call: "links tem q ter cor"). */
+      --link:        #60a5fa;
+      --link-bright: #93c5fd;
 
       /* --- type: UI speaks sans; mono is reserved for DATA (paths, times,
              terminal, code) — the chique contrast of the zinc restyle ------ */
@@ -140,7 +144,8 @@
       overflow: hidden;
     }
     button { font-family: inherit; cursor: pointer; }
-    a { color: var(--accent); }
+    a { color: var(--link); }
+    a:hover { color: var(--link-bright); }
 
     /* Shared operator-panel eyebrow: uppercase mono, wide tracking. */
     .eyebrow {
@@ -1942,7 +1947,7 @@
     }
     .chat-bubble ul, .chat-bubble ol { margin: 0 0 8px; padding-left: 22px; }
     .chat-bubble li { margin: 2px 0; }
-    .chat-bubble a { color: var(--accent); }
+    .chat-bubble a { color: var(--link); }
     .chat-bubble blockquote {
       margin: 6px 0; padding: 2px 12px; border-left: 3px solid var(--border);
       color: var(--text-dim);
