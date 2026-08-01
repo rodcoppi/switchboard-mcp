@@ -1758,11 +1758,20 @@
     }
     .chat-turn:last-child { border-bottom: 0; }
     .chat-turn:hover { background: color-mix(in srgb, var(--text) 2.2%, var(--bg)); }
+    /* YOUR turns are a real card — one clear elevation step with a border and
+       its own corners — while the agent stays flat on the sheet. Form and
+       elevation carry the who-said-what, never colour (zinc restyle: the 3%
+       background mix was invisible on the near-black canvas and the owner
+       could not tell his own words from the agent's). */
     .chat-turn.user {
       flex-direction: row;
-      background: color-mix(in srgb, var(--text) 3%, var(--bg));
+      margin: 10px 12px;
+      background: var(--bg-elev-2);
+      border: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+      border-radius: var(--radius);
     }
-    .chat-turn.user:hover { background: color-mix(in srgb, var(--text) 4.5%, var(--bg)); }
+    .chat-turn.user:hover { background: var(--bg-hover); }
     /* Optimistic-echo lane: your just-sent message, same column as the thread,
        dimmed with a dashed bubble until the agent logs it for real. */
     .chat-pending {
@@ -2338,12 +2347,18 @@
     /* A file path an agent named, made clickable. Amber + dotted underline so it
        reads as "actionable" without shouting. */
     .path-link {
-      color: var(--accent);
-      border-bottom: 1px dotted var(--accent-line);
+      /* Clickable paths are LINKS to the reader — same blue as every anchor
+         (they are spans, so the global `a` rule never reaches them). */
+      color: var(--link);
+      border-bottom: 1px dotted color-mix(in srgb, var(--link) 55%, transparent);
       cursor: pointer;
       word-break: break-all;
     }
-    .path-link:hover { border-bottom-style: solid; background: var(--accent-wash); }
+    .path-link:hover {
+      border-bottom-style: solid;
+      color: var(--link-bright);
+      background: color-mix(in srgb, var(--link) 10%, transparent);
+    }
 
     .preview-path {
       font-family: var(--mono);
