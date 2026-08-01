@@ -1411,6 +1411,7 @@
     .screen-activity::before { content: ""; display: inline-block; width: 5px; height: 5px; margin-right: 5px; border-radius: 50%; background: currentColor; vertical-align: 1px; }
     .screen-activity.ready { color: var(--online); }
     .screen-activity.working { color: var(--accent); }
+    .screen-activity.waiting { color: var(--warn); }
     .screen-activity.offline { color: var(--text-faint); }
     .screen-hint {
       flex: 1 1 auto;
@@ -1855,6 +1856,12 @@
     }
     .chat-typing-dots span:nth-child(2) { animation-delay: 0.15s; }
     .chat-typing-dots span:nth-child(3) { animation-delay: 0.3s; }
+    .chat-typing-note {
+      font-family: var(--mono);
+      font-size: var(--fs-xs);
+      color: var(--text-faint);
+    }
+    .chat-typing-note:empty { display: none; }
     @keyframes typing-bounce {
       0%, 60%, 100% { transform: translateY(0); opacity: 0.5; }
       30% { transform: translateY(-4px); opacity: 1; }
@@ -5952,17 +5959,28 @@
       if (screenState.name === null || screenState.mode !== "chat") return off();
       const agent = state.agents.get(screenState.name);
       const working = !!(agent && agent.activity === "working");
-      const ind = view.querySelector(".chat-typing");
-      if (working && !ind) {
-        const box = el("div", "chat-typing");
+      // "Waiting for N background agents to finish": the turn's text is done
+      // but spawned work is still pending — without this the chat rendered
+      // the conversation as FINISHED while the terminal showed the wait.
+      const waiting = !working && !!(agent && agent.waitingFor);
+      const busy = working || waiting;
+      let ind = view.querySelector(".chat-typing");
+      if (busy && !ind) {
+        ind = el("div", "chat-typing");
         const dots = el("div", "chat-typing-dots");
         dots.append(el("span"), el("span"), el("span"));
-        box.append(buildChatAvatar(false, screenState.name), dots);
+        ind.append(buildChatAvatar(false, screenState.name), dots, el("span", "chat-typing-note"));
         const atBottom = view.scrollHeight - view.scrollTop - view.clientHeight < 120;
-        view.appendChild(box);
+        view.appendChild(ind);
         if (atBottom) view.scrollTop = view.scrollHeight;
-      } else if (!working && ind) {
+      } else if (!busy && ind) {
         ind.remove();
+        ind = null;
+      }
+      if (ind) {
+        // The literal TUI line while waiting; nothing while actively typing.
+        const note = ind.querySelector(".chat-typing-note");
+        if (note) note.textContent = waiting ? agent.waitingFor : "";
       }
     }
 
@@ -6071,7 +6089,9 @@
         ? "offline"
         : agent.activity === "working"
           ? "working"
-          : "ready";
+          : agent.waitingFor
+            ? "waiting"
+            : "ready";
       activity.textContent = stateLabel;
       activity.className = `screen-activity ${stateLabel}`;
     }

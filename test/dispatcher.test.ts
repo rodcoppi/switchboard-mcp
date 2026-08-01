@@ -596,6 +596,7 @@ describe("parsePaneStatus", () => {
     ].join("\n");
     expect(parsePaneStatus(pane)).toEqual({
       working: true,
+      waitingFor: null,
       permission: "bypass",
       goalActive: true,
       goalFor: "21m",
@@ -607,6 +608,7 @@ describe("parsePaneStatus", () => {
     const pane = "❯ \n  ⏵⏵ plan mode on (shift+tab to cycle) · ? for shortcuts";
     expect(parsePaneStatus(pane)).toEqual({
       working: false,
+      waitingFor: null,
       permission: "plan",
       goalActive: false,
       goalFor: null,
@@ -617,9 +619,35 @@ describe("parsePaneStatus", () => {
     const { parsePaneStatus } = await import("../src/server/dispatcher.js");
     expect(parsePaneStatus("just some output\n")).toEqual({
       working: false,
+      waitingFor: null,
       permission: null,
       goalActive: false,
       goalFor: null,
     });
+  });
+
+  it("reads the background-wait line — the state with no esc-to-interrupt", async () => {
+    const { parsePaneStatus } = await import("../src/server/dispatcher.js");
+    // Real frame: the turn's text is DONE (no "esc to interrupt"), the input
+    // is back, and the only clue that work is pending is the spinner line.
+    // Reading this as plain idle was the bug: the chat rendered the
+    // conversation as finished while the harness still waited.
+    const pane = [
+      "● Show — assim que a pesquisa terminar eu te chamo.",
+      "✻ Waiting for 1 background agent to finish",
+      "❯ ",
+      "  ⏵⏵ bypass permissions on (shift+tab to cycle) · ? for shortcuts",
+    ].join("\n");
+    const status = parsePaneStatus(pane);
+    expect(status.working).toBe(false);
+    expect(status.waitingFor).toBe("Waiting for 1 background agent to finish");
+  });
+
+  it("reads the plural background-wait and the tasks variant", async () => {
+    const { parsePaneStatus } = await import("../src/server/dispatcher.js");
+    expect(parsePaneStatus("✻ Waiting for 3 background agents to finish\n❯ ").waitingFor)
+      .toBe("Waiting for 3 background agents to finish");
+    expect(parsePaneStatus("✻ Waiting for 2 background tasks to finish\n❯ ").waitingFor)
+      .toBe("Waiting for 2 background tasks to finish");
   });
 });

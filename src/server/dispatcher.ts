@@ -62,6 +62,13 @@ export interface DispatcherTmux {
 
 export interface PaneStatus {
   working: boolean;
+  /**
+   * "Waiting for N background agents to finish", verbatim, when the TUI shows
+   * it. This state has NO "esc to interrupt" (the turn's text is done), so
+   * without it the poll reads a waiting agent as idle and the chat renders
+   * the conversation as finished while work is still pending.
+   */
+  waitingFor: string | null;
   permission: AgentPermission | null;
   goalActive: boolean;
   goalFor: string | null; // "21m" from "/goal active (21m)", or null
@@ -77,6 +84,8 @@ export interface PaneStatus {
  */
 export function parsePaneStatus(pane: string): PaneStatus {
   const working = /esc to interrupt/i.test(pane);
+  const waitMatch = pane.match(/Waiting for \d+ background (?:agents?|tasks?) to finish/i);
+  const waitingFor = waitMatch ? waitMatch[0] : null;
   const goalMatch = pane.match(/\/goal active(?:\s*\(([^)]+)\))?/i);
   const goalActive = goalMatch !== null;
   const goalFor = goalMatch && goalMatch[1] ? goalMatch[1].trim() : null;
@@ -92,7 +101,7 @@ export function parsePaneStatus(pane: string): PaneStatus {
           ? "plan"
           : "default";
   }
-  return { working, permission, goalActive, goalFor };
+  return { working, waitingFor, permission, goalActive, goalFor };
 }
 
 /** Back-compat shim: whether the CLI is mid-turn. */
@@ -354,7 +363,7 @@ export class Dispatcher {
       for (const { name, tmuxSession } of this.store.listAgents()) {
         const agent = this.store.getAgent(name);
         if (!agent || agent.status !== "online") continue;
-        let status: PaneStatus = { working: false, permission: null, goalActive: false, goalFor: null };
+        let status: PaneStatus = { working: false, waitingFor: null, permission: null, goalActive: false, goalFor: null };
         try {
           status = parsePaneStatus(await this.tmux.capturePane(tmuxSession, 30));
         } catch {
@@ -364,16 +373,21 @@ export class Dispatcher {
         // Only write on a real change (any field), so a steady agent is free.
         const permission = status.permission ?? agent.permission;
         const goalFor = status.goalActive ? status.goalFor ?? undefined : undefined;
+        // "" (not undefined) when nothing is pending: updateAgent IGNORES
+        // undefined keys, so undefined could set the field but never clear it.
+        const waitingFor = status.waitingFor ?? "";
         if (
           agent.activity === next &&
           agent.permission === permission &&
           !!agent.goalActive === status.goalActive &&
-          (agent.goalFor ?? undefined) === goalFor
+          (agent.goalFor ?? undefined) === goalFor &&
+          (agent.waitingFor ?? "") === waitingFor
         ) {
           continue;
         }
         const updated = this.store.updateAgent(name, {
           activity: next,
+          waitingFor,
           permission,
           goalActive: status.goalActive,
           goalFor,
