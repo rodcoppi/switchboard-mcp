@@ -1936,6 +1936,34 @@
     .chat-turn.user .chat-role { color: var(--accent); }
     .chat-role::after { content: " / entry"; color: var(--text-faint); font-weight: 400; }
     .chat-turn.user .chat-role::after { content: " / dispatch"; }
+    /* The hub's nudge line: system voice, flat on the sheet — never the
+       operator's elevated card. The peek unfolds the real message(s). */
+    .chat-turn.nudge .chat-bubble { color: var(--text-dim); }
+    .chat-turn.nudge .chat-role { color: var(--text-dim); }
+    .chat-turn.nudge .chat-role::after { content: " / nudge"; }
+    .chat-avatar.sb { font-family: var(--mono); color: var(--text-dim); }
+    .nudge-peek {
+      align-self: flex-start;
+      margin-top: 6px;
+      padding: 0;
+      background: none;
+      border: none;
+      font-family: var(--mono);
+      font-size: var(--fs-xs);
+      color: var(--link);
+      cursor: pointer;
+    }
+    .nudge-peek:hover { color: var(--link-bright); }
+    .nudge-quotes { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+    .nudge-quote {
+      background: var(--bg-elev);
+      border: 1px solid var(--border-soft);
+      border-radius: var(--radius-sm);
+      padding: 8px 10px;
+    }
+    .nudge-quote-head { font-family: var(--mono); font-size: var(--fs-xs); color: var(--text-faint); margin-bottom: 4px; }
+    .nudge-quote-body { color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; }
+    .nudge-quote-miss { font-family: var(--mono); font-size: var(--fs-xs); color: var(--text-faint); }
     .chat-time {
       font-family: var(--mono);
       font-size: var(--fs-eyebrow);
@@ -6186,8 +6214,104 @@
       return div;
     }
 
+    /**
+     * Recognizes the hub's own typed knock. Two shapes (dispatcher.ts):
+     * "[switchboard] N new message(s) from: a, b. Use the check_messages …"
+     * and the manual poke. Returns {count, senders} or null.
+     */
+    function parseNudgeLine(text) {
+      const m = /^\s*\[switchboard\] (\d+) new message\(s\) from: (.+?)\. Use the check_messages tool/.exec(text || "");
+      if (m) return { count: Number(m[1]), senders: m[2].split(",").map((x) => x.trim()).filter(Boolean) };
+      if (/^\s*\[switchboard\] Manual nudge from operator\./.test(text || "")) return { count: 0, senders: [] };
+      return null;
+    }
+
+    /**
+     * The message(s) behind a nudge, from a message pool: sent BY one of the
+     * nudge's senders TO this agent, at or before the nudge (60s of clock
+     * slack), the `count` most recent, oldest first for reading order.
+     */
+    function nudgeQuoteCandidates(nudge, agentName, ts, pool) {
+      const cutoff = ts ? Date.parse(ts) + 60000 : Infinity;
+      const senders = new Set(nudge.senders);
+      return pool
+        .filter((m) => senders.has(m.from) && m.to === agentName && Date.parse(m.createdAt) <= cutoff)
+        .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt))
+        .slice(-Math.max(nudge.count, 1));
+    }
+
+    /**
+     * A nudge turn: the SWITCHBOARD's voice, flat — not the operator's card
+     * (the line was typed into the pane by the hub, not by the human). The
+     * peek unfolds the actual message(s): they live in the hub's own store,
+     * the pane only ever carried the knock.
+     */
+    function buildNudgeTurn(nudge, it, agentName) {
+      const turn = el("div", "chat-turn nudge");
+      const avatar = el("div", "chat-avatar sb", "⇄");
+      const body = el("div", "chat-turn-body");
+      const meta = el("div", "chat-meta");
+      meta.appendChild(el("span", "chat-role", "switchboard"));
+      if (it.ts) {
+        const t = el("span", "chat-time", fmtTime(it.ts));
+        t.title = fmtFull(it.ts);
+        meta.appendChild(t);
+      }
+      const bubble = el("div", "chat-bubble");
+      bubble.textContent = String(it.text || "").replace(/^\s*\[switchboard\]\s*/, "");
+      body.append(meta, bubble);
+      if (nudge.senders.length) {
+        const who = nudge.senders.map(displayOf).join(", ");
+        const peek = el("button", "nudge-peek", `show what ${who} sent ▸`);
+        peek.type = "button";
+        const quotes = el("div", "nudge-quotes");
+        quotes.hidden = true;
+        peek.addEventListener("click", async () => {
+          if (!quotes.hidden) {
+            quotes.hidden = true;
+            peek.textContent = `show what ${who} sent ▸`;
+            return;
+          }
+          if (!quotes.childElementCount) {
+            let found = nudgeQuoteCandidates(nudge, agentName, it.ts, state.messages);
+            if (!found.length) {
+              // Older than the loaded feed window — ask the store directly.
+              try {
+                const res = await fetch(`/api/messages?agent=${encodeURIComponent(agentName)}&limit=500`);
+                const data = await res.json();
+                const pool = Array.isArray(data) ? data : data.messages || [];
+                found = nudgeQuoteCandidates(nudge, agentName, it.ts, pool);
+              } catch { /* the miss note below says it */ }
+            }
+            if (!found.length) {
+              quotes.appendChild(el("div", "nudge-quote-miss", "Message not in the loaded history."));
+            }
+            for (const m of found) {
+              const q = el("div", "nudge-quote");
+              q.append(
+                el("div", "nudge-quote-head", `${displayOf(m.from)} · ${fmtTime(m.createdAt)}`),
+                el("div", "nudge-quote-body", m.body),
+              );
+              quotes.appendChild(q);
+            }
+          }
+          quotes.hidden = false;
+          peek.textContent = `hide what ${who} sent ▾`;
+        });
+        body.append(peek, quotes);
+      }
+      turn.append(avatar, body);
+      turn.__text = it.text;
+      return turn;
+    }
+
     function buildChatTurn(it, agentName) {
       const isUser = it.kind === "user";
+      // The hub's typed knock is the SYSTEM's line, not the operator's words.
+      if (isUser) {
+        const nudge = parseNudgeLine(it.text || "");
+        if (nudge) return buildNudgeTurn(nudge, it, agentName);
+      }
       // An interrupt marker is a centred divider, not a bubble — the text came
       // from the CLI, not the operator (reference app's isInterruptMarker).
       if (isUser && /^\s*\[Request interrupted/i.test(it.text || "")) {

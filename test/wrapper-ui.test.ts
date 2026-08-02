@@ -206,3 +206,55 @@ describe("dictation waveform", () => {
     expect(script).toContain('micBtn.textContent = peak > 0.02 ? "⏺" : "◌"');
   });
 });
+
+describe("wrapper nudge peek", () => {
+  // The hub's typed knock ("[switchboard] N new message(s) from: …") renders
+  // as the SYSTEM's turn with a peek at the real message(s) from the store.
+  const parseNudgeLine = embeddedFunction<(text: string) => { count: number; senders: string[] } | null>("parseNudgeLine");
+  const nudgeQuoteCandidates = embeddedFunction<
+    (n: { count: number; senders: string[] }, agent: string, ts: string, pool: any[]) => any[]
+  >("nudgeQuoteCandidates");
+
+  it("recognizes the dispatcher's two nudge shapes and nothing else", () => {
+    expect(parseNudgeLine("[switchboard] 1 new message(s) from: ai-panorama. Use the check_messages tool to read them.")).toEqual({
+      count: 1,
+      senders: ["ai-panorama"],
+    });
+    expect(parseNudgeLine("[switchboard] 3 new message(s) from: alpha, beta. Use the check_messages tool to read them.")).toEqual({
+      count: 3,
+      senders: ["alpha", "beta"],
+    });
+    expect(parseNudgeLine("[switchboard] Manual nudge from operator. Use the check_messages tool to check your queue.")).toEqual({
+      count: 0,
+      senders: [],
+    });
+    expect(parseNudgeLine("bora almoçar?")).toBeNull();
+    expect(parseNudgeLine("")).toBeNull();
+  });
+
+  it("finds the messages behind the nudge: right sender, right recipient, before the knock", () => {
+    const pool = [
+      { from: "ai-panorama", to: "rodcoppi", body: "old", createdAt: "2026-08-01T11:00:00Z" },
+      { from: "ai-panorama", to: "rodcoppi", body: "the one", createdAt: "2026-08-01T12:14:00Z" },
+      { from: "ai-panorama", to: "OTHER", body: "wrong recipient", createdAt: "2026-08-01T12:14:00Z" },
+      { from: "someone-else", to: "rodcoppi", body: "wrong sender", createdAt: "2026-08-01T12:14:00Z" },
+      { from: "ai-panorama", to: "rodcoppi", body: "after the knock", createdAt: "2026-08-01T12:30:00Z" },
+    ];
+    const got = nudgeQuoteCandidates({ count: 1, senders: ["ai-panorama"] }, "rodcoppi", "2026-08-01T12:14:30Z", pool);
+    expect(got.map((m: any) => m.body)).toEqual(["the one"]);
+  });
+
+  it("returns the N most recent, oldest first, for a multi-message knock", () => {
+    const pool = [
+      { from: "a", to: "x", body: "m1", createdAt: "2026-08-01T10:00:00Z" },
+      { from: "a", to: "x", body: "m2", createdAt: "2026-08-01T10:05:00Z" },
+      { from: "a", to: "x", body: "m3", createdAt: "2026-08-01T10:10:00Z" },
+    ];
+    const got = nudgeQuoteCandidates({ count: 2, senders: ["a"] }, "x", "2026-08-01T10:11:00Z", pool);
+    expect(got.map((m: any) => m.body)).toEqual(["m2", "m3"]);
+  });
+
+  it("labels the turn as the switchboard's, never the operator's card", () => {
+    expect(html).toContain('.chat-turn.nudge .chat-role::after { content: " / nudge"; }');
+  });
+});
