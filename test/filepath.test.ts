@@ -79,3 +79,21 @@ describe("BARE_FILE_RE candidates", () => {
     expect(candidates("veja /home/rod/VacaGorda-IMPLEMENTACAO-FASE3.md")).toEqual([]);
   });
 });
+
+describe("FILE_PATH_RE vs URLs (the localhost mangling)", () => {
+  // "http://localhost:8737/gen/x.png" grew a path-link over "/gen/x.png"
+  // and the URL died split in half — the absolute branch had no lookbehind.
+  it("never matches the path part of a bare URL", () => {
+    expect(matches("abre em http://localhost:8737/generations/images/SUC_V001_WIP.png .")).toEqual([]);
+    expect(matches("veja https://example.com/docs/guide.html hoje")).toEqual([]);
+  });
+
+  it("still matches real paths in the same sentence as a URL", () => {
+    expect(matches("salvei /tmp/shot.png e subi em http://localhost:8737/x/shot.png")).toEqual(["/tmp/shot.png"]);
+  });
+
+  it("still matches paths after ordinary punctuation and at line start", () => {
+    expect(matches("(/etc/config/app.toml)")).toEqual(["/etc/config/app.toml"]);
+    expect(matches("~/notes/y.md no começo")).toEqual(["~/notes/y.md"]);
+  });
+});

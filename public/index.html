@@ -6825,7 +6825,8 @@
       while ((node = walker.nextNode())) {
         if (node.parentElement.closest("pre, a")) continue;
         FILE_PATH_RE.lastIndex = 0; // global regex: reset before each test
-        if (FILE_PATH_RE.test(node.nodeValue)) targets.push(node);
+        BARE_URL_RE.lastIndex = 0;
+        if (FILE_PATH_RE.test(node.nodeValue) || BARE_URL_RE.test(node.nodeValue)) targets.push(node);
       }
       for (const textNode of targets) {
         const frag = document.createDocumentFragment();
@@ -6911,18 +6912,24 @@
     // as the transcript). A relative path resolves against the agent whose chat
     // this is — its own cwd is what it was talking about.
     function appendTextWithPaths(container, text) {
-      FILE_PATH_RE.lastIndex = 0;
-      let last = 0;
-      for (const match of text.matchAll(FILE_PATH_RE)) {
-        const p = match[0];
-        if (match.index > last) container.appendChild(document.createTextNode(text.slice(last, match.index)));
-        const full = resolveAgentPath(p, screenState.name);
-        const link = el("span", "path-link", p); // shows what the agent wrote
-        wireLocalPathLink(link, full, null);
-        container.appendChild(link);
-        last = match.index + p.length;
-      }
-      if (last < text.length) container.appendChild(document.createTextNode(text.slice(last)));
+      forUrlRuns(
+        text,
+        (url) => container.appendChild(bareUrlAnchor(url)),
+        (seg) => {
+          FILE_PATH_RE.lastIndex = 0;
+          let last = 0;
+          for (const match of seg.matchAll(FILE_PATH_RE)) {
+            const p = match[0];
+            if (match.index > last) container.appendChild(document.createTextNode(seg.slice(last, match.index)));
+            const full = resolveAgentPath(p, screenState.name);
+            const link = el("span", "path-link", p); // shows what the agent wrote
+            wireLocalPathLink(link, full, null);
+            container.appendChild(link);
+            last = match.index + p.length;
+          }
+          if (last < seg.length) container.appendChild(document.createTextNode(seg.slice(last)));
+        },
+      );
     }
 
     // Bare filenames ("report.md") are ambiguous until the hub proves which
@@ -7549,13 +7556,53 @@
     //     "/a/b.md e tambem c/d.json" match as ONE path, swallowing the prose
     //     between them. A path with a real space in it is rare; eating sentences
     //     is not, so the space loses.
+    // The ABSOLUTE branch carries a lookbehind too: without it, the path part
+    // of any bare URL matched on its own ("http://localhost:8737/gen/x.png"
+    // grew a path-link over "/gen/x.png" and the URL died split in half).
     const FILE_PATH_RE =
-      /~?\/[\w.\-+@]+(?:\/[\w.\-+@]+)*\.[A-Za-z0-9]{1,8}|(?<![\w:/@.\-])[\w.\-+@]+(?:\/[\w.\-+@]+)+\.[A-Za-z0-9]{1,8}/g;
+      /(?<![\w:@.\-\/])~?\/[\w.\-+@]+(?:\/[\w.\-+@]+)*\.[A-Za-z0-9]{1,8}|(?<![\w:/@.\-])[\w.\-+@]+(?:\/[\w.\-+@]+)+\.[A-Za-z0-9]{1,8}/g;
     // A filename without a directory is only a CANDIDATE. The UI asks the hub
     // to resolve it before adding link semantics, so this can be permissive
     // without turning every domain or version string into a false action.
     const BARE_FILE_RE =
       /(?<![\w\/@.:-])[A-Za-z_][\w+@.-]*\.[A-Za-z][A-Za-z0-9]{0,7}(?![\w\/@.-])/g;
+
+    /**
+     * Bare URLs in prose (agents love wrapping them in backticks, which kills
+     * markdown autolinking): matched with trailing punctuation trimmed, so
+     * "abre em http://localhost:8737/x.png." links the URL, not the period.
+     */
+    const BARE_URL_RE = /https?:\/\/[^\s<>"'`]+/g;
+    function matchBareUrls(text) {
+      BARE_URL_RE.lastIndex = 0;
+      const out = [];
+      for (const m of String(text || "").matchAll(BARE_URL_RE)) {
+        let url = m[0].replace(/[.,;:!?]+$/, "");
+        if (!url.includes("(")) url = url.replace(/[)\]]+$/, "").replace(/[.,;:!?]+$/, "");
+        if (url.length > 10) out.push({ url, index: m.index });
+      }
+      return out;
+    }
+
+    /** Splits `text` into URL runs and plain runs, in order. */
+    function forUrlRuns(text, onUrl, onText) {
+      let cursor = 0;
+      for (const { url, index } of matchBareUrls(text)) {
+        if (index < cursor) continue;
+        if (index > cursor) onText(text.slice(cursor, index));
+        onUrl(url);
+        cursor = index + url.length;
+      }
+      if (cursor < text.length) onText(text.slice(cursor));
+    }
+
+    function bareUrlAnchor(url) {
+      const a = el("a", null, url);
+      a.href = url;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      return a;
+    }
 
     /**
      * A RELATIVE path an agent named is relative to THAT agent's cwd — resolving
@@ -7577,23 +7624,33 @@
      */
     function buildBodyWithPaths(body, fromAgent) {
       const el2 = el("div", "msg-body clamped");
-      FILE_PATH_RE.lastIndex = 0;
-      let last = 0;
-      for (const match of body.matchAll(FILE_PATH_RE)) {
-        const p = match[0];
-        if (match.index > last) el2.appendChild(document.createTextNode(body.slice(last, match.index)));
-        // A relative path belongs to the agent that WROTE the message.
-        const full = resolveAgentPath(p, fromAgent);
-        const link = el("span", "path-link", p);
-        link.title = `Preview ${full}`;
-        link.addEventListener("click", (ev) => {
-          ev.stopPropagation(); // the card click toggles the feed filter
-          openPreview(full);
-        });
-        el2.appendChild(link);
-        last = match.index + p.length;
-      }
-      if (last < body.length) el2.appendChild(document.createTextNode(body.slice(last)));
+      forUrlRuns(
+        body,
+        (url) => {
+          const a = bareUrlAnchor(url);
+          a.addEventListener("click", (ev) => ev.stopPropagation()); // never toggle the feed filter
+          el2.appendChild(a);
+        },
+        (seg) => {
+          FILE_PATH_RE.lastIndex = 0;
+          let last = 0;
+          for (const match of seg.matchAll(FILE_PATH_RE)) {
+            const p = match[0];
+            if (match.index > last) el2.appendChild(document.createTextNode(seg.slice(last, match.index)));
+            // A relative path belongs to the agent that WROTE the message.
+            const full = resolveAgentPath(p, fromAgent);
+            const link = el("span", "path-link", p);
+            link.title = `Preview ${full}`;
+            link.addEventListener("click", (ev) => {
+              ev.stopPropagation(); // the card click toggles the feed filter
+              openPreview(full);
+            });
+            el2.appendChild(link);
+            last = match.index + p.length;
+          }
+          if (last < seg.length) el2.appendChild(document.createTextNode(seg.slice(last)));
+        },
+      );
       return el2;
     }
 

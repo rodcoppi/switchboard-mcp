@@ -298,3 +298,31 @@ describe("feed reaction peek", () => {
     expect(src).toContain('m.readAt && m.to !== "operator"');
   });
 });
+
+describe("bare URL linkifier", () => {
+  // matchBareUrls closes over the page-level BARE_URL_RE const — rebuild the
+  // pair in one scope, the same way embeddedFunctionWith does for functions.
+  const reLiteral = script.match(/const BARE_URL_RE = (\/.+\/g);/)?.[1];
+  if (!reLiteral) throw new Error("BARE_URL_RE not found in the page");
+  let fnSrc = "";
+  source.forEachChild((node) => {
+    if (ts.isFunctionDeclaration(node) && node.name?.text === "matchBareUrls") {
+      fnSrc = script.slice(node.getStart(source), node.getEnd());
+    }
+  });
+  const matchBareUrls = new Function(
+    `const BARE_URL_RE = ${reLiteral};\n${fnSrc}\nreturn matchBareUrls;`,
+  )() as (text: string) => Array<{ url: string; index: number }>;
+
+  it("finds a localhost URL and trims trailing prose punctuation", () => {
+    expect(matchBareUrls("abre em http://localhost:8737/generations/images/X_V001.png .")).toEqual([
+      { url: "http://localhost:8737/generations/images/X_V001.png", index: 8 },
+    ]);
+    expect(matchBareUrls("veja (https://example.com/a/b.html) agora")[0].url).toBe("https://example.com/a/b.html");
+  });
+
+  it("leaves plain prose and file paths alone", () => {
+    expect(matchBareUrls("salvei /tmp/shot.png e pronto")).toEqual([]);
+    expect(matchBareUrls("")).toEqual([]);
+  });
+});
