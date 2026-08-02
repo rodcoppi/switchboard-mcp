@@ -258,3 +258,43 @@ describe("wrapper nudge peek", () => {
     expect(html).toContain('.chat-turn.nudge .chat-role::after { content: " / nudge"; }');
   });
 });
+
+describe("feed reaction peek", () => {
+  // "✓ read" answers WHEN; the reaction answers WHAT CAME OF IT — pulled from
+  // the recipient's transcript, never from new protocol messages (acks would
+  // be exactly the loop the etiquette forbids).
+  const pickReaction = embeddedFunction<
+    (items: any[], readAtMs: number, aliases: string[]) => any | null
+  >("pickReaction");
+  const readAt = Date.parse("2026-08-02T12:00:00Z");
+
+  it("prefers the entry that NAMES the sender (the narration line)", () => {
+    const items = [
+      { kind: "assistant", text: "unrelated progress note", ts: "2026-08-02T12:00:10Z" },
+      { kind: "assistant", text: "Switchboard: agent ai.panorama says post 4 is ready — I'll publish it.", ts: "2026-08-02T12:00:40Z" },
+    ];
+    const hit = pickReaction(items, readAt, ["ai-panorama", "ai.panorama"]);
+    expect(hit.text).toContain("I'll publish it");
+  });
+
+  it("falls back to the first assistant entry after the read", () => {
+    const items = [
+      { kind: "user", text: "[switchboard] 1 new message(s)…", ts: "2026-08-02T11:59:59Z" },
+      { kind: "assistant", text: "On it — reworking the draft now.", ts: "2026-08-02T12:00:20Z" },
+    ];
+    expect(pickReaction(items, readAt, ["someone"]).text).toContain("On it");
+  });
+
+  it("answers null outside the window — never a stale unrelated turn", () => {
+    const items = [
+      { kind: "assistant", text: "hours later, another topic", ts: "2026-08-02T14:00:00Z" },
+      { kind: "assistant", text: "before the read", ts: "2026-08-02T11:00:00Z" },
+    ];
+    expect(pickReaction(items, readAt, ["x"])).toBeNull();
+  });
+
+  it("only read agent-addressed rows get the peek", () => {
+    const src = script.match(/function buildMsgRow[\s\S]*?\n    }/)?.[0] ?? "";
+    expect(src).toContain('m.readAt && m.to !== "operator"');
+  });
+});
