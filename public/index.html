@@ -1954,6 +1954,7 @@
       cursor: pointer;
     }
     .nudge-peek:hover { color: var(--link-bright); }
+    .msg-reaction { margin-top: 0; margin-left: 10px; }
     .nudge-quotes { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
     .nudge-quote {
       background: var(--bg-elev);
@@ -7596,6 +7597,96 @@
       return el2;
     }
 
+    /**
+     * The recipient's REACTION to a read message: its first chat entry after
+     * readAt (5s clock slack, 30min window), preferring the entry that names
+     * the sender — the narration line the protocol asks for ("Switchboard:
+     * agent X says…"). Pure; `aliases` carries name + display name.
+     */
+    function pickReaction(items, readAtMs, aliases) {
+      const cutoff = readAtMs + 30 * 60000;
+      const after = (items || []).filter(
+        (it) =>
+          it.kind === "assistant" &&
+          it.text &&
+          it.ts &&
+          Date.parse(it.ts) >= readAtMs - 5000 &&
+          Date.parse(it.ts) <= cutoff,
+      );
+      if (!after.length) return null;
+      const low = aliases.map((a) => String(a || "").toLowerCase()).filter(Boolean);
+      return after.find((it) => {
+        const t = it.text.toLowerCase();
+        return low.some((a) => t.includes(a));
+      }) || after[0];
+    }
+
+    /**
+     * One-shot read of an agent's conversation: the SSE's FIRST event is the
+     * full parsed dump (last 200 items) — take it and hang up.
+     */
+    function fetchConversationOnce(name) {
+      return new Promise((resolve) => {
+        const sse = new EventSource(`/api/agents/${encodeURIComponent(name)}/conversation`);
+        const bail = setTimeout(() => { sse.close(); resolve(null); }, 6000);
+        sse.onmessage = (ev) => {
+          clearTimeout(bail);
+          sse.close();
+          let parsed = null;
+          try { parsed = JSON.parse(ev.data); } catch { /* resolve null below */ }
+          resolve(parsed && !parsed.error && Array.isArray(parsed.items) ? parsed.items : null);
+        };
+        sse.onerror = () => { clearTimeout(bail); sse.close(); resolve(null); };
+      });
+    }
+
+    /**
+     * "✓ read" answers WHEN; this answers WHAT CAME OF IT. A read message
+     * to an agent gets a "reaction ▸" toggle that unfolds the recipient's
+     * first chat entry after the read — no new protocol, no acks waking
+     * senders: the reaction already exists in the recipient's transcript,
+     * the feed just could not see it.
+     */
+    function attachReactionPeek(bubble, m) {
+      const foot = bubble.lastElementChild;
+      const peek = el("button", "nudge-peek msg-reaction", "reaction ▸");
+      peek.type = "button";
+      const quotes = el("div", "nudge-quotes");
+      quotes.hidden = true;
+      peek.addEventListener("click", async (ev) => {
+        ev.stopPropagation();
+        if (!quotes.hidden) {
+          quotes.hidden = true;
+          peek.textContent = "reaction ▸";
+          return;
+        }
+        if (!quotes.childElementCount) {
+          peek.textContent = "reaction …";
+          const items = await fetchConversationOnce(m.to);
+          const hit = items
+            ? pickReaction(items, Date.parse(m.readAt), [m.to, displayOf(m.to)])
+            : null;
+          if (!hit) {
+            quotes.appendChild(
+              el("div", "nudge-quote-miss", "No reaction visible in the recent chat — open the agent to see more."),
+            );
+          } else {
+            const q = el("div", "nudge-quote");
+            const text = hit.text.length > 700 ? hit.text.slice(0, 700) + " …" : hit.text;
+            q.append(
+              el("div", "nudge-quote-head", `${displayOf(m.to)} · ${fmtTime(hit.ts)}`),
+              el("div", "nudge-quote-body", text),
+            );
+            quotes.appendChild(q);
+          }
+        }
+        quotes.hidden = false;
+        peek.textContent = "reaction ▾";
+      });
+      if (foot) foot.appendChild(peek);
+      bubble.appendChild(quotes);
+    }
+
     function buildBubble(from, to, body, createdAt, flag, extra) {
       const bubble = el("div", "msg-bubble");
       bubble.appendChild(buildMetaLine(from, to, { extra }));
@@ -7612,7 +7703,11 @@
         ? Object.assign(el("span", "msg-read-flag read", "✓ read"), { title: fmtFull(m.readAt) })
         : el("span", "msg-read-flag pending", "• unread");
       row.appendChild(buildAvatar(m.from));
-      row.appendChild(buildBubble(m.from, m.to, m.body, m.createdAt, flag));
+      const bubble = buildBubble(m.from, m.to, m.body, m.createdAt, flag);
+      // Reaction peek: only for READ messages addressed to an AGENT (the
+      // operator has no transcript to look into).
+      if (m.readAt && m.to !== "operator") attachReactionPeek(bubble, m);
+      row.appendChild(bubble);
       return row;
     }
 
