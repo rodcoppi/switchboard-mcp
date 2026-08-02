@@ -4349,7 +4349,11 @@
       // A rebuild while a card's ⋯ menu is open closes it in the operator's
       // face — and the idle/working poll re-renders every ~2.5s, which made the
       // menu nearly unusable. Skip this pass; the next update lands in seconds.
-      if (container.querySelector(".agent-menu:not([hidden])")) return;
+      // Same guard for an ACTIVE rename/nickname input (card or group head):
+      // the rebuild destroyed it mid-typing, which read as "it lets me start
+      // typing and then kicks me out". The input only exists while editing —
+      // Enter/Esc/blur all remove it, so the rail never stays frozen.
+      if (container.querySelector(".agent-menu:not([hidden]), .agent-rename-input")) return;
       container.textContent = "";
       const agents = sortedAgents();
       if (agents.length === 0) {
