@@ -181,6 +181,12 @@ describe("wrapper reopen loading state", () => {
     // card itself, the dropdown rendered BEHIND the following group.
     expect(html).toContain(".agent-card.menu-open { z-index: 45; }");
   });
+
+  it("the rail rebuild spares an open menu AND an active rename input", () => {
+    // The activity poll re-renders every ~2.5s; a rebuild mid-typing
+    // destroyed the rename/nickname input ("it kicks me out").
+    expect(html).toContain('querySelector(".agent-menu:not([hidden]), .agent-rename-input")');
+  });
 });
 
 describe("dictation waveform", () => {
