@@ -1319,6 +1319,30 @@ export function createApiRouter(options: ApiOptions): express.Router {
     res.json({ ok: true, agent: toPublicAgent(agent) });
   });
 
+  // POST /api/agents/:name/cliargs — body {args: string}. REPLACES the CLI's
+  // standard launch argv for this agent (pinned --resume sessions, special
+  // channel flags). "" clears back to the standard argv. Operator-only
+  // surface, like bootcmd: never reachable over MCP.
+  router.post("/api/agents/:name/cliargs", (req, res) => {
+    const name = req.params.name;
+    if (!store.getAgent(name)) {
+      res.status(404).json({ ok: false, error: `Unknown agent: "${name}".` });
+      return;
+    }
+    const args = ((req.body ?? {}) as Record<string, unknown>).args;
+    if (typeof args !== "string" || args.length > 2000) {
+      res.status(400).json({
+        ok: false,
+        error: `Invalid body: expected {"args": "<cli args>"} (max 2000 chars; "" clears).`,
+      });
+      return;
+    }
+    const agent = store.updateAgent(name, { cliArgs: args.trim() });
+    bus.emit({ type: "agent_updated", payload: toPublicAgent(agent) });
+    log.info(`[api] agent ${name} launch args ${args.trim() ? "set" : "cleared"}.`);
+    res.json({ ok: true, agent: toPublicAgent(agent) });
+  });
+
   // POST /api/agents/:name/display — body {displayName: string}. Sets the
   // free-form name the UI shows (emoji welcome); empty string clears it back
   // to the kebab id. Unlike rename this works on a RUNNING agent: nothing in

@@ -44,6 +44,15 @@ export interface Agent {
    */
   bootCommand?: string;
   /**
+   * REPLACES the CLI's standard launch argv (e.g. `--resume <session-id>
+   * --dangerously-skip-permissions`) — for agents whose session must be
+   * pinned or that need special CLI flags. When set, the launcher parses it
+   * (shell-style quoting) and the reopen "continue" flag no longer applies:
+   * the operator owns the argv. Same rules as bootCommand: persisted,
+   * operator-set over REST only, never via MCP.
+   */
+  cliArgs?: string;
+  /**
    * Launch this agent at Windows login. A PERSISTED preference like `muted`:
    * the hub itself never acts on it — the machine's login hook reads
    * /api/agents and relaunches every agent carrying the flag (resuming its

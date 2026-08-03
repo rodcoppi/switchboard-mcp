@@ -370,3 +370,12 @@ describe("autostart toggle (rail menu)", () => {
     expect(html).toContain(".autostart-btn.autostarted { color: var(--ok); }");
   });
 });
+
+describe("launch args (rail menu)", () => {
+  it("the ⋯ menu offers launch args and both fields share the editor dialog", () => {
+    expect(script).toContain('"cliargs-btn": "⚙"');
+    expect(script).toContain('field: "cliArgs"');
+    expect(script).toContain('field: "bootCommand"');
+    expect(script).toContain("function showAgentFieldDialog");
+  });
+});

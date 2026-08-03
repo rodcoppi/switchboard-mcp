@@ -944,6 +944,23 @@ describe("REST as operator", () => {
     });
     expect(huge.status).toBe(400);
   });
+
+  it("cliargs via REST persists and clears — the pinned-argv knob", async () => {
+    await registerAgent("pinned");
+    const set = await fetch(api("/api/agents/pinned/cliargs"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ args: "--resume abc-123 --dangerously-skip-permissions" }),
+    });
+    expect(set.status).toBe(200);
+    expect(((await set.json()) as any).agent.cliArgs).toBe("--resume abc-123 --dangerously-skip-permissions");
+    const cleared = await fetch(api("/api/agents/pinned/cliargs"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ args: "" }),
+    });
+    expect(((await cleared.json()) as any).agent.cliArgs).toBe("");
+  });
 });
 
 describe("SSE events beyond message_created (PRD 10.1)", () => {
