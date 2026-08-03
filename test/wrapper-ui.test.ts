@@ -358,3 +358,15 @@ describe("drag-and-drop staging", () => {
     expect(html).toContain("#screen-chat.drop-target");
   });
 });
+
+describe("autostart toggle (rail menu)", () => {
+  it("every card's ⋯ menu offers the login-autostart toggle", () => {
+    expect(script).toContain('"autostart-btn": "⏻"');
+    expect(script).toContain("toggleAutostart(agent.name, !agent.autostart)");
+    expect(script).toContain('agent.autostart ? "autostart ✓" : "autostart"');
+  });
+
+  it("the enabled state reads as data (ok green), zinc grammar", () => {
+    expect(html).toContain(".autostart-btn.autostarted { color: var(--ok); }");
+  });
+});

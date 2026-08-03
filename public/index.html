@@ -924,6 +924,7 @@
     .mute-toggle:active, .nudge-btn:active, .open-btn:active, .reopen-btn:active, .rename-btn:active, .remove-btn:active, .menu-btn:active { transform: scale(0.96); }
     .menu-btn { padding: 3px 7px; letter-spacing: 1px; }
     .mute-toggle.muted { color: var(--warn); border-color: var(--accent-line); }
+    .autostart-btn.autostarted { color: var(--ok); }
     .remove-btn:hover { border-color: var(--danger); color: var(--danger); }
     /* A menu action that exists but is not available right now (rename on an
        online agent). Legible, not invisible: clicking it says what to do. */
@@ -4701,6 +4702,7 @@
       const MENU_ICONS = {
         "nudge-btn": "📣", "group-btn": "🚪", "codex-btn": "◆", "colour-btn": "🎨",
         "colour-reset-btn": "⭕", "mute-toggle": "🔇", "rename-btn": "✏️", "remove-btn": "🗑",
+        "autostart-btn": "⏻",
         "display-btn": "🏷", "leader-btn": "👑", "stop-btn": "⏹", "desc-btn": "📄",
         "folder-btn": "📂",
       };
@@ -4804,6 +4806,20 @@
           () => {
             closeMenus();
             toggleMute(agent.name, !agent.muted);
+          },
+        ),
+      );
+      // Launch at Windows login: a persisted preference the login hook reads.
+      menu.appendChild(
+        menuItem(
+          `autostart-btn${agent.autostart ? " autostarted" : ""}`,
+          agent.autostart ? "autostart ✓" : "autostart",
+          agent.autostart
+            ? "Launching at Windows login — click to disable"
+            : "Launch this agent at Windows login (resumes its conversation)",
+          () => {
+            closeMenus();
+            toggleAutostart(agent.name, !agent.autostart);
           },
         ),
       );
@@ -8029,6 +8045,31 @@
         toast(`${name} ${muted ? "muted" : "unmuted"}.`, "ok");
       } catch {
         toast("Network failure while changing mute.", "error");
+      }
+    }
+
+    async function toggleAutostart(name, autostart) {
+      try {
+        const res = await fetch(`/api/agents/${encodeURIComponent(name)}/autostart`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ autostart }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.ok) {
+          toast(data.error || `Failed to change autostart (HTTP ${res.status}).`, "error");
+          return;
+        }
+        mergeAgent(data.agent); // agent_updated will also arrive via SSE
+        renderAgents();
+        toast(
+          autostart
+            ? `${displayOf(name)} will launch at Windows login.`
+            : `${displayOf(name)} removed from the login autostart.`,
+          "ok",
+        );
+      } catch {
+        toast("Network failure while changing autostart.", "error");
       }
     }
 

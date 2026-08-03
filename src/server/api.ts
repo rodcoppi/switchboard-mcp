@@ -1270,6 +1270,30 @@ export function createApiRouter(options: ApiOptions): express.Router {
     res.json({ ok: true, agent: toPublicAgent(agent) });
   });
 
+  // POST /api/agents/:name/autostart — body {autostart: boolean}. Marks the
+  // agent for the LOGIN launcher: the Windows-login script reads /api/agents
+  // and relaunches every flagged agent (continue:true; a live session is
+  // never replaced). A persisted preference like `muted` — the hub itself
+  // never acts on the flag.
+  router.post("/api/agents/:name/autostart", (req, res) => {
+    const name = req.params.name;
+    if (!store.getAgent(name)) {
+      res.status(404).json({ ok: false, error: `Unknown agent: "${name}".` });
+      return;
+    }
+    const autostart = ((req.body ?? {}) as Record<string, unknown>).autostart;
+    if (typeof autostart !== "boolean") {
+      res
+        .status(400)
+        .json({ ok: false, error: `Invalid body: expected {"autostart": true|false}.` });
+      return;
+    }
+    const agent = store.updateAgent(name, { autostart });
+    bus.emit({ type: "agent_updated", payload: toPublicAgent(agent) });
+    log.info(`[api] agent ${name} autostart ${autostart ? "enabled" : "disabled"}.`);
+    res.json({ ok: true, agent: toPublicAgent(agent) });
+  });
+
   // POST /api/agents/:name/display — body {displayName: string}. Sets the
   // free-form name the UI shows (emoji welcome); empty string clears it back
   // to the kebab id. Unlike rename this works on a RUNNING agent: nothing in
