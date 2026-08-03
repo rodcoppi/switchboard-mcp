@@ -483,6 +483,9 @@ export function createLauncher(options: LauncherOptions): Launcher {
             claudeArgs,
             claudeBin: options.claudeBin,
             agentType: descriptor.type,
+            // Operator-set project setup (REST only, never MCP) — preserved
+            // by re-register like role/group, so a reopen keeps it.
+            bootCommand: agent.bootCommand,
           }),
         );
       } catch (err) {

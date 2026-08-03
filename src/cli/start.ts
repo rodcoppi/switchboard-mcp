@@ -125,17 +125,32 @@ export function buildAgentCommand(input: {
   claudeArgs?: string | string[];
   claudeBin?: string;
   agentType?: AgentType;
+  /** Setup shell line to run first: `<boot> && exec <cli>` (exports carry). */
+  bootCommand?: string;
 }): string[] {
   const extraArgs = Array.isArray(input.claudeArgs)
     ? input.claudeArgs
     : parseClaudeArgs(input.claudeArgs);
-  return [
+  const base = [
     "env",
     `SWITCHBOARD_AGENT_NAME=${input.name}`,
     `SWITCHBOARD_AGENT_TOKEN=${input.token}`,
     input.claudeBin ?? agentTypeDescriptor(input.agentType).bin,
     ...extraArgs,
   ];
+  const boot = input.bootCommand?.trim();
+  if (!boot) return base; // the standard argv, byte-identical to always
+  // One shell line: the setup runs first IN THE SAME SHELL (its exports
+  // carry into the CLI), and `exec` replaces the shell so the pane process
+  // tree ends at the CLI exactly as in the standard boot. A failing setup
+  // (non-zero) stops the chain: the session dies at birth and the launcher
+  // reports it, instead of an agent running in a half-prepared project.
+  return ["sh", "-c", `${boot} && exec ${base.map(shq).join(" ")}`];
+}
+
+/** POSIX single-quote escaping — the one safe way to splice argv into sh. */
+function shq(arg: string): string {
+  return `'${arg.replace(/'/g, `'\\''`)}'`;
 }
 
 /**
