@@ -34,6 +34,13 @@ export interface Agent {
   tmuxSession: string; // e.g. "sb-alpha" (prefix + name)
   cwd: string; // directory where the agent CLI was opened
   status: AgentStatus; // derived from tmux has-session during polling
+  /**
+   * Launch this agent at Windows login. A PERSISTED preference like `muted`:
+   * the hub itself never acts on it — the machine's login hook reads
+   * /api/agents and relaunches every agent carrying the flag (resuming its
+   * conversation; a live session is never replaced).
+   */
+  autostart?: boolean;
   activity?: AgentActivity; // idle vs working, derived from the live pane (ephemeral)
   /**
    * The TUI's "Waiting for N background agents to finish" line, verbatim,

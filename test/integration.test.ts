@@ -889,6 +889,36 @@ describe("REST as operator", () => {
     expect(sent.ok).toBe(true);
     expect(sent.delivery).toBe("queued_muted");
   }, 15_000);
+
+  it("autostart via REST persists on the agent and rides GET /api/agents", async () => {
+    // The login hook launches whoever carries the flag — the record is the
+    // list, so the flag must survive the round trip and show publicly.
+    await registerAgent("boot-me");
+    const on = await fetch(api("/api/agents/boot-me/autostart"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ autostart: true }),
+    });
+    expect(on.status).toBe(200);
+    expect(((await on.json()) as any).agent.autostart).toBe(true);
+
+    const listed = (await (await fetch(api("/api/agents"))).json()) as any[];
+    expect(listed.find((a) => a.name === "boot-me").autostart).toBe(true);
+
+    const off = await fetch(api("/api/agents/boot-me/autostart"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ autostart: false }),
+    });
+    expect(((await off.json()) as any).agent.autostart).toBe(false);
+
+    const bad = await fetch(api("/api/agents/boot-me/autostart"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ autostart: "yes" }),
+    });
+    expect(bad.status).toBe(400);
+  });
 });
 
 describe("SSE events beyond message_created (PRD 10.1)", () => {
