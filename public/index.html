@@ -1955,6 +1955,13 @@
     }
     .nudge-peek:hover { color: var(--link-bright); }
     .msg-reaction { margin-top: 0; margin-left: 10px; }
+    /* A drop zone announcing itself — inset dashes, zinc grammar, no glow. */
+    #screen-chat.drop-target,
+    #chat-composer.drop-target,
+    #screen-term-wrap.drop-target {
+      outline: 2px dashed var(--border-strong);
+      outline-offset: -6px;
+    }
     .nudge-quotes { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
     .nudge-quote {
       background: var(--bg-elev);
@@ -8490,15 +8497,14 @@
         for (const file of list) {
           setUploading(+1);
           try {
-            // A pasted screenshot is an in-memory bitmap, not a copied file:
-            // there is no original path to reference, so stage that one case.
+            // No original path in the DataTransfer (browsers hide it): STAGE
+            // the bytes. This used to refuse everything but pasted
+            // screenshots ("use Copy path") — the owner wants the real
+            // terminal's contract: dragged in means it goes up.
             const stamp = new Date().toTimeString().slice(0, 8).replace(/:/g, "");
-            const isPastedImage = file.type.startsWith("image/") && (file.name === "" || file.name === "image.png");
-            if (!isPastedImage) {
-              toast(`The browser hid ${file.name || "this file"}'s original path. Use “Copy path” and paste it — no duplicate was created.`, "warn", 7500);
-              continue;
-            }
-            const name = `pasted-${stamp}.png`;
+            const name = file.name && file.name !== "image.png"
+              ? file.name
+              : `pasted-${stamp}.png`;
             const saved = await uploadFile(file, name);
             const tok = uniqueAttachToken(saved.name);
             attachments.set(tok, saved.path);
@@ -8508,7 +8514,7 @@
             pos = at + tok.length;
             chatInput.setSelectionRange(pos, pos);
             chatInput.dispatchEvent(new Event("input")); // autogrow + menus
-            toast("Screenshot staged for 24h — copied files keep their original path.", "ok", 4500);
+            toast(`${saved.name} staged for 24h — a COPIED file keeps its original path instead.`, "ok", 4500);
           } catch (err) {
             toast(`Attachment failed: ${err && err.message ? err.message : err}`, "warn");
           } finally {
@@ -8547,6 +8553,65 @@
           attachFiles(ev.dataTransfer.files);
         }
       });
+      // Drop zones beyond the textarea. In the real terminal, dragging a file
+      // in "just works" — here, a drop outside the tiny composer NAVIGATED
+      // the browser to the file and killed the dashboard. The window-level
+      // guard makes a stray drop inert everywhere; the two zones make it
+      // USEFUL: chat drops attach (path or staged bytes, same as the
+      // composer), terminal drops upload and TYPE the staged path into the
+      // pane — which is exactly what a real terminal does with a drag.
+      function wireDropZone(node, onDrop) {
+        node.addEventListener("dragover", (ev) => {
+          ev.preventDefault();
+          node.classList.add("drop-target");
+        });
+        node.addEventListener("dragleave", (ev) => {
+          if (!node.contains(ev.relatedTarget)) node.classList.remove("drop-target");
+        });
+        node.addEventListener("drop", (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          node.classList.remove("drop-target");
+          onDrop(ev);
+        });
+      }
+
+      function composerDrop(ev) {
+        const paths = pathsFromTransfer(ev.dataTransfer);
+        if (paths.length) {
+          insertPathAttachments(paths);
+          return;
+        }
+        if (ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files.length) {
+          attachFiles(ev.dataTransfer.files);
+        }
+      }
+
+      async function terminalDrop(ev) {
+        if (!screenState.name || screenState.mode !== "terminal") return;
+        const typePath = (p) => sendScreenInput(screenState.name, `${p} `);
+        const paths = pathsFromTransfer(ev.dataTransfer);
+        if (paths.length) {
+          for (const p of paths) typePath(p);
+          return;
+        }
+        for (const file of Array.from((ev.dataTransfer && ev.dataTransfer.files) || [])) {
+          try {
+            const saved = await uploadFile(file, file.name || "dropped.bin");
+            typePath(saved.path);
+            toast(`${saved.name} staged — path typed into the terminal.`, "ok", 4500);
+          } catch (err) {
+            toast(`Upload failed: ${err && err.message ? err.message : err}`, "warn");
+          }
+        }
+      }
+
+      wireDropZone($("#screen-chat"), composerDrop);
+      wireDropZone($("#chat-composer"), composerDrop);
+      wireDropZone($("#screen-term-wrap"), terminalDrop);
+      // Anywhere else: a drop must never navigate the dashboard away.
+      window.addEventListener("dragover", (ev) => ev.preventDefault());
+      window.addEventListener("drop", (ev) => ev.preventDefault());
       // ---- end attachments -------------------------------------------------
 
       // ---- Slash-command autocomplete (composer) --------------------------
