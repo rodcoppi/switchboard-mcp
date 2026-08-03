@@ -472,7 +472,12 @@ export function createLauncher(options: LauncherOptions): Launcher {
       // The adapter owns the argv shape, so codex gets `resume --last` +
       // bypass-after-the-subcommand while claude gets `-c` + its own bypass —
       // no branching here, and the same rules `switchboard wire` applies.
-      const claudeArgs = descriptor.buildArgs({ continueConversation: withContinue });
+      // UNLESS the operator pinned custom launch args on the record (a
+      // `--resume <id>` master session, special channel flags): then those
+      // ARE the argv, verbatim, and the continue flag does not apply.
+      const claudeArgs = agent.cliArgs?.trim()
+        ? agent.cliArgs
+        : descriptor.buildArgs({ continueConversation: withContinue });
       try {
         await tmux.newSession(
           session,
@@ -520,9 +525,16 @@ export function createLauncher(options: LauncherOptions): Launcher {
         );
         await createSession(false);
         if (!(await settled())) {
+          // Custom launch args have their own likeliest failure: the session
+          // they pin (--resume <id>) is open somewhere else — blaming PATH
+          // would send the operator down the wrong road.
+          const customHint = agent.cliArgs?.trim()
+            ? `This agent launches with CUSTOM args (${agent.cliArgs.trim()}); if they pin a ` +
+              `--resume session, it may be open elsewhere — close it there and launch again. `
+            : `Is the "${descriptor.bin}" binary on the Hub's PATH? `;
           throw new LaunchError(
             `The tmux session "${session}" died right after opening, even without ` +
-              `conversation resume (${descriptor.continueArgHint}). Is the "${descriptor.bin}" binary on the Hub's PATH? ` +
+              `conversation resume (${descriptor.continueArgHint}). ${customHint}` +
               `The registration stays in the Hub; check ~/.switchboard/logs/hub.log, ` +
               `fix the environment and launch again.`,
             500,

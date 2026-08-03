@@ -4715,7 +4715,7 @@
       const MENU_ICONS = {
         "nudge-btn": "📣", "group-btn": "🚪", "codex-btn": "◆", "colour-btn": "🎨",
         "colour-reset-btn": "⭕", "mute-toggle": "🔇", "rename-btn": "✏️", "remove-btn": "🗑",
-        "autostart-btn": "⏻", "bootcmd-btn": "🛠",
+        "autostart-btn": "⏻", "bootcmd-btn": "🛠", "cliargs-btn": "⚙",
         "display-btn": "🏷", "leader-btn": "👑", "stop-btn": "⏹", "desc-btn": "📄",
         "folder-btn": "📂",
       };
@@ -4887,7 +4887,36 @@
             : `Set a setup command to run before "${agent.name}"'s CLI on every launch`,
           () => {
             closeMenus();
-            showBootCmdDialog(agent);
+            showAgentFieldDialog(agent, {
+              title: "boot command",
+              field: "bootCommand",
+              endpoint: "bootcmd",
+              bodyKey: "command",
+              hint: "runs before the CLI, same shell — exports carry; failure aborts the launch",
+              placeholder: ". ~/.config/myproj/env && docker compose -f ~/proj/compose.yml up -d",
+            });
+          },
+        ),
+      );
+      // Launch args: REPLACE the CLI's standard argv (pinned --resume master,
+      // special channel flags). Operator-set; continue no longer applies.
+      menu.appendChild(
+        menuItem(
+          "cliargs-btn",
+          agent.cliArgs ? "launch args ✓" : "launch args…",
+          agent.cliArgs
+            ? `Custom CLI argv on every launch: ${agent.cliArgs.slice(0, 80)}`
+            : `Replace "${agent.name}"'s CLI launch arguments (e.g. --resume <session-id>)`,
+          () => {
+            closeMenus();
+            showAgentFieldDialog(agent, {
+              title: "launch args",
+              field: "cliArgs",
+              endpoint: "cliargs",
+              bodyKey: "args",
+              hint: "replaces the standard CLI argv on every launch — reopen's continue no longer applies",
+              placeholder: "--resume <session-id> --dangerously-skip-permissions",
+            });
           },
         ),
       );
@@ -8076,20 +8105,26 @@
       }
     }
 
-    function showBootCmdDialog(agent) {
+    /**
+     * Editor for one operator-set launch field (boot command / launch args):
+     * same lightbox, same endpoints shape — {bodyKey: value}, "" clears.
+     */
+    function showAgentFieldDialog(agent, opts) {
       const box = $("#bootcmd-box");
       const input = $("#bootcmd-input");
-      $("#bootcmd-title").textContent = `${displayOf(agent)} — boot command`;
-      input.value = agent.bootCommand || "";
+      $("#bootcmd-title").textContent = `${displayOf(agent)} — ${opts.title}`;
+      $("#bootcmd-hint").textContent = opts.hint;
+      input.placeholder = opts.placeholder;
+      input.value = agent[opts.field] || "";
       box.hidden = false;
       input.focus();
       const close = () => { box.hidden = true; cleanup(); };
-      const save = async (command) => {
+      const save = async (value) => {
         try {
-          const res = await fetch(`/api/agents/${encodeURIComponent(agent.name)}/bootcmd`, {
+          const res = await fetch(`/api/agents/${encodeURIComponent(agent.name)}/${opts.endpoint}`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ command }),
+            body: JSON.stringify({ [opts.bodyKey]: value }),
           });
           const data = await res.json().catch(() => ({}));
           if (!res.ok || !data.ok) {
@@ -8098,10 +8133,10 @@
           }
           mergeAgent(data.agent);
           renderAgents();
-          toast(command ? "Boot command saved — used on the next launch." : "Boot command cleared — standard boot.", "ok");
+          toast(value ? `${opts.title} saved — used on the next launch.` : `${opts.title} cleared — standard launch.`, "ok");
           close();
         } catch {
-          toast("Network failure while saving the boot command.", "error");
+          toast(`Network failure while saving the ${opts.title}.`, "error");
         }
       };
       const onSave = () => save(input.value.trim());
@@ -9360,7 +9395,7 @@
         <button class="dirpicker-close" id="bootcmd-close" type="button" title="Close (Esc)">✕</button>
       </div>
       <div class="bootcmd-body">
-        <label class="launcher-label" for="bootcmd-input">runs before the CLI, same shell — exports carry; failure aborts the launch</label>
+        <label class="launcher-label" id="bootcmd-hint" for="bootcmd-input"></label>
         <textarea id="bootcmd-input" class="bootcmd-input" rows="3" spellcheck="false"
           placeholder=". ~/.config/myproj/env && docker compose -f ~/proj/compose.yml up -d"></textarea>
         <div class="bootcmd-actions">
