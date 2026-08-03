@@ -332,3 +332,29 @@ describe("bare URL linkifier", () => {
     expect(matchBareUrls("")).toEqual([]);
   });
 });
+
+describe("drag-and-drop staging", () => {
+  // The real terminal's contract: dragged in means it goes up. A drop used
+  // to be refused unless it was a pasted screenshot, and outside the
+  // composer it NAVIGATED the browser away from the dashboard.
+  it("any dragged file stages — the copy-path refusal is gone", () => {
+    expect(script).not.toContain("Use “Copy path” and paste it");
+    expect(script).toContain("dragged in means it goes up");
+  });
+
+  it("stray drops never navigate the dashboard away", () => {
+    expect(script).toContain('window.addEventListener("dragover", (ev) => ev.preventDefault())');
+    expect(script).toContain('window.addEventListener("drop", (ev) => ev.preventDefault())');
+  });
+
+  it("the terminal drop types the staged path into the pane", () => {
+    const src = script.match(/async function terminalDrop[\s\S]*?\n      }/)?.[0] ?? "";
+    expect(src).toContain("uploadFile(file");
+    expect(src).toContain("sendScreenInput(screenState.name");
+  });
+
+  it("chat, composer and terminal announce themselves as drop zones", () => {
+    expect(html).toContain("#screen-term-wrap.drop-target");
+    expect(html).toContain("#screen-chat.drop-target");
+  });
+});
