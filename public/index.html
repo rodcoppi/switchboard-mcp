@@ -925,6 +925,19 @@
     .menu-btn { padding: 3px 7px; letter-spacing: 1px; }
     .mute-toggle.muted { color: var(--warn); border-color: var(--accent-line); }
     .autostart-btn.autostarted { color: var(--ok); }
+    .bootcmd-body { display: flex; flex-direction: column; gap: 8px; padding: 14px 16px 16px; }
+    .bootcmd-input {
+      font-family: var(--mono);
+      font-size: var(--fs-xs);
+      color: var(--text);
+      background: var(--bg-inset);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 8px 10px;
+      resize: vertical;
+    }
+    .bootcmd-input:focus { outline: none; border-color: var(--border-strong); }
+    .bootcmd-actions { display: flex; justify-content: flex-end; gap: 8px; }
     .remove-btn:hover { border-color: var(--danger); color: var(--danger); }
     /* A menu action that exists but is not available right now (rename on an
        online agent). Legible, not invisible: clicking it says what to do. */
@@ -4702,7 +4715,7 @@
       const MENU_ICONS = {
         "nudge-btn": "📣", "group-btn": "🚪", "codex-btn": "◆", "colour-btn": "🎨",
         "colour-reset-btn": "⭕", "mute-toggle": "🔇", "rename-btn": "✏️", "remove-btn": "🗑",
-        "autostart-btn": "⏻",
+        "autostart-btn": "⏻", "bootcmd-btn": "🛠",
         "display-btn": "🏷", "leader-btn": "👑", "stop-btn": "⏹", "desc-btn": "📄",
         "folder-btn": "📂",
       };
@@ -4860,6 +4873,21 @@
           () => {
             closeMenus();
             showInfoDialog(`${displayOf(agent)} — description`, agent.role || "");
+          },
+        ),
+      );
+      // Boot command: the project's setup line, run before the CLI on every
+      // launch (operator-set; an agent can never write its own boot code).
+      menu.appendChild(
+        menuItem(
+          "bootcmd-btn",
+          agent.bootCommand ? "boot command ✓" : "boot command…",
+          agent.bootCommand
+            ? `Runs before the CLI on every launch: ${agent.bootCommand.slice(0, 80)}`
+            : `Set a setup command to run before "${agent.name}"'s CLI on every launch`,
+          () => {
+            closeMenus();
+            showBootCmdDialog(agent);
           },
         ),
       );
@@ -8048,6 +8076,49 @@
       }
     }
 
+    function showBootCmdDialog(agent) {
+      const box = $("#bootcmd-box");
+      const input = $("#bootcmd-input");
+      $("#bootcmd-title").textContent = `${displayOf(agent)} — boot command`;
+      input.value = agent.bootCommand || "";
+      box.hidden = false;
+      input.focus();
+      const close = () => { box.hidden = true; cleanup(); };
+      const save = async (command) => {
+        try {
+          const res = await fetch(`/api/agents/${encodeURIComponent(agent.name)}/bootcmd`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ command }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok || !data.ok) {
+            toast(data.error || `Failed to save (HTTP ${res.status}).`, "error");
+            return;
+          }
+          mergeAgent(data.agent);
+          renderAgents();
+          toast(command ? "Boot command saved — used on the next launch." : "Boot command cleared — standard boot.", "ok");
+          close();
+        } catch {
+          toast("Network failure while saving the boot command.", "error");
+        }
+      };
+      const onSave = () => save(input.value.trim());
+      const onClear = () => save("");
+      const onKey = (ev) => { if (ev.key === "Escape") close(); };
+      $("#bootcmd-save").addEventListener("click", onSave);
+      $("#bootcmd-clear").addEventListener("click", onClear);
+      $("#bootcmd-close").addEventListener("click", close);
+      box.addEventListener("keydown", onKey);
+      function cleanup() {
+        $("#bootcmd-save").removeEventListener("click", onSave);
+        $("#bootcmd-clear").removeEventListener("click", onClear);
+        $("#bootcmd-close").removeEventListener("click", close);
+        box.removeEventListener("keydown", onKey);
+      }
+    }
+
     async function toggleAutostart(name, autostart) {
       try {
         const res = await fetch(`/api/agents/${encodeURIComponent(name)}/autostart`, {
@@ -9277,6 +9348,26 @@
               title="Create the group — then move agents into it above">Create group</button>
           </div>
         </div>
+    </div>
+  </div>
+
+  <!-- Boot command editor: the setup line the launcher runs before this
+       agent's CLI (`cmd && exec cli`). Operator-only surface. -->
+  <div class="lightbox" id="bootcmd-box" hidden>
+    <div class="lightbox-card">
+      <div class="lightbox-head">
+        <span class="eyebrow" id="bootcmd-title">boot command</span>
+        <button class="dirpicker-close" id="bootcmd-close" type="button" title="Close (Esc)">✕</button>
+      </div>
+      <div class="bootcmd-body">
+        <label class="launcher-label" for="bootcmd-input">runs before the CLI, same shell — exports carry; failure aborts the launch</label>
+        <textarea id="bootcmd-input" class="bootcmd-input" rows="3" spellcheck="false"
+          placeholder=". ~/.config/myproj/env && docker compose -f ~/proj/compose.yml up -d"></textarea>
+        <div class="bootcmd-actions">
+          <button class="btn" id="bootcmd-clear" type="button" title="Back to the standard boot">clear</button>
+          <button class="btn" id="bootcmd-save" type="button">save</button>
+        </div>
+      </div>
     </div>
   </div>
 

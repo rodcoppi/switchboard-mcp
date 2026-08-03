@@ -919,6 +919,31 @@ describe("REST as operator", () => {
     });
     expect(bad.status).toBe(400);
   });
+
+  it("bootcmd via REST persists, clears with \"\" and refuses the oversized", async () => {
+    await registerAgent("moover");
+    const set = await fetch(api("/api/agents/moover/bootcmd"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ command: "  . ~/proj/env && docker compose up -d  " }),
+    });
+    expect(set.status).toBe(200);
+    expect(((await set.json()) as any).agent.bootCommand).toBe(". ~/proj/env && docker compose up -d");
+
+    const cleared = await fetch(api("/api/agents/moover/bootcmd"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ command: "" }),
+    });
+    expect(((await cleared.json()) as any).agent.bootCommand).toBe("");
+
+    const huge = await fetch(api("/api/agents/moover/bootcmd"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ command: "x".repeat(2001) }),
+    });
+    expect(huge.status).toBe(400);
+  });
 });
 
 describe("SSE events beyond message_created (PRD 10.1)", () => {

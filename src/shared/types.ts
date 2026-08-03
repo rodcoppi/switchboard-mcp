@@ -35,6 +35,15 @@ export interface Agent {
   cwd: string; // directory where the agent CLI was opened
   status: AgentStatus; // derived from tmux has-session during polling
   /**
+   * Shell command the launcher runs BEFORE the agent CLI, in the same shell
+   * (`<bootCommand> && exec <cli>`), so exports carry into the CLI and a
+   * failed setup keeps the CLI from starting. For projects that need
+   * services/env up before the agent (the owner's `moov` case). PERSISTED;
+   * set ONLY by the operator over REST — never via MCP: an agent must not be
+   * able to persist its own boot code. Empty/absent → the standard boot.
+   */
+  bootCommand?: string;
+  /**
    * Launch this agent at Windows login. A PERSISTED preference like `muted`:
    * the hub itself never acts on it — the machine's login hook reads
    * /api/agents and relaunches every agent carrying the flag (resuming its

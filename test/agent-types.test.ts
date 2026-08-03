@@ -29,7 +29,7 @@ import {
   CODEX_BYPASS_FLAG,
   DEFAULT_AGENT_TYPE,
 } from "../src/shared/agent-types.js";
-import { parseAgentTypeFlag } from "../src/cli/start.js";
+import { buildAgentCommand, parseAgentTypeFlag } from "../src/cli/start.js";
 import { buildWireClaudeArgs } from "../src/cli/wire.js";
 import { CliError } from "../src/cli/common.js";
 
@@ -383,5 +383,42 @@ describe("buildWireClaudeArgs across agent types", () => {
 
   it("bad quoting still fails fast, whatever the agent type", () => {
     expect(() => buildWireClaudeArgs(`--model "opus`, "codex")).toThrow(CliError);
+  });
+});
+
+describe("buildAgentCommand + bootCommand", () => {
+  const base = { name: "moov", token: "t0k", agentType: "claude" as const };
+
+  it("without a boot command the argv is byte-identical to always", () => {
+    expect(buildAgentCommand({ ...base, claudeArgs: ["-c"] })).toEqual([
+      "env",
+      "SWITCHBOARD_AGENT_NAME=moov",
+      "SWITCHBOARD_AGENT_TOKEN=t0k",
+      "claude",
+      "-c",
+    ]);
+  });
+
+  it("wraps setup + exec in ONE shell so exports carry into the CLI", () => {
+    const argv = buildAgentCommand({ ...base, claudeArgs: ["-c"], bootCommand: "export FOO=1 && docker compose up -d" });
+    expect(argv).toHaveLength(3);
+    expect(argv[0]).toBe("sh");
+    expect(argv[1]).toBe("-c");
+    expect(argv[2]).toMatch(/^export FOO=1 && docker compose up -d && exec 'env' /);
+    expect(argv[2]).toContain("'SWITCHBOARD_AGENT_TOKEN=t0k'");
+    expect(argv[2]).toContain("'-c'");
+  });
+
+  it("quotes argv safely — a single quote in an arg cannot escape the shell", () => {
+    const argv = buildAgentCommand({
+      ...base,
+      claudeArgs: ["--append-system-prompt", "it's here"],
+      bootCommand: "true",
+    });
+    expect(argv[2]).toContain(`'it'\\''s here'`);
+  });
+
+  it("blank boot commands are the standard boot, not an empty sh chain", () => {
+    expect(buildAgentCommand({ ...base, bootCommand: "   " })[0]).toBe("env");
   });
 });

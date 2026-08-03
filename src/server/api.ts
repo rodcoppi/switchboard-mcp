@@ -1294,6 +1294,31 @@ export function createApiRouter(options: ApiOptions): express.Router {
     res.json({ ok: true, agent: toPublicAgent(agent) });
   });
 
+  // POST /api/agents/:name/bootcmd — body {command: string}. The shell line
+  // the launcher runs before this agent's CLI (`<cmd> && exec <cli>`) — for
+  // projects that need services/env up first. "" clears back to the standard
+  // boot. OPERATOR-ONLY surface (REST/localhost): deliberately not reachable
+  // over MCP, so an agent can never persist its own boot code.
+  router.post("/api/agents/:name/bootcmd", (req, res) => {
+    const name = req.params.name;
+    if (!store.getAgent(name)) {
+      res.status(404).json({ ok: false, error: `Unknown agent: "${name}".` });
+      return;
+    }
+    const command = ((req.body ?? {}) as Record<string, unknown>).command;
+    if (typeof command !== "string" || command.length > 2000) {
+      res.status(400).json({
+        ok: false,
+        error: `Invalid body: expected {"command": "<shell line>"} (max 2000 chars; "" clears).`,
+      });
+      return;
+    }
+    const agent = store.updateAgent(name, { bootCommand: command.trim() });
+    bus.emit({ type: "agent_updated", payload: toPublicAgent(agent) });
+    log.info(`[api] agent ${name} boot command ${command.trim() ? "set" : "cleared"}.`);
+    res.json({ ok: true, agent: toPublicAgent(agent) });
+  });
+
   // POST /api/agents/:name/display — body {displayName: string}. Sets the
   // free-form name the UI shows (emoji welcome); empty string clears it back
   // to the kebab id. Unlike rename this works on a RUNNING agent: nothing in
