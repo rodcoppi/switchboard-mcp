@@ -428,3 +428,44 @@ describe("WhatsApp copy — the short-tail paragraph (owner's Leatt draft)", () 
     expect(toWA("linha um\nlinha dois\nlinha três")).toBe("linha um\nlinha dois\nlinha três");
   });
 });
+
+describe("WhatsApp copy — a wrapped LIST (the case reported many times)", () => {
+  const toWA = embeddedFunctionWith<(text: string) => string>("toWhatsAppText", ["unwrapForWhatsApp"]);
+
+  // The status board an agent writes daily: bullets whose long items wrap with
+  // an indented continuation. Every previous fix tuned percentages of "how
+  // many lines look long" — and this block never crossed the threshold (4 of
+  // 7 lines = 57%), so the breaks survived every time. The rule that actually
+  // holds: an indented line continues the item above it, always.
+  const board = [
+    "```",
+    "⌛ WAITING FOR DOCUMENTS (16)",
+    "• Alvaro Roberto Torres, Ana Karla Reynoso, Eduardo Hoppenstedt,",
+    "  Gaudencio Lucas Bravo, Heraclio Campana, Joaquin Uribarri,",
+    "  Valentin Laime and Virgilio Reyes",
+    "It is recommended that FRS to do push.",
+    "```",
+  ].join("\n");
+
+  it("folds every indented continuation into its bullet", () => {
+    const lines = toWA(board).split("\n");
+    expect(lines).toEqual([
+      "⌛ WAITING FOR DOCUMENTS (16)",
+      "• Alvaro Roberto Torres, Ana Karla Reynoso, Eduardo Hoppenstedt, Gaudencio Lucas Bravo, Heraclio Campana, Joaquin Uribarri, Valentin Laime and Virgilio Reyes",
+      "It is recommended that FRS to do push.",
+    ]);
+  });
+
+  it("folds a SHORT wrapped bullet too — length was never the signal", () => {
+    const out = toWA("• Mexico City (4): Carlos Ortiz,\n  Juan Carlos and Alejandro\n• Iron Fuentes (Bogotá)");
+    expect(out.split("\n")).toEqual([
+      "• Mexico City (4): Carlos Ortiz, Juan Carlos and Alejandro",
+      "• Iron Fuentes (Bogotá)",
+    ]);
+  });
+
+  it("leaves an unindented short list alone (one name per line stays that way)", () => {
+    const list = "Carlos Ortiz\nRaúl Caraballo\nAna Karla";
+    expect(toWA(list)).toBe(list);
+  });
+});

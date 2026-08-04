@@ -6491,40 +6491,68 @@
      * continuations fold back into them. Blocks of short lines are left alone:
      * those breaks are intentional writing, not wrapping.
      */
+    /**
+     * Undoes an agent's hard wrapping so a pasted message reflows in WhatsApp.
+     *
+     * Two RULES, and the order matters — the earlier versions of this got it
+     * wrong by trying to answer "is this block hard-wrapped?" with statistics
+     * about line length, which fails exactly where it hurts most: a list whose
+     * items wrap. In "• A, B,\n  C and D" the continuation is a minority line
+     * in the block, so no percentage threshold ever caught it and the break
+     * survived into WhatsApp.
+     *
+     *   1. An INDENTED line continues whatever came before it. Deterministic,
+     *      no statistics: someone who indents is continuing a thought, and
+     *      WhatsApp does not preserve the alignment anyway.
+     *   2. Plain lines (no marker, no indent) are joined only when the block
+     *      LOOKS hard-wrapped (most lines near the wrap column, or every line
+     *      but the short tail) — otherwise deliberately short lines, like a
+     *      name per line, would collapse into one run.
+     */
     function unwrapForWhatsApp(sourceText) {
-      const isMarker = (l) => /^\s*(?:•|☐|☑|>|\d+[.)]\s|[-*+]\s)/.test(l) || /^[BCP]\d+$/.test(l.trim());
+      const isMarker = (l) => /^\s*(?:•|☐|☑|>|\d+[.)]\s|[-*+]\s)/.test(l) || /^[BCP]\d+$/.test(l.trim());
+      const isIndented = (l) => /^\s+\S/.test(l);
       return String(sourceText)
         .split(/\n{2,}/)
         .map((block) => {
           const lines = block.split("\n");
-          const plainLines = lines.filter((l) => l.trim() !== "" && !isMarker(l));
+          const prose = lines.filter((l) => l.trim() !== "" && !isMarker(l) && !isIndented(l));
           const long = (l) => l.trim().length >= 55;
-          const majorityLong = plainLines.filter(long).length >= plainLines.length * 0.6;
-          // The majority rule misses the MOST common wrap of all: a two-line
-          // paragraph whose second line is the short remainder ("…construir a
-          // \npróxima sozinhos."). Every-line-long-except-the-last IS the
-          // hard-wrap signature; intentional short lines never look like it.
-          const allButLastLong = plainLines.length >= 2 && plainLines.slice(0, -1).every(long);
-          const hardWrapped = plainLines.length >= 2 && (majorityLong || allButLastLong);
-          if (!hardWrapped) return block;
+          const joinProse =
+            prose.length >= 2 &&
+            (prose.filter(long).length >= prose.length * 0.6 || prose.slice(0, -1).every(long));
+
           const out = [];
           let buf = [];
-          let lastWasMarker = false;
-          for (const l of lines) {
-            if (isMarker(l)) {
-              if (buf.length) { out.push(buf.join(" ")); buf = []; }
-              out.push(l.trimEnd());
-              lastWasMarker = true;
-            } else if (l.trim() === "") {
-              if (buf.length) { out.push(buf.join(" ")); buf = []; }
-            } else if (!buf.length && lastWasMarker && /^\s+/.test(l)) {
-              out[out.length - 1] += " " + l.trim(); // a wrapped bullet's continuation
-            } else {
-              buf.push(l.trim());
-              lastWasMarker = false;
+          const flush = () => {
+            if (buf.length) {
+              out.push(buf.join(" "));
+              buf = [];
             }
+          };
+          for (const line of lines) {
+            if (line.trim() === "") {
+              flush();
+              continue;
+            }
+            if (isMarker(line)) {
+              flush();
+              out.push(line.trimEnd());
+              continue;
+            }
+            if (isIndented(line) && (buf.length || out.length)) {
+              if (buf.length) buf.push(line.trim());
+              else out[out.length - 1] += " " + line.trim();
+              continue;
+            }
+            if (joinProse) {
+              buf.push(line.trim());
+              continue;
+            }
+            flush();
+            out.push(line);
           }
-          if (buf.length) out.push(buf.join(" "));
+          flush();
           return out.join("\n");
         })
         .join("\n\n");
