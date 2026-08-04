@@ -337,9 +337,13 @@ describe("drag-and-drop staging", () => {
   // The real terminal's contract: dragged in means it goes up. A drop used
   // to be refused unless it was a pasted screenshot, and outside the
   // composer it NAVIGATED the browser away from the dashboard.
-  it("any dragged file stages — the copy-path refusal is gone", () => {
-    expect(script).not.toContain("Use “Copy path” and paste it");
-    expect(script).toContain("dragged in means it goes up");
+  it("dropping stages the SMALL and origin-less — no blanket refusal, no blanket copy", () => {
+    // v1 refused everything but screenshots; v2 staged everything (the owner:
+    // "vc vai duplicar um vídeo?"); v3 is the contract: origin first, stage
+    // small, refuse huge with advice.
+    expect(script).not.toContain("Use “Copy path” and paste it"); // v1's blanket refusal
+    expect(script).toContain("staged for 24h (no original found to reference)");
+    expect(script).toContain("too big to copy");
   });
 
   it("stray drops never navigate the dashboard away", () => {
@@ -377,5 +381,29 @@ describe("launch args (rail menu)", () => {
     expect(script).toContain('field: "cliArgs"');
     expect(script).toContain('field: "bootCommand"');
     expect(script).toContain("function showAgentFieldDialog");
+  });
+});
+
+describe("drop origin resolution", () => {
+  // The owner's correction of the staging-everything contract: dropping must
+  // REFERENCE the original when it exists (like a real terminal drag), stage
+  // only the small-and-origin-less, and never duplicate a huge file.
+  it("attachFiles asks for the origin BEFORE any upload", () => {
+    const src = script.match(/async function attachFiles[\s\S]*?\n      }/)?.[0] ?? "";
+    expect(src.indexOf("resolveDropOrigin(file)")).toBeGreaterThan(-1);
+    expect(src.indexOf("resolveDropOrigin(file)")).toBeLessThan(src.indexOf("uploadFile(file"));
+    expect(src).toContain("STAGE_MAX_BYTES");
+  });
+
+  it("the terminal drop follows the same origin-first contract", () => {
+    const src = script.match(/async function terminalDrop[\s\S]*?\n      }/)?.[0] ?? "";
+    expect(src.indexOf("resolveDropOrigin(file)")).toBeGreaterThan(-1);
+    expect(src.indexOf("resolveDropOrigin(file)")).toBeLessThan(src.indexOf("uploadFile(file"));
+  });
+
+  it("staged tokens get whitespace seams — no welded a.xlsm/home/… runs", () => {
+    const src = script.match(/async function attachFiles[\s\S]*?\n      }/)?.[0] ?? "";
+    expect(src).toContain("const before = at > 0");
+    expect(src).toContain("before + tok + after");
   });
 });

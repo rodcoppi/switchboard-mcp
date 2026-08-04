@@ -8637,31 +8637,69 @@
         return body; // { ok, path, name }
       }
 
+      /**
+       * Asks the hub for the ORIGINAL of a dragged file. The browser hides
+       * the source path, but the hub is local: name+size+mtime pin the file
+       * across the likely homes (agent projects, Downloads, Desktop/Documents).
+       */
+      async function resolveDropOrigin(file) {
+        if (!file.name || file.name === "image.png") return null; // pasted bitmap: no origin exists
+        try {
+          const params = new URLSearchParams({ name: file.name, size: String(file.size) });
+          if (file.lastModified) params.set("mtime", String(file.lastModified));
+          const res = await fetch(`/api/files/origin?${params}`);
+          const data = await res.json().catch(() => ({}));
+          return res.ok && data.ok && typeof data.path === "string" ? data.path : null;
+        } catch {
+          return null;
+        }
+      }
+
+      /** Staging is for the SMALL and origin-less; never a video duplicator. */
+      const STAGE_MAX_BYTES = 25 * 1024 * 1024;
+
       async function attachFiles(files) {
         const list = Array.from(files || []);
         if (!list.length) return;
-        let pos = chatInput.selectionStart ?? chatInput.value.length;
         for (const file of list) {
           setUploading(+1);
           try {
-            // No original path in the DataTransfer (browsers hide it): STAGE
-            // the bytes. This used to refuse everything but pasted
-            // screenshots ("use Copy path") — the owner wants the real
-            // terminal's contract: dragged in means it goes up.
+            // The real terminal's drag contract: REFERENCE the original.
+            // Dropping a 2 GB video links the video where it lives — it does
+            // not grow a twin inside ~/.switchboard.
+            const origin = await resolveDropOrigin(file);
+            if (origin) {
+              insertPathAttachments([origin]);
+              toast(`Using the original: ${origin}`, "ok", 4500);
+              continue;
+            }
+            if (file.size > STAGE_MAX_BYTES) {
+              toast(
+                `${file.name}: original not found and too big to copy (${fmtBytes(file.size)}). ` +
+                  `Use "Copy as path" in the file manager and paste the path.`,
+                "warn",
+                8000,
+              );
+              continue;
+            }
+            // No origin anywhere (pasted screenshot, attachment dragged
+            // straight out of a mail app): stage a small copy for 24h.
             const stamp = new Date().toTimeString().slice(0, 8).replace(/:/g, "");
-            const name = file.name && file.name !== "image.png"
-              ? file.name
-              : `pasted-${stamp}.png`;
+            const name = file.name && file.name !== "image.png" ? file.name : `pasted-${stamp}.png`;
             const saved = await uploadFile(file, name);
             const tok = uniqueAttachToken(saved.name);
             attachments.set(tok, saved.path);
             const v = chatInput.value;
-            const at = Math.min(pos, v.length);
-            chatInput.value = v.slice(0, at) + tok + v.slice(at);
-            pos = at + tok.length;
-            chatInput.setSelectionRange(pos, pos);
+            const at = Math.min(chatInput.selectionStart ?? v.length, v.length);
+            // Whitespace seams, like insertPathAttachments: two dropped files
+            // must never weld into one unreadable "a.xlsm/home/…" run.
+            const before = at > 0 && !/\s/.test(v[at - 1]) ? " " : "";
+            const after = at < v.length && !/\s/.test(v[at]) ? " " : "";
+            chatInput.value = v.slice(0, at) + before + tok + after + v.slice(at);
+            const caret = at + before.length + tok.length + after.length;
+            chatInput.setSelectionRange(caret, caret);
             chatInput.dispatchEvent(new Event("input")); // autogrow + menus
-            toast(`${saved.name} staged for 24h — a COPIED file keeps its original path instead.`, "ok", 4500);
+            toast(`${saved.name} staged for 24h (no original found to reference).`, "ok", 4500);
           } catch (err) {
             toast(`Attachment failed: ${err && err.message ? err.message : err}`, "warn");
           } finally {
@@ -8744,6 +8782,22 @@
         }
         for (const file of Array.from((ev.dataTransfer && ev.dataTransfer.files) || [])) {
           try {
+            // Same contract as the chat: the origin's path when it exists,
+            // a small staged copy otherwise, never a giant duplicate.
+            const origin = await resolveDropOrigin(file);
+            if (origin) {
+              typePath(origin);
+              continue;
+            }
+            if (file.size > STAGE_MAX_BYTES) {
+              toast(
+                `${file.name}: original not found and too big to copy (${fmtBytes(file.size)}). ` +
+                  `Use "Copy as path" and paste it in the terminal.`,
+                "warn",
+                8000,
+              );
+              continue;
+            }
             const saved = await uploadFile(file, file.name || "dropped.bin");
             typePath(saved.path);
             toast(`${saved.name} staged — path typed into the terminal.`, "ok", 4500);
