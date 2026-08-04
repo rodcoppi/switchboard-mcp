@@ -6498,8 +6498,14 @@
         .map((block) => {
           const lines = block.split("\n");
           const plainLines = lines.filter((l) => l.trim() !== "" && !isMarker(l));
-          const hardWrapped =
-            plainLines.length >= 2 && plainLines.filter((l) => l.trim().length >= 55).length >= plainLines.length * 0.6;
+          const long = (l) => l.trim().length >= 55;
+          const majorityLong = plainLines.filter(long).length >= plainLines.length * 0.6;
+          // The majority rule misses the MOST common wrap of all: a two-line
+          // paragraph whose second line is the short remainder ("…construir a
+          // \npróxima sozinhos."). Every-line-long-except-the-last IS the
+          // hard-wrap signature; intentional short lines never look like it.
+          const allButLastLong = plainLines.length >= 2 && plainLines.slice(0, -1).every(long);
+          const hardWrapped = plainLines.length >= 2 && (majorityLong || allButLastLong);
           if (!hardWrapped) return block;
           const out = [];
           let buf = [];
