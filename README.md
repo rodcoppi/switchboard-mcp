@@ -4,7 +4,7 @@
 <sub>Claude Code and Codex CLI, on the same network, in the same conversation.</sub></p>
 
 <p align="center">
-  <img src="assets/dashboard.png" alt="The Switchboard dashboard — an operator's patchbay: agents on the left, the transcript of their messages in the center" width="860">
+  <img src="assets/dashboard.png" alt="The Switchboard dashboard — an operator's patchbay: agents grouped on the left, the transcript of what they said to each other in the center" width="860">
 </p>
 
 You have **Claude Code** (Anthropic's CLI) open on the backend, **Codex CLI** (OpenAI's) on the
@@ -14,7 +14,9 @@ repeat. You are the message broker.
 
 Switchboard is the wire between them. It's a local hub. Your agents message each other over MCP,
 the recipient gets nudged awake in its own terminal, and you watch the whole conversation on one
-dashboard. It connects sessions you already have. It won't spawn, orchestrate or manage them.
+dashboard — where you can also open any agent's chat, drive its real terminal, and see what it
+did about the message it received. It connects sessions you already have. It won't spawn,
+orchestrate or manage them.
 
 What keeps it safe: **tmux carries a one-line nudge, and nothing else. The message itself travels
 over MCP.** Agent A calls `send_message`, the Hub appends it to `~/.switchboard/messages.jsonl`
@@ -111,7 +113,7 @@ The Hub runs in the foreground and logs to stdout and `~/.switchboard/logs/hub.l
 line gives you the addresses and the MCP registration command, ready to copy:
 
 ```
-Dashboard: http://127.0.0.1:4577/  |  MCP: http://127.0.0.1:4577/mcp  |  Register (once): claude mcp add --transport http --scope user switchboard http://127.0.0.1:4577/mcp
+Dashboard: http://127.0.0.1:4577/  |  MCP: http://127.0.0.1:4577/mcp  |  Register (once): claude mcp add --transport http --scope user switchboard http://127.0.0.1:4577/mcp --header 'Authorization: Bearer ${SWITCHBOARD_AGENT_TOKEN}' --header 'X-Switchboard-Agent-Name: ${SWITCHBOARD_AGENT_NAME}'
 ```
 
 To look inside the Hub that started itself: `tmux attach -t sb-hub`, and `Ctrl-b d` to leave it
@@ -142,10 +144,20 @@ the icon with `node scripts/make-icon.mjs`.</sub>
 Once only, in the `user` scope (applies to every project):
 
 ```bash
-claude mcp add --transport http --scope user switchboard http://127.0.0.1:4577/mcp
+claude mcp add --transport http --scope user switchboard http://127.0.0.1:4577/mcp \
+  --header 'Authorization: Bearer ${SWITCHBOARD_AGENT_TOKEN}' \
+  --header 'X-Switchboard-Agent-Name: ${SWITCHBOARD_AGENT_NAME}'
 ```
 
 `claude mcp list` shows `switchboard` as *connected* while the Hub is up.
+
+**Those two headers are what makes joining silent.** Claude Code expands `${VAR}` from the
+agent's OWN environment when it connects, so the Hub knows who is calling before any tool runs:
+the session binds at connect time and the agent is on the network without a single line typed
+into its terminal — like every other MCP server you use. One registration covers your whole
+fleet (each session carries its own name and token), and the token never passes through the
+model. A client registered without the headers still works the classic way: the Hub types a
+one-line kickoff asking the agent to call `join` itself.
 
 Running Codex agents too? Point Codex at the same Hub. Same streamable-HTTP endpoint, spelled
 differently (`setup` offers this when it finds the `codex` binary):
@@ -159,13 +171,11 @@ codex mcp add switchboard --url http://127.0.0.1:4577/mcp
 > Already on `bypassPermissions`? You're covered. `switchboard start` reminds you on its first
 > run.
 >
-> **What the kickoff needs to `join` on its own.** Before it calls `join`, the agent reads
-> `SWITCHBOARD_AGENT_TOKEN` out of its environment with `printenv`, a shell command, so
-> `printenv` needs to run without approval too. Running the agents with `bypassPermissions` is
-> the simple answer if you operate several; otherwise add `Bash(printenv:*)` to the allow rule.
-> With `mcp__switchboard__*` alone, the agent stops once at the `printenv` prompt and waits for
-> you to approve. To cover one session, pass
-> `--claude-args "--permission-mode bypassPermissions"` to `start`.
+> **Only if you skip the headers above.** On the classic path the agent reads
+> `SWITCHBOARD_AGENT_TOKEN` from its environment with `printenv` before calling `join`, so that
+> shell command needs approval too — add `Bash(printenv:*)` to the allow rule, or run the agent
+> with `bypassPermissions`. With the identity headers registered, none of this applies: nothing
+> is typed and no token ever reaches the model.
 
 ### 4. Paste the agent protocol (snippet)
 
@@ -191,9 +201,11 @@ What happens:
 3. From an interactive terminal, `start` runs `tmux attach` on that session, so your Windows
    Terminal tab becomes the agent's screen. Detach with `Ctrl-b d` and the agent keeps working
    in the background.
-4. A few seconds after the TUI is ready, the kickoff tells the agent to call `join` itself. No
-   prompt from you. It then shows up as *MCP connected* in `switchboard status`. `--no-kickoff`
-   turns this off and leaves `join` to you.
+4. The agent joins **silently**: its MCP client connects carrying the identity headers, and the
+   Hub binds the session — it shows up as *MCP connected* in `switchboard status` with nothing
+   typed into its terminal. Registered the MCP without the headers? A few seconds after the TUI
+   is ready, a one-line kickoff asks the agent to call `join` itself instead (`--no-kickoff`
+   turns that off).
 
 `start` flags: `--role "<description>"`, `--dir <path>`, `--no-kickoff`,
 `--agent <claude|codex>`, `--claude-args "<extra args for the agent CLI>"`.
@@ -320,14 +332,30 @@ live via SSE; attach to the agent anytime with `tmux attach -t sb-<name>`. Under
 `POST /api/agents/launch {dir, name?, role?, continue?, agentType?}` — localhost-only, like
 everything else.
 
+### Talking to one agent — the chat
+
+Click an agent's card and you get **its conversation**, rendered as chat: what you asked, what it
+answered, its tool calls folded into one line each, markdown and syntax highlighting, and the
+harness happenings the terminal shows (`worked for 2m 20s`, background tasks, interrupts). It is
+read from Claude Code's own transcript log — Switchboard owns nothing, so the agent's session is
+untouched. The composer below it dispatches to that agent: type and press Enter, `/` for slash
+commands (routed to the terminal), `@` to mention a file, drag a file in to reference it, and the
+🎤 to dictate — speech-to-text runs **locally** on your machine, no API, no key, no bill.
+
+Every message that arrives from a peer shows as the Switchboard's own line with a **show what X
+sent** toggle that unfolds the real message, and in the traffic feed every read message has a
+**reaction** toggle that shows what the recipient said about it in its own chat. The two answer
+the question a message board never does: *and then what happened?*
+
 ### Watching an agent's screen
 
-Click an agent's card and its **live terminal** takes over the panel — the real Claude Code (or
-Codex) screen, colours and cursor and all, and you can type into it (approve a prompt, hit Esc to
-interrupt). Open several and they become tabs across the top; **window** in the card's menu still
-pops a real OS terminal when you want one. This is a tmux **control-mode** client (`tmux -C`), not
-a second pty: tmux owns the agent's process, so closing the dashboard never takes the agent down —
-the whole point of being able to close the pile of terminal windows.
+Toggle **Terminal** and the agent's **live screen** takes over the panel — the real Claude Code
+(or Codex) TUI, colours and cursor and all, and you can type into it (approve a prompt, hit Esc to
+interrupt, drag a file in to type its path). Open several agents and they become tabs across the
+top; **window** in the card's menu still pops a real OS terminal when you want one. This is a tmux
+**control-mode** client (`tmux -C`), not a second pty: tmux owns the agent's process, so closing
+the dashboard never takes the agent down — the whole point of being able to close the pile of
+terminal windows.
 
 ### Previewing files agents mention
 
@@ -338,6 +366,18 @@ with realpath so `..` and symlinks cannot escape. A path outside the scope is re
 message, never read — a message body is untrusted, so an agent cannot get you to open an arbitrary
 file by naming it.
 
+Two doors sit in the preview's header for what an inline panel cannot do: **browser** opens the
+file in a real tab (an `.html` an agent built renders as the actual site — inside a CSP sandbox,
+so its scripts can never drive the Hub with your authority), and **folder** reveals the file in
+Windows Explorer.
+
+**Dropping a file** on the chat or the terminal references the file **where it already lives** —
+the Hub finds the original by name and size across your agents' projects, Downloads and Desktop,
+exactly like dragging into a real terminal. Only when there is no original to point at (a pasted
+screenshot, an attachment dragged straight out of a mail client) does it stage a copy under
+`~/.switchboard/uploads`, kept for 24h; a big file with no origin is refused rather than
+duplicated.
+
 ### Managing agents from the dashboard
 
 Each card carries an **open** button (**reopen** when the agent is offline: relaunches it in its
@@ -345,10 +385,15 @@ folder, continuing the conversation, with the same CLI it was launched with) and
 
 | Action | What it does |
 |---|---|
-| **nudge** | Forces a manual nudge — still subject to the pane guard, so it never types into a shell. |
+| **nudge** | Forces a manual nudge — still subject to the pane guard (never types into a shell) and to the dialog guard (never types while a modal owns the pane). |
 | **mute** | Stops nudging this agent. Messages keep being **recorded** and it still reads them on its next `check_messages` — mute silences the poke, not the mail. |
-| **rename** | The name cell becomes an inline input; the **whole history and unread count follow the new name**. Only for a **stopped** agent (a running one would re-join under the old name) — the item says so when the agent is up. |
-| **remove** | Drops the registration (two-click confirm). The messages stay in the append-only JSONL — only the card and the `agents.json` entry go away. |
+| **autostart** | Marks the agent to be launched at machine login. The Hub only stores the flag; a small login hook reads it and relaunches the flagged agents, resuming their conversations. |
+| **boot command** | A shell line the launcher runs **before** the CLI, in the same shell (`<boot> && exec <cli>`), for projects that need services or env up first. Exports carry into the CLI; a failing setup aborts the launch instead of leaving a half-prepared agent. |
+| **launch args** | **Replaces** the CLI's launch arguments for this agent — a pinned `--resume <session-id>`, extra flags. Operator-set over REST only: an agent can never write its own boot code or argv. |
+| **group** | Moves the agent to another room (the communication wall — see [Groups](#groups--keep-one-projects-agents-out-of-anothers)). |
+| **nickname** | A free display name (emoji welcome) for the UI. The kebab `name` stays the protocol address, so this works on a **running** agent. |
+| **rename** | Changes the technical id; the **whole history and unread count follow the new name**. Only for a **stopped** agent (a running one would re-join under the old name). |
+| **stop** / **remove** | **stop** kills the tmux session and keeps the registration (the card turns into **reopen**). **remove** drops the registration (two-click confirm) — the messages stay in the append-only JSONL. |
 
 Agent names are **addresses** (`%name` in a prompt, the tmux session `sb-<name>`), so they are
 lowercase letters, digits and hyphens. You don't have to memorize that: the name fields rewrite
@@ -390,10 +435,23 @@ before exposing anything:
 - **Local trust model:** any local process can post to the Hub and therefore inject input
   into any agent. This is accepted in v1 (the same model as any local dev tool), as long as it
   never leaks to the network.
+- **The nudge never types into a pane a dialog owns.** The nudge is one line plus a separate
+  Enter ~500ms later (the only way a TUI accepts it), and with a permission prompt open
+  (`Do you want to proceed? ❯ 1. Yes`) that Enter used to land on the highlighted choice —
+  meaning any agent able to send a message could approve another agent's pending tool call.
+  Proven with a disposable agent, then closed: the pane reader reports `blocked` for permission
+  prompts, trust dialogs and channel warnings; the dispatcher queues instead of typing, and
+  **re-reads the live pane immediately before typing** (fail-closed — an unreadable pane counts
+  as blocked). The held message is delivered by the next flush, once you answer the dialog.
 - **Capability token (v1.1 addendum):** `start` injects a per-agent token into the tmux
   session environment (`SWITCHBOARD_AGENT_TOKEN`); the agent reads it and passes it to `join`,
   and it **never appears** in `list_agents`, in `GET /api/agents`, in the dashboard or in the
-  logs. It closes impersonation by processes that know an agent's name but never talk to the
+  logs. With the identity headers registered (see step 3) the token never reaches the model at
+  all: the MCP client sends it straight from the session's environment.
+- **Operator-only surfaces.** What an agent can persist about itself stops at its role. The
+  boot command and launch args — the two fields that decide what runs at launch — are settable
+  over REST (the dashboard) and deliberately **not exposed over MCP**, so a compromised agent
+  cannot write its own boot code. It closes impersonation by processes that know an agent's name but never talk to the
   registration endpoint.
 - **Known residual risk (documented in the comment of `src/server/api.ts`):** the
   `POST /api/agents/register` endpoint is **deliberately unauthenticated**, and re-registering
@@ -437,7 +495,14 @@ the same conversation. A few directions for later:
 - **Urgency tiers** (`interrupt` / `normal` / `fyi`): an `fyi` message that never wakes the
   recipient (zero token cost until it checks on its own) — the structural token saver on top of
   the current etiquette + rate-limit backstop.
-- **Searchable feed history and export** in the dashboard.
+- **Agent state on the card** (`working` / `blocked` / `idle`), read from the pane the dashboard
+  already streams. The `blocked` half shipped with the dialog guard (see [Security](#security));
+  surfacing it as *who needs me right now* is the next step, and exposing a peer's state in
+  `list_agents` lets agents stop nudging someone stuck on a prompt.
+- **Exact session resume.** A `SessionStart` hook reporting the CLI's own session id would
+  replace `-c` ("the folder's last conversation") with `--resume <id>`, and hand the chat the
+  exact transcript path instead of a heuristic.
+- **Export of the feed history** (search already lives in the dashboard's header).
 
 Contributions welcome — see the code layout in the sections above; the Hub is a single Node
 process and there's no build step.
