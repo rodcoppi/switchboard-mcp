@@ -75,8 +75,22 @@ interface Live {
   reframeTimer: NodeJS.Timeout | null;
   /** Consecutive reframe failures — reset on the first clean frame. */
   reframeRetries: number;
+  /** The grid the viewers were last told about (what their xterm draws at). */
+  lastGrid: { cols: number; rows: number } | null;
+  /** Periodic grid check — see healGrid. */
+  watchdog: NodeJS.Timeout | null;
+  /** Failed attempts to impose `desired`; stops a pointless resize loop. */
+  resizeTries: number;
   closed: boolean;
 }
+
+/**
+ * Grid watchdog cadence. The scars this heals appear seconds apart at worst
+ * (a resize that did not stick, another client claiming the window), and one
+ * display-message per interval per WATCHED session is nothing next to the
+ * %output stream already flowing.
+ */
+export const GRID_WATCH_MS = 4000;
 
 export interface TerminalBridgeOptions {
   tmux: Tmux;
@@ -152,6 +166,9 @@ export class TerminalBridge {
       chain: Promise.resolve(),
       reframeTimer: null,
       reframeRetries: 0,
+      lastGrid: null,
+      watchdog: null,
+      resizeTries: 0,
       closed: false,
       cc: this.tmux.attachControlClient(session, {
         onOutput: (paneId, bytes) => {
@@ -165,6 +182,7 @@ export class TerminalBridge {
           if (entry.closed) return;
           entry.closed = true;
           if (entry.reframeTimer) clearTimeout(entry.reframeTimer);
+          if (entry.watchdog) clearInterval(entry.watchdog);
           this.live.delete(session);
           this.log.info(`[term] stream of ${session} ended: ${reason}`);
           for (const v of [...entry.viewers]) v.onEnd(reason);
@@ -172,8 +190,66 @@ export class TerminalBridge {
         },
       }),
     };
+    // The self-heal: %layout-change is the only signal that a pane's grid
+    // moved, and it does NOT always fire (a resize that never took, another
+    // client claiming the window, a reframe that failed its last retry). The
+    // divergence then persists — text painted for one width sitting in a
+    // narrower grid, the "torta" screen the owner had to fix by toggling to
+    // chat and back, which worked only because leaving and re-entering forces
+    // a fresh frame. This poll makes that repair automatic.
+    entry.watchdog = setInterval(() => {
+      if (entry.closed || entry.viewers.size === 0) return;
+      entry.chain = entry.chain.then(() =>
+        this.healGrid(entry).catch((err) => {
+          this.log.debug(`[term] grid check failed for ${session}: ${(err as Error).message}`);
+        }),
+      );
+    }, GRID_WATCH_MS);
+    entry.watchdog.unref?.();
     this.log.info(`[term] control client attached to ${session}.`);
     return entry;
+  }
+
+  /**
+   * Reads the pane's REAL grid and repairs any divergence:
+   *   - pane ≠ what the dashboard asked for → re-impose it (the dashboard
+   *     dictates the size while it watches), then repaint;
+   *   - pane ≠ what the viewers were last told → repaint, so the emulator
+   *     stops drawing at a stale width.
+   * Both are cheap no-ops in the common case (one display-message).
+   */
+  private async healGrid(entry: Live): Promise<void> {
+    if (entry.closed || entry.viewers.size === 0) return;
+    const t = `=${entry.session}:`;
+    const info = await entry.cc.command(`display-message -p -t '${t}' '#{pane_width} #{pane_height}'`);
+    const m = /^(\d+) (\d+)$/.exec(info.out[0] ?? "");
+    if (!info.ok || !m) return;
+    const grid = { cols: Number(m[1]), rows: Number(m[2]) };
+
+    const wish = this.desired.get(entry.session);
+    if (wish && (grid.cols !== wish.cols || grid.rows !== wish.rows)) {
+      // Give up after a few tries: something else owns the size (a Windows
+      // terminal attached with a smaller window), and hammering resize-window
+      // every 4s would be noise. A new resize() resets the counter.
+      if (entry.resizeTries >= 3) return;
+      entry.resizeTries += 1;
+      this.log.info(
+        `[term] ${entry.session}: pane is ${grid.cols}x${grid.rows}, dashboard asked for ` +
+          `${wish.cols}x${wish.rows} — re-imposing (attempt ${entry.resizeTries}/3).`,
+      );
+      await entry.cc.command(`resize-window -x ${wish.cols} -y ${wish.rows}`);
+      this.scheduleReframe(entry);
+      return;
+    }
+    entry.resizeTries = 0;
+
+    if (entry.lastGrid && (entry.lastGrid.cols !== grid.cols || entry.lastGrid.rows !== grid.rows)) {
+      this.log.info(
+        `[term] ${entry.session}: viewers draw at ${entry.lastGrid.cols}x${entry.lastGrid.rows} but the ` +
+          `pane is ${grid.cols}x${grid.rows} — repainting.`,
+      );
+      this.scheduleReframe(entry);
+    }
   }
 
   /**
@@ -260,6 +336,7 @@ export class TerminalBridge {
       "utf8",
     );
 
+    entry.lastGrid = grid; // what the viewers are about to draw at
     for (const v of targets) {
       if (entry.closed) return;
       v.onGrid(grid);
@@ -275,6 +352,7 @@ export class TerminalBridge {
     if (entry.viewers.size > 0 || entry.closed) return;
     entry.closed = true;
     if (entry.reframeTimer) clearTimeout(entry.reframeTimer);
+    if (entry.watchdog) clearInterval(entry.watchdog);
     // Hand size control back before leaving: the dashboard dictated the window
     // size while it was watching (resize()), so unset window-size or a Windows
     // terminal that reattaches later would be stuck at the dashboard's size.
@@ -338,6 +416,7 @@ export class TerminalBridge {
     this.desired.set(session, { cols, rows });
     const entry = this.live.get(session);
     if (!entry || entry.closed) return; // applied at the next attach instead
+    entry.resizeTries = 0; // a fresh wish deserves fresh attempts
 
     entry.chain = entry.chain.then(async () => {
       if (entry.closed) return;
@@ -351,6 +430,7 @@ export class TerminalBridge {
     for (const [session, entry] of [...this.live]) {
       entry.closed = true;
       if (entry.reframeTimer) clearTimeout(entry.reframeTimer);
+      if (entry.watchdog) clearInterval(entry.watchdog);
       entry.cc.kill();
       this.live.delete(session);
       for (const v of [...entry.viewers]) v.onEnd("the hub is shutting down");
