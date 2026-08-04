@@ -354,3 +354,54 @@ describe("mid-stream frames (the %end/%output chunk race)", () => {
     }
   }, 30_000);
 });
+
+describe("grid watchdog (the 'torta' screen)", () => {
+  it("re-imposes the dashboard's size when something else resizes the pane", async () => {
+    if (!hasTmux) return;
+    // The scar the owner hit: the pane's grid drifts from what the panel
+    // asked for and NOTHING repaints — %layout-change is not guaranteed, so
+    // the divergence sat there until he toggled to chat and back (which
+    // forces a fresh frame). The watchdog now does that repair on its own.
+    const session = sessionName("heal");
+    await newCatSession(session, 80, 24);
+    const bridge = newBridge();
+    const viewer = makeViewer();
+    await bridge.resize(session, 100, 30);
+    const detach = await bridge.attachViewer(session, viewer);
+    try {
+      await waitFor(() => viewer.grids.length > 0);
+      expect(viewer.grids[0]).toEqual({ cols: 100, rows: 30 });
+
+      // Someone else moves the pane behind the bridge's back (a Windows
+      // terminal attaching, a manual tmux resize) — no dashboard involved.
+      await execFileAsync("tmux", ["resize-window", "-t", `=${session}:`, "-x", "70", "-y", "20"]);
+
+      // First the layout-change repaint reports the intruder's grid…
+      await waitFor(() => viewer.grids.some((g) => g.cols === 70), 8000);
+      // …then the watchdog puts the pane back. Poll the PANE (the source of
+      // truth): asserting on the viewer's last grid alone would pass on the
+      // stale attach frame, before the intruder's repaint even arrived.
+      const paneSize = async () =>
+        (
+          await execFileAsync("tmux", [
+            "display-message", "-p", "-t", `=${session}:`, "#{pane_width}x#{pane_height}",
+          ])
+        ).stdout.trim();
+      let restored = "";
+      const deadline = Date.now() + 15000;
+      while (Date.now() < deadline && restored !== "100x30") {
+        restored = await paneSize();
+        if (restored !== "100x30") await new Promise((r) => setTimeout(r, 250));
+      }
+      expect(restored).toBe("100x30"); // the pane itself, healed
+      // And the viewers were repainted at the restored grid, not left stale.
+      await waitFor(() => {
+        const last = viewer.grids[viewer.grids.length - 1];
+        return last.cols === 100 && last.rows === 30;
+      }, 8000);
+      expect(viewer.grids[viewer.grids.length - 1]).toEqual({ cols: 100, rows: 30 });
+    } finally {
+      detach();
+    }
+  }, 25_000);
+});
