@@ -407,3 +407,24 @@ describe("drop origin resolution", () => {
     expect(src).toContain("before + tok + after");
   });
 });
+
+describe("WhatsApp copy — the short-tail paragraph (owner's Leatt draft)", () => {
+  const toWA = embeddedFunctionWith<(text: string) => string>("toWhatsAppText", ["unwrapForWhatsApp"]);
+
+  it("joins a two-line paragraph whose second line is the short remainder", () => {
+    const out = toWA(
+      "```\n" +
+        "-----------\n\n" +
+        "O que fica com vocês no fim não é só a ferramenta funcionando, é saber construir a\n" +
+        "próxima sozinhos.\n\n" +
+        "Vai ser um prazer acompanhar de perto o crescimento da Leatt.\n" +
+        "```",
+    );
+    expect(out).toContain("construir a próxima sozinhos.");
+    expect(out).not.toContain("```");
+  });
+
+  it("still leaves intentional short lines untouched", () => {
+    expect(toWA("linha um\nlinha dois\nlinha três")).toBe("linha um\nlinha dois\nlinha três");
+  });
+});
