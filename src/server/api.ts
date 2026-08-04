@@ -428,6 +428,95 @@ function downloadRoots(): string[] {
  * breadth-first search, no symlink traversal. A Downloads hint changes root
  * priority but never expands the allowed roots.
  */
+/**
+ * Finds the ORIGINAL of a file dropped on the dashboard. Browsers hide the
+ * source path of a dragged file, but the hub is local: name + size (+mtime
+ * as tiebreaker, ±2s for filesystem precision) almost always pin the origin
+ * across the likely homes — every agent's project, the Downloads of both
+ * worlds, and the Windows profiles' Desktop/Documents. Referencing the
+ * origin is the real terminal's drag contract; staging a COPY is the
+ * fallback, never the default (dragging a 2 GB video must not duplicate it).
+ * Ambiguity returns null: linking the WRONG twin is worse than staging.
+ */
+function findDropOrigin(
+  filename: string,
+  size: number,
+  mtimeMs: number | null,
+  agentCwds: string[],
+): string | null {
+  const profiles: string[] = [];
+  let mounts: fs.Dirent[] = [];
+  try {
+    mounts = fs.readdirSync("/mnt", { withFileTypes: true });
+  } catch { /* not WSL */ }
+  for (const mount of mounts) {
+    if (!mount.isDirectory() || !/^[a-z]$/i.test(mount.name)) continue;
+    let users: fs.Dirent[] = [];
+    try {
+      users = fs.readdirSync(path.join("/mnt", mount.name, "Users"), { withFileTypes: true });
+    } catch { continue; }
+    for (const u of users) {
+      if (!u.isDirectory()) continue;
+      for (const sub of ["Desktop", "Documents"]) {
+        profiles.push(path.join("/mnt", mount.name, "Users", u.name, sub));
+      }
+    }
+  }
+  const searches = [
+    ...agentCwds.filter((c) => c && c.trim() !== "").map((root) => ({ root, maxDepth: AGENT_FILES_MAX_DEPTH })),
+    ...downloadRoots().map((root) => ({ root, maxDepth: 3 })),
+    ...profiles.map((root) => ({ root, maxDepth: 3 })),
+  ];
+  const allowedRoots = searches.map((x) => x.root);
+  const needle = filename.toLowerCase();
+  const matches: Array<{ full: string; mtimeMs: number }> = [];
+
+  for (const { root, maxDepth } of searches) {
+    let scanned = 0;
+    let level = [""];
+    for (let depth = 0; depth < maxDepth && level.length > 0 && scanned < AGENT_FILES_SCAN_CAP; depth++) {
+      const next: string[] = [];
+      for (const relDir of level) {
+        let entries: fs.Dirent[];
+        try {
+          entries = fs.readdirSync(path.join(root, relDir), { withFileTypes: true });
+        } catch {
+          continue;
+        }
+        for (const entry of entries) {
+          if (++scanned > AGENT_FILES_SCAN_CAP) break;
+          const isDir = entry.isDirectory();
+          if (isDir && AGENT_FILES_SKIP.has(entry.name)) continue;
+          const rel = relDir === "" ? entry.name : path.join(relDir, entry.name);
+          if (isDir) {
+            next.push(rel);
+            continue;
+          }
+          if (!entry.isFile()) continue;
+          if (entry.name.toLowerCase() !== needle) continue;
+          try {
+            const full = resolveInScope(path.join(root, rel), allowedRoots);
+            const st = fs.statSync(full);
+            if (st.size !== size) continue;
+            if (!matches.some((m) => m.full === full)) matches.push({ full, mtimeMs: st.mtimeMs });
+            if (matches.length > 8) return null; // a name this common is nobody's origin
+          } catch {
+            /* escaped scope or raced deletion — keep looking */
+          }
+        }
+      }
+      level = next;
+    }
+  }
+
+  if (matches.length === 0) return null;
+  if (mtimeMs !== null) {
+    const close = matches.filter((m) => Math.abs(m.mtimeMs - mtimeMs) <= 2000);
+    if (close.length === 1) return close[0].full;
+  }
+  return matches.length === 1 ? matches[0].full : null;
+}
+
 function findMentionedFile(
   filename: string,
   agentCwd: string,
@@ -1471,6 +1560,35 @@ export function createApiRouter(options: ApiOptions): express.Router {
     bus.emit({ type: "agent_updated", payload: toPublicAgent(updated) });
     log.info(`[api] agent ${name} moved to group ${group}.`);
     res.json({ ok: true, agent: toPublicAgent(updated) });
+  });
+
+  // GET /api/files/origin?name=<basename>&size=<bytes>&mtime=<epoch-ms> — the
+  // drop contract: find the ORIGINAL of a dragged file so the composer can
+  // reference where it already lives instead of staging a duplicate. null
+  // path (200) = not found/ambiguous; the dashboard then decides (stage the
+  // small, refuse the huge).
+  router.get("/api/files/origin", (req, res) => {
+    const name = typeof req.query.name === "string" ? req.query.name.trim() : "";
+    const size = Number(req.query.size);
+    const mtime = req.query.mtime === undefined ? null : Number(req.query.mtime);
+    if (
+      name === "" ||
+      name !== path.basename(name) ||
+      name === "." ||
+      name === ".." ||
+      !Number.isInteger(size) ||
+      size <= 0 ||
+      (mtime !== null && !Number.isFinite(mtime))
+    ) {
+      res.status(400).json({
+        ok: false,
+        error: 'Expected ?name=<basename>&size=<bytes>[&mtime=<epoch-ms>].',
+      });
+      return;
+    }
+    const cwds = [...new Set(store.listAgents().map((a) => a.cwd))];
+    const found = findDropOrigin(name, size, mtime, cwds);
+    res.json({ ok: true, path: found });
   });
 
   // GET /api/agents/:name/files/resolve?file=<basename>&hint=downloads — turns

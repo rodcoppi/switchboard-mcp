@@ -961,6 +961,40 @@ describe("REST as operator", () => {
     });
     expect(((await cleared.json()) as any).agent.cliArgs).toBe("");
   });
+
+  it("files/origin finds a dropped file's original by name+size, refuses ambiguity", async () => {
+    // The drop contract: reference where the file already LIVES (an agent's
+    // project counts as a likely home) instead of staging a duplicate.
+    await registerAgent("origem");
+    fs.mkdirSync("/tmp/origem", { recursive: true });
+    fs.writeFileSync("/tmp/origem/relatorio-unico.xlsm", "x".repeat(1234));
+    try {
+      const hit = (await (
+        await fetch(api("/api/files/origin?name=relatorio-unico.xlsm&size=1234"))
+      ).json()) as any;
+      expect(hit.ok).toBe(true);
+      expect(hit.path).toBe("/tmp/origem/relatorio-unico.xlsm");
+
+      // Wrong size: not the same file — no match, never a guess.
+      const miss = (await (
+        await fetch(api("/api/files/origin?name=relatorio-unico.xlsm&size=999"))
+      ).json()) as any;
+      expect(miss.path).toBeNull();
+
+      // Two same-name+size twins in two roots: ambiguous → null (linking the
+      // wrong twin is worse than staging).
+      await registerAgent("origem-b");
+      fs.mkdirSync("/tmp/origem-b", { recursive: true });
+      fs.writeFileSync("/tmp/origem-b/relatorio-unico.xlsm", "x".repeat(1234));
+      const ambiguous = (await (
+        await fetch(api("/api/files/origin?name=relatorio-unico.xlsm&size=1234"))
+      ).json()) as any;
+      expect(ambiguous.path).toBeNull();
+    } finally {
+      fs.rmSync("/tmp/origem", { recursive: true, force: true });
+      fs.rmSync("/tmp/origem-b", { recursive: true, force: true });
+    }
+  });
 });
 
 describe("SSE events beyond message_created (PRD 10.1)", () => {
