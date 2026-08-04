@@ -31,6 +31,7 @@ function mockTmux(options: { nudgeResult?: () => NudgeResult } = {}) {
   const alive = new Set<string>();
   const unsafePanes = new Set<string>();
   const nudges: NudgeCall[] = [];
+  const paneText = new Map<string, string>(); // what capturePane answers per session
   const hasSessionCalls: string[] = [];
   const paneSafetyCalls: string[] = [];
   const tmux: DispatcherTmux = {
@@ -46,8 +47,11 @@ function mockTmux(options: { nudgeResult?: () => NudgeResult } = {}) {
       paneSafetyCalls.push(session);
       return !unsafePanes.has(session);
     },
+    async capturePane(session) {
+      return paneText.get(session) ?? "❯ \n  ⏵⏵ bypass permissions on (shift+tab to cycle) · ? for shortcuts";
+    },
   };
-  return { tmux, alive, unsafePanes, nudges, hasSessionCalls, paneSafetyCalls };
+  return { tmux, alive, unsafePanes, nudges, hasSessionCalls, paneSafetyCalls, paneText };
 }
 
 let dir: string;
@@ -596,6 +600,7 @@ describe("parsePaneStatus", () => {
     ].join("\n");
     expect(parsePaneStatus(pane)).toEqual({
       working: true,
+      blocked: false,
       waitingFor: null,
       permission: "bypass",
       goalActive: true,
@@ -608,6 +613,7 @@ describe("parsePaneStatus", () => {
     const pane = "❯ \n  ⏵⏵ plan mode on (shift+tab to cycle) · ? for shortcuts";
     expect(parsePaneStatus(pane)).toEqual({
       working: false,
+      blocked: false,
       waitingFor: null,
       permission: "plan",
       goalActive: false,
@@ -619,6 +625,7 @@ describe("parsePaneStatus", () => {
     const { parsePaneStatus } = await import("../src/server/dispatcher.js");
     expect(parsePaneStatus("just some output\n")).toEqual({
       working: false,
+      blocked: false,
       waitingFor: null,
       permission: null,
       goalActive: false,
@@ -649,5 +656,91 @@ describe("parsePaneStatus", () => {
       .toBe("Waiting for 3 background agents to finish");
     expect(parsePaneStatus("✻ Waiting for 2 background tasks to finish\n❯ ").waitingFor)
       .toBe("Waiting for 2 background tasks to finish");
+  });
+});
+
+describe("blocked: a modal owns the pane (security)", () => {
+  // PROVEN on 04/08 with a disposable agent: with "Do you want to proceed?"
+  // open, the nudge's Enter (sent ~500ms after the text) landed on the
+  // highlighted choice and the pending Bash command RAN. The dispatcher must
+  // never type into a pane in this state.
+  it("reads the permission dialog, the trust prompt and the channel warning", async () => {
+    const { parsePaneStatus } = await import("../src/server/dispatcher.js");
+    const permission = [
+      " Bash command",
+      "   touch PROVA.txt",
+      " Do you want to proceed?",
+      " ❯ 1. Yes",
+      "   2. Yes, and always allow",
+      "   3. No",
+    ].join("\n");
+    expect(parsePaneStatus(permission).blocked).toBe(true);
+    expect(parsePaneStatus("Do you trust the files in this folder?\n❯ 1. Yes, proceed").blocked).toBe(true);
+    expect(parsePaneStatus("WARNING: Loading development channels\n❯ 1. I am using this").blocked).toBe(true);
+  });
+
+  it("an ordinary working/idle frame is NOT blocked", async () => {
+    const { parsePaneStatus } = await import("../src/server/dispatcher.js");
+    const working = "· Transfiguring… (30m)\n❯ \n  ⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt";
+    expect(parsePaneStatus(working).blocked).toBe(false);
+    expect(parsePaneStatus("❯ \n  ⏵⏵ plan mode on (shift+tab to cycle) · ? for shortcuts").blocked).toBe(false);
+  });
+});
+
+describe("a modal dialog holds the nudge (security regression)", () => {
+  const DIALOG = [
+    " Bash command",
+    "   rm -rf /tmp/x",
+    " Do you want to proceed?",
+    " ❯ 1. Yes",
+    "   3. No",
+  ].join("\n");
+
+  it("types NOTHING while the dialog is open, and delivers after it is answered", async () => {
+    const world = mockTmux();
+    const dispatcher = makeDispatcher(world.tmux);
+    registerOnline("alpha");
+    registerOnline("beta");
+    world.alive.add("sb-beta");
+    world.paneText.set("sb-beta", DIALOG); // a permission prompt owns the pane
+
+    expect(deliver(dispatcher, "alpha", "beta", "oi")).toBe("nudged"); // decision is sync
+    await new Promise((r) => setTimeout(r, 20)); // let the async path run
+    expect(world.nudges).toHaveLength(0); // ← the Enter that used to answer "Yes"
+
+    // The held nudge must not impose a cooldown on the recovery path.
+    expect(store.getAgent("beta")!.lastNudgeAt).toBeNull();
+
+    // Operator answers the dialog; the pane goes back to normal.
+    world.paneText.set("sb-beta", "❯ \n  ⏵⏵ bypass permissions on (shift+tab to cycle)");
+    store.updateAgent("beta", { blocked: false });
+    dispatcher.flushPending();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(world.nudges).toHaveLength(1);
+    expect(world.nudges[0].text).toContain("1 new message(s)");
+  });
+
+  it("fails CLOSED: an unreadable pane is treated as blocked", async () => {
+    const world = mockTmux();
+    world.tmux.capturePane = async () => {
+      throw new Error("pane gone");
+    };
+    const dispatcher = makeDispatcher(world.tmux);
+    registerOnline("alpha");
+    registerOnline("beta");
+    world.alive.add("sb-beta");
+    deliver(dispatcher, "alpha", "beta", "oi");
+    await new Promise((r) => setTimeout(r, 20));
+    expect(world.nudges).toHaveLength(0);
+  });
+
+  it("the cached blocked flag short-circuits before any tmux call", () => {
+    const world = mockTmux();
+    const dispatcher = makeDispatcher(world.tmux);
+    registerOnline("alpha");
+    registerOnline("beta");
+    world.alive.add("sb-beta");
+    store.updateAgent("beta", { blocked: true });
+    expect(deliver(dispatcher, "alpha", "beta", "oi")).toBe("coalesced");
   });
 });
