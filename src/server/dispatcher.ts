@@ -63,6 +63,15 @@ export interface DispatcherTmux {
 export interface PaneStatus {
   working: boolean;
   /**
+   * A modal question owns the TUI right now ("Do you want to proceed?",
+   * trust prompt, development-channel warning). SECURITY-CRITICAL: a nudge
+   * types a line and sends Enter ~500ms later, and with one of these open
+   * that Enter lands on the HIGHLIGHTED CHOICE — proven on 04/08 with a
+   * disposable agent: the nudge accepted a pending Bash permission and the
+   * command ran. Never type into a blocked pane.
+   */
+  blocked: boolean;
+  /**
    * "Waiting for N background agents to finish", verbatim, when the TUI shows
    * it. This state has NO "esc to interrupt" (the turn's text is done), so
    * without it the poll reads a waiting agent as idle and the chat renders
@@ -84,6 +93,12 @@ export interface PaneStatus {
  */
 export function parsePaneStatus(pane: string): PaneStatus {
   const working = /esc to interrupt/i.test(pane);
+  // Modal prompts, by their own wording (each verified in a live pane).
+  const blocked =
+    /Do you want to (?:proceed|create|make|allow)/i.test(pane) ||
+    /Do you trust the files in this folder\?/i.test(pane) ||
+    /Loading development channels/i.test(pane) ||
+    /❯\s*\d+\.\s/.test(pane); // the numbered choice list a modal renders
   const waitMatch = pane.match(/Waiting for \d+ background (?:agents?|tasks?) to finish/i);
   const waitingFor = waitMatch ? waitMatch[0] : null;
   const goalMatch = pane.match(/\/goal active(?:\s*\(([^)]+)\))?/i);
@@ -101,7 +116,7 @@ export function parsePaneStatus(pane: string): PaneStatus {
           ? "plan"
           : "default";
   }
-  return { working, waitingFor, permission, goalActive, goalFor };
+  return { working, blocked, waitingFor, permission, goalActive, goalFor };
 }
 
 /** Back-compat shim: whether the CLI is mid-turn. */
@@ -190,6 +205,14 @@ export class Dispatcher {
       this.pendingNudge.add(agent.name); // coalescing
       return "coalesced";
     }
+    // A modal dialog owns the pane: typing now would answer it (proven —
+    // see PaneStatus.blocked). Queue instead; the flush delivers once the
+    // operator has answered. The cached flag is the fast path; fireNudge
+    // re-checks the LIVE pane right before typing (fail-closed).
+    if (agent.blocked) {
+      this.pendingNudge.add(agent.name);
+      return "coalesced";
+    }
     // The immediate nudge covers ALL unread (count + senders come from the
     // store), so it discharges any coalescing debt — without this delete, a
     // stale pending entry would make the next flush fire a duplicate nudge.
@@ -219,6 +242,7 @@ export class Dispatcher {
       if (agent.muted) continue;
       if (agent.status !== "online") continue;
       if (this.inCooldown(agent)) continue;
+      if (agent.blocked) continue; // a modal still owns the pane — keep waiting
       if (this.store.unreadCount(name) === 0) {
         // Spec: only nudge with unread > 0. The debt is DISCHARGED (agent
         // read everything via check_messages) — drop the entry, otherwise it
@@ -363,13 +387,14 @@ export class Dispatcher {
       for (const { name, tmuxSession } of this.store.listAgents()) {
         const agent = this.store.getAgent(name);
         if (!agent || agent.status !== "online") continue;
-        let status: PaneStatus = { working: false, waitingFor: null, permission: null, goalActive: false, goalFor: null };
+        let status: PaneStatus = { working: false, blocked: false, waitingFor: null, permission: null, goalActive: false, goalFor: null };
         try {
           status = parsePaneStatus(await this.tmux.capturePane(tmuxSession, 30));
         } catch {
           /* unreadable pane: treat as idle/unknown, never throw */
         }
         const next: AgentActivity = status.working ? "working" : "idle";
+        const blocked = status.blocked;
         // Only write on a real change (any field), so a steady agent is free.
         const permission = status.permission ?? agent.permission;
         const goalFor = status.goalActive ? status.goalFor ?? undefined : undefined;
@@ -381,12 +406,14 @@ export class Dispatcher {
           agent.permission === permission &&
           !!agent.goalActive === status.goalActive &&
           (agent.goalFor ?? undefined) === goalFor &&
-          (agent.waitingFor ?? "") === waitingFor
+          (agent.waitingFor ?? "") === waitingFor &&
+          !!agent.blocked === blocked
         ) {
           continue;
         }
         const updated = this.store.updateAgent(name, {
           activity: next,
+          blocked,
           waitingFor,
           permission,
           goalActive: status.goalActive,
@@ -442,6 +469,28 @@ export class Dispatcher {
     // recovery path (PRD 10.2 stamps only after a successful send).
     const prevNudgeAt = agent.lastNudgeAt;
     this.store.updateAgent(agent.name, { lastNudgeAt: at });
+
+    // LIVE re-check right before typing: the cached `blocked` flag is up to
+    // one activity poll old, and a modal that opened in between would eat
+    // this nudge's Enter as its answer. Fail-CLOSED — an unreadable pane is
+    // treated as blocked, exactly like the pane guard.
+    if (this.tmux.capturePane) {
+      let blockedNow = true;
+      try {
+        blockedNow = parsePaneStatus(await this.tmux.capturePane(agent.tmuxSession, 30)).blocked;
+      } catch {
+        /* unreadable → stay blocked */
+      }
+      if (blockedNow) {
+        this.store.updateAgent(agent.name, { lastNudgeAt: prevNudgeAt, blocked: true });
+        this.pendingNudge.add(agent.name); // deliver once the modal is answered
+        this.log.info(
+          `[dispatcher] nudge for ${agent.name} HELD: a modal dialog owns the pane ` +
+            `(typing now would answer it). Queued for the next flush.`,
+        );
+        return { sent: false, reason: "a dialog is open in the pane" };
+      }
+    }
 
     let result: NudgeResult;
     try {

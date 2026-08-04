@@ -69,6 +69,12 @@ export interface Agent {
    * the CLEAR value because updateAgent ignores undefined keys.
    */
   waitingFor?: string;
+  /**
+   * A modal dialog owns the pane right now (permission prompt, trust
+   * dialog). The dispatcher NEVER types into a blocked pane: the nudge's
+   * Enter would answer the dialog (proven 04/08). Ephemeral, like activity.
+   */
+  blocked?: boolean;
   permission?: AgentPermission; // permission/plan mode from the TUI footer (ephemeral)
   goalActive?: boolean; // a /goal is active in the session (ephemeral)
   goalFor?: string; // how long the goal has run, e.g. "21m" (ephemeral)
