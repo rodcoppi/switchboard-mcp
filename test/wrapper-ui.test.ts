@@ -469,3 +469,34 @@ describe("WhatsApp copy — a wrapped LIST (the case reported many times)", () =
     expect(toWA(list)).toBe(list);
   });
 });
+
+describe("WhatsApp copy — a link must not turn the message into 'code'", () => {
+  const toWA = embeddedFunctionWith<(text: string) => string>("toWhatsAppText", ["unwrapForWhatsApp"]);
+
+  // THE root cause behind months of "the copy still breaks lines": the code
+  // sniff read the "//" of https:// as a C/JS comment marker, so any fenced
+  // message carrying a link was preserved byte-for-byte — hard wraps
+  // included. Every client-facing message has a link, which is why the
+  // wrapping heuristics never seemed to work.
+  it("unwraps a wrapped message that contains a URL", () => {
+    const msg = [
+      "```",
+      "Fechei a proposta. Antes de escrever eu abri o relatório da NeoGrid",
+      "que você me mandou e fui atrás do que ele diz de verdade. Achei uma",
+      "coisa que muda a conversa: em 90 dias são 1.844 unidades.",
+      "",
+      "https://rodcoppi.com.br/p/comaharus/",
+      "senha: *harusai*",
+      "```",
+    ].join("\n");
+    const out = toWA(msg);
+    expect(out).not.toContain("```");
+    expect(out).toContain("relatório da NeoGrid que você me mandou");
+    expect(out).toContain("https://rodcoppi.com.br/p/comaharus/"); // the link survives whole
+  });
+
+  it("still treats real code as code — including a REAL // comment", () => {
+    const code = "```js\n// counts the rows\nconst n = rows.length;\nreturn n + 1;\n```";
+    expect(toWA(code)).toBe(code);
+  });
+});
