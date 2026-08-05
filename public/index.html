@@ -6573,8 +6573,16 @@
       // and it must unwrap like any other text (fence markers dropped) — while
       // real code keeps its fence and every byte (``` is WhatsApp monospace).
       text = text.replace(/```[^\n]*\n?([\s\S]*?)```/g, (whole, body) => {
+        // URLs are stripped BEFORE the code sniff: "https://site.com/p/x/"
+        // carries "//", which read as a C/JS comment marker and condemned the
+        // whole block to be treated as code — byte-for-byte, hard wraps and
+        // all. That is why every message with a link (i.e. every message
+        // written for a client) kept its breaks no matter how the wrapping
+        // heuristics were tuned. A comment marker now has to look like one:
+        // at a line start or after whitespace.
+        const proseProbe = body.replace(/\bhttps?:\/\/\S+/g, " ");
         const looksLikeCode =
-          /[{};=\\]|<[a-zA-Z/]|^\s{4,}\S|\/\/|#!|^\s*(?:import|const|let|var|function|def|class|SELECT|curl|npm|git)\b/m.test(body);
+          /[{};=\\]|<[a-zA-Z/]|^\s{4,}\S|(?:^|\s)\/\/|#!|^\s*(?:import|const|let|var|function|def|class|SELECT|curl|npm|git)\b/m.test(proseProbe);
         const lines = body.split("\n").filter((l) => l.trim() !== "");
         const avg = lines.length ? lines.reduce((s, l) => s + l.length, 0) / lines.length : 0;
         if (!looksLikeCode && avg >= 40) return hold(plain, unwrapForWhatsApp(body.trim()), "P");
