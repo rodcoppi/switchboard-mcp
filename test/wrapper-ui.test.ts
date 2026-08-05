@@ -500,3 +500,12 @@ describe("WhatsApp copy — a link must not turn the message into 'code'", () =>
     expect(toWA(code)).toBe(code);
   });
 });
+
+describe("drop is handled ONCE", () => {
+  it("the textarea has no drop handler of its own — the zone would double it", () => {
+    // A drop on the textarea fired its own handler AND, as the event bubbled
+    // out, the composer-wide zone: one file, two attachments.
+    expect(script).not.toContain('chatInput.addEventListener("drop"');
+    expect(script).toContain('wireDropZone($("#chat-composer"), composerDrop)');
+  });
+});

@@ -1682,7 +1682,9 @@
     #chat-input:focus { outline: none; }
     #chat-input:disabled { opacity: 0.5; }
     /* Drop target feedback: dashed accent ring while a file is dragged over. */
-    .chat-composer-inner:has(#chat-input.drag-over) { border-style: dashed; border-color: var(--accent); background: var(--accent-wash); }
+    /* The composer's own drag feedback — keyed off the zone class now that
+       the textarea has no drop handler (it had one, and it double-attached). */
+    #chat-composer.drop-target .chat-composer-inner { border-style: dashed; border-color: var(--accent); background: var(--accent-wash); }
     .chat-send {
       flex: none;
       align-self: stretch;
@@ -8763,24 +8765,11 @@
           attachFiles(ev.clipboardData.files);
         }
       });
-      chatInput.addEventListener("dragover", (ev) => {
-        ev.preventDefault(); // required, or the browser navigates to the file
-        chatInput.classList.add("drag-over");
-      });
-      chatInput.addEventListener("dragleave", () => chatInput.classList.remove("drag-over"));
-      chatInput.addEventListener("drop", (ev) => {
-        ev.preventDefault();
-        chatInput.classList.remove("drag-over");
-        const paths = pathsFromTransfer(ev.dataTransfer);
-        if (paths.length) {
-          insertPathAttachments(paths);
-          return;
-        }
-        if (ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files.length) {
-          attachFiles(ev.dataTransfer.files);
-        }
-      });
-      // Drop zones beyond the textarea. In the real terminal, dragging a file
+      // NOTE: the textarea has NO drop handler of its own. It used to, and the
+      // composer-wide zone below then fired for the SAME drop as the event
+      // bubbled out of it — one file, two attachments. The zones cover the
+      // textarea by bubbling; one handler, one attachment.
+      // Drop zones covering the composer and beyond. In the real terminal, dragging a file
       // in "just works" — here, a drop outside the tiny composer NAVIGATED
       // the browser to the file and killed the dashboard. The window-level
       // guard makes a stray drop inert everywhere; the two zones make it
