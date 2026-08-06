@@ -438,12 +438,21 @@ function downloadRoots(): string[] {
  * fallback, never the default (dragging a 2 GB video must not duplicate it).
  * Ambiguity returns null: linking the WRONG twin is worse than staging.
  */
+const DROP_SCAN_BUDGET_MS = 400;
+
 function findDropOrigin(
   filename: string,
   size: number,
   mtimeMs: number | null,
   agentCwds: string[],
 ): string | null {
+  // HARD time budget. This walk is synchronous (readdirSync/statSync), so
+  // every millisecond it spends is a millisecond the hub answers NOTHING —
+  // no SSE, no health, no MCP. Measured at 3.7s for a common filename with
+  // Windows folders in scope (/mnt/* is 9p, ~1ms per stat), which reads to
+  // the operator as "the dashboard died". A miss is cheap (the file gets
+  // staged instead); a frozen hub is not.
+  const deadline = Date.now() + DROP_SCAN_BUDGET_MS;
   const profiles: string[] = [];
   let mounts: fs.Dirent[] = [];
   try {
@@ -477,6 +486,7 @@ function findDropOrigin(
     for (let depth = 0; depth < maxDepth && level.length > 0 && scanned < AGENT_FILES_SCAN_CAP; depth++) {
       const next: string[] = [];
       for (const relDir of level) {
+        if (Date.now() > deadline) return matches.length === 1 ? matches[0].full : null;
         let entries: fs.Dirent[];
         try {
           entries = fs.readdirSync(path.join(root, relDir), { withFileTypes: true });
