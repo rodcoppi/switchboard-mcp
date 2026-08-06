@@ -962,6 +962,18 @@ describe("REST as operator", () => {
     expect(((await cleared.json()) as any).agent.cliArgs).toBe("");
   });
 
+  it("files/origin answers fast even when the search finds nothing", async () => {
+    // The walk is synchronous: every millisecond it burns is a millisecond
+    // the hub answers nothing at all. Measured at 3.7s in the wild, which
+    // looks exactly like "the dashboard died" — hence the hard budget.
+    const started = Date.now();
+    const res = await fetch(api("/api/files/origin?name=nada-com-esse-nome-existe.ogg&size=987654"));
+    const elapsed = Date.now() - started;
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as any).path).toBeNull();
+    expect(elapsed).toBeLessThan(3000); // budget is 400ms + request overhead
+  });
+
   it("files/origin finds a dropped file's original by name+size, refuses ambiguity", async () => {
     // The drop contract: reference where the file already LIVES (an agent's
     // project counts as a likely home) instead of staging a duplicate.
