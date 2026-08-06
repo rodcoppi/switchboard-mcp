@@ -306,16 +306,30 @@ export class TerminalBridge {
 
     // Grid, pane id, cursor. Quoted: '#' starts a comment in a control-mode
     // command line (spike-verified parse error without quotes).
+    // The mouse flags ride along: a capture carries CONTENT, never terminal
+    // MODES, so a viewer that attaches after the app enabled mouse reporting
+    // never learns about it — and the wheel then does nothing at all, because
+    // the pane has no scrollback to scroll either (alternate screen,
+    // history_size 0). Re-announcing the modes is what a real client does on
+    // attach; it is why scrolling works in a Windows terminal and did not here.
     const info = await cc.command(
-      `display-message -p -t '${t}' '#{pane_id} #{pane_width} #{pane_height} #{cursor_x} #{cursor_y} #{cursor_flag}'`,
+      `display-message -p -t '${t}' '#{pane_id} #{pane_width} #{pane_height} #{cursor_x} #{cursor_y} #{cursor_flag} #{mouse_standard_flag} #{mouse_button_flag} #{mouse_all_flag} #{mouse_sgr_flag}'`,
     );
-    const m = /^(%\d+) (\d+) (\d+) (\d+) (\d+) (\d+)$/.exec(info.out[0] ?? "");
+    const m = /^(%\d+) (\d+) (\d+) (\d+) (\d+) (\d+) (\d+) (\d+) (\d+) (\d+)$/.exec(info.out[0] ?? "");
     if (!info.ok || !m) {
       throw new Error(`could not read the pane state (${info.out.join(" ") || "no output"})`);
     }
     entry.paneId = m[1];
     const grid = { cols: Number(m[2]), rows: Number(m[3]) };
     const cursor = { x: Number(m[4]), y: Number(m[5]), visible: m[6] === "1" };
+    // Exactly the modes tmux tracks for the pane, in the order a terminal
+    // expects them (SGR last so the app gets the extended encoding it asked
+    // for). Off flags emit nothing: never turn a mode ON that the app did not.
+    const mouseModes =
+      (m[7] === "1" ? "\x1b[?1000h" : "") +
+      (m[8] === "1" ? "\x1b[?1002h" : "") +
+      (m[9] === "1" ? "\x1b[?1003h" : "") +
+      (m[10] === "1" ? "\x1b[?1006h" : "");
 
     // 3. The screen, colours included. The cursor query above is a hair older
     //    than this capture; both writes land back-to-back on the control
@@ -330,6 +344,7 @@ export class TerminalBridge {
     //    the pane's own flag, positioned absolutely (ANSI is 1-based).
     const frame = Buffer.from(
       "\x1b[?25l\x1b[0m\x1b[2J\x1b[H" +
+        mouseModes +
         cap.out.join("\r\n") +
         `\x1b[${cursor.y + 1};${cursor.x + 1}H` +
         (cursor.visible ? "\x1b[?25h" : ""),

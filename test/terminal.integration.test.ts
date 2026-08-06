@@ -405,3 +405,35 @@ describe("grid watchdog (the 'torta' screen)", () => {
     }
   }, 25_000);
 });
+
+describe("mouse modes travel with the frame (why the wheel did nothing)", () => {
+  it("re-announces the pane's mouse reporting so a fresh viewer can scroll", async () => {
+    if (!hasTmux) return;
+    // A capture carries CONTENT, never MODES. The agent CLIs run in the
+    // alternate screen with history_size 0 — there is no scrollback to roll —
+    // so the wheel only works if the emulator forwards mouse events to the
+    // app, which it only does after seeing the enable sequences. A viewer
+    // attaching later never saw them, and the wheel was dead.
+    const session = sessionName("mouse");
+    // A tiny app that turns on mouse reporting (1000) with SGR encoding
+    // (1006), exactly like a TUI does, then idles.
+    await execFileAsync("tmux", [
+      "new-session", "-d", "-s", session, "-x", "80", "-y", "24",
+      "sh", "-c", "printf '\\033[?1000h\\033[?1006h'; sleep 60",
+    ]);
+    const bridge = newBridge();
+    const viewer = makeViewer();
+    // Let the app's own enable sequences land in the pane BEFORE attaching,
+    // so the only way the viewer can learn them is from the frame itself.
+    await new Promise((r) => setTimeout(r, 700));
+    const detach = await bridge.attachViewer(session, viewer);
+    try {
+      await waitFor(() => viewer.chunks.length > 0);
+      const first = viewer.chunks[0].toString("utf8");
+      expect(first).toContain("\x1b[?1000h"); // mouse reporting
+      expect(first).toContain("\x1b[?1006h"); // SGR encoding
+    } finally {
+      detach();
+    }
+  }, 20_000);
+});
