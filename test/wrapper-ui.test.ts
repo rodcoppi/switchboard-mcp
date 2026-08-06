@@ -509,3 +509,47 @@ describe("drop is handled ONCE", () => {
     expect(script).toContain('wireDropZone($("#chat-composer"), composerDrop)');
   });
 });
+
+describe("unwrap by exact wrap width (the rule that replaced the percentages)", () => {
+  const toWA = embeddedFunctionWith<(t: string) => string>("toWhatsAppText", ["unwrapForWhatsApp"]);
+  const unwrapPlain = embeddedFunctionWith<(t: string) => string>("unwrapPlain", ["unwrapForWhatsApp"]);
+
+  // A run is unwrapped only when ONE column W explains every break: the left
+  // line fits in W and the next word does not. Content whose line ends have
+  // nothing to do with a margin (lists, addresses, logs, tables) survives.
+  it("joins prose wrapped at a consistent column", () => {
+    const wrapped = [
+      "A primeira: o Canal Pro tem uma IA de atendimento própria, que já vem",
+      "integrada aí. Pode ser que resolva boa parte do que você quer, e sairia",
+      "mais barato que eu construir do zero.",
+    ].join("\n");
+    expect(unwrapPlain(wrapped)).toBe(
+      "A primeira: o Canal Pro tem uma IA de atendimento própria, que já vem integrada aí. Pode ser que resolva boa parte do que você quer, e sairia mais barato que eu construir do zero.",
+    );
+  });
+
+  it("leaves an address alone — no single width explains those breaks", () => {
+    const address = "Rua das Flores, 123\nApto 45\nSão Paulo - SP\n01234-567";
+    expect(unwrapPlain(address)).toBe(address);
+  });
+
+  it("leaves a log alone", () => {
+    const log = [
+      "2026-08-05T10:00:01Z INFO  started the worker pool with eight threads",
+      "2026-08-05T10:00:02Z WARN  queue depth is above the configured threshold",
+      "2026-08-05T10:00:03Z ERROR the upstream refused the connection, retrying",
+    ].join("\n");
+    expect(unwrapPlain(log)).toBe(log); // every line is long, none is a wrap
+  });
+
+  it("plain copy undoes the wrapping but never converts formatting", () => {
+    const md = "Olha o **negrito** e o `código`.";
+    expect(unwrapPlain(md)).toBe(md); // WA would turn ** into *
+    expect(toWA(md)).toContain("*negrito*");
+  });
+
+  it("plain copy keeps a real code fence byte-for-byte", () => {
+    const code = "```js\nconst a = 1;\nif (a) { run(); }\n```";
+    expect(unwrapPlain(code)).toBe(code);
+  });
+});
