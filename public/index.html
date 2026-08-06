@@ -6494,43 +6494,75 @@
      * those breaks are intentional writing, not wrapping.
      */
     /**
-     * Undoes an agent's hard wrapping so a pasted message reflows in WhatsApp.
+     * Undoes an agent's hard wrapping so copied text reflows where you paste it.
      *
-     * Two RULES, and the order matters — the earlier versions of this got it
-     * wrong by trying to answer "is this block hard-wrapped?" with statistics
-     * about line length, which fails exactly where it hurts most: a list whose
-     * items wrap. In "• A, B,\n  C and D" the continuation is a minority line
-     * in the block, so no percentage threshold ever caught it and the break
-     * survived into WhatsApp.
+     * THE RULE (replacing three generations of tuned percentages): a run of
+     * lines is unwrapped only when its breaks are EXACTLY what a greedy word
+     * wrapper at ONE consistent column would produce. For each break, the left
+     * line must fit in W and the next word must NOT — so W lives in
+     * [len(line), len(line + " " + nextWord) - 1]. Intersect those intervals
+     * across the run: if one W explains every break, the newlines are an
+     * artifact of wrapping and can go. If no single W does, the author meant
+     * them, and the text is left alone.
      *
-     *   1. An INDENTED line continues whatever came before it. Deterministic,
-     *      no statistics: someone who indents is continuing a thought, and
-     *      WhatsApp does not preserve the alignment anyway.
-     *   2. Plain lines (no marker, no indent) are joined only when the block
-     *      LOOKS hard-wrapped (most lines near the wrap column, or every line
-     *      but the short tail) — otherwise deliberately short lines, like a
-     *      name per line, would collapse into one run.
+     * That is why a list of names, an address, a log, a table or a poem
+     * survives: their line ends have nothing to do with a margin. Accepted
+     * failure modes, deliberately: prose deliberately typed at a constant
+     * margin gets joined, and inconsistent wrapping (two editors, one file)
+     * stays wrapped.
+     *
+     * One exception predates the rule and stays, because it is deterministic:
+     * an INDENTED line right after a list item is that item's continuation.
      */
     function unwrapForWhatsApp(sourceText) {
+      const WRAP_MIN = 55; // below this nobody is wrapping; short lines are intent
+      const WRAP_MAX = 120;
       const isMarker = (l) => /^\s*(?:•|☐|☑|>|\d+[.)]\s|[-*+]\s)/.test(l) || /^[BCP]\d+$/.test(l.trim());
       const isIndented = (l) => /^\s+\S/.test(l);
+      const firstWord = (l) => l.trim().split(/\s+/)[0] || "";
+
+      /**
+       * Lines that repeat a STRUCTURAL prefix are records, not wrapping: a
+       * log's timestamp/severity, a "key: value" run, an ASCII table. Their
+       * next word is long (a timestamp), which widens the feasible-width
+       * window enough for the greedy test alone to wave them through.
+       */
+      function looksStructured(lines) {
+        const prefixed = lines.filter((l) =>
+          /^\s*(?:\d{4}-\d{2}-\d{2}|\d{1,2}:\d{2}(?::\d{2})?\b|\[|(?:INFO|WARN|WARNING|ERROR|DEBUG|TRACE|FATAL)\b)/i.test(l) ||
+          /^\s*[\w.-]+\s*:\s+\S/.test(l) ||
+          /^\s*[|+][-\s|+]/.test(l),
+        ).length;
+        return prefixed >= 2;
+      }
+
+      /** Do these consecutive lines look like ONE greedy-wrapped paragraph? */
+      function isWrappedRun(lines) {
+        if (lines.length < 2) return false;
+        if (looksStructured(lines)) return false;
+        let low = WRAP_MIN;
+        let high = WRAP_MAX;
+        for (let i = 0; i < lines.length - 1; i++) {
+          const left = lines[i].replace(/\s+$/, "");
+          const next = firstWord(lines[i + 1]);
+          if (!next) return false;
+          low = Math.max(low, left.length);
+          high = Math.min(high, left.length + 1 + next.length - 1);
+          if (low > high) return false; // no single width explains this break
+        }
+        return true;
+      }
+
       return String(sourceText)
         .split(/\n{2,}/)
         .map((block) => {
           const lines = block.split("\n");
-          const prose = lines.filter((l) => l.trim() !== "" && !isMarker(l) && !isIndented(l));
-          const long = (l) => l.trim().length >= 55;
-          const joinProse =
-            prose.length >= 2 &&
-            (prose.filter(long).length >= prose.length * 0.6 || prose.slice(0, -1).every(long));
-
           const out = [];
-          let buf = [];
+          let run = [];
           const flush = () => {
-            if (buf.length) {
-              out.push(buf.join(" "));
-              buf = [];
-            }
+            if (!run.length) return;
+            out.push(isWrappedRun(run) ? run.map((l) => l.trim()).join(" ") : run.join("\n"));
+            run = [];
           };
           for (const line of lines) {
             if (line.trim() === "") {
@@ -6542,17 +6574,11 @@
               out.push(line.trimEnd());
               continue;
             }
-            if (isIndented(line) && (buf.length || out.length)) {
-              if (buf.length) buf.push(line.trim());
-              else out[out.length - 1] += " " + line.trim();
+            if (isIndented(line) && !run.length && out.length && isMarker(out[out.length - 1])) {
+              out[out.length - 1] += " " + line.trim(); // a wrapped list item
               continue;
             }
-            if (joinProse) {
-              buf.push(line.trim());
-              continue;
-            }
-            flush();
-            out.push(line);
+            run.push(line);
           }
           flush();
           return out.join("\n");
@@ -6612,8 +6638,32 @@
       return text;
     }
 
+    /**
+     * Plain copy, but PASTE-READY: the agent's hard wrapping is undone and
+     * everything else is left exactly as written (no markdown conversion —
+     * that is what the WhatsApp button is for). Copying raw was the honest
+     * default and the wrong one: the owner pastes into mail and editors, and
+     * "copied from Switchboard" kept arriving with ragged breaks.
+     */
+    function unwrapPlain(source) {
+      let text = String(source || "").replace(/\r\n?/g, "\n");
+      const kept = [];
+      const hold = (v) => `\uE010${kept.push(v) - 1}\uE011`;
+      // Fences: real code keeps every byte; a prose fence unwraps like the
+      // rest (same sniff as toWhatsAppText, URLs stripped first).
+      text = text.replace(/```[^\n]*\n?([\s\S]*?)```/g, (whole, body) => {
+        const proseProbe = body.replace(/\bhttps?:\/\/\S+/g, " ");
+        const looksLikeCode =
+          /[{};=\\]|<[a-zA-Z/]|^\s{4,}\S|(?:^|\s)\/\/|#!|^\s*(?:import|const|let|var|function|def|class|SELECT|curl|npm|git)\b/m.test(proseProbe);
+        return hold(looksLikeCode ? whole : unwrapForWhatsApp(body.trim()));
+      });
+      text = text.replace(/`[^`\n]+`/g, (v) => hold(v)); // inline code, verbatim
+      text = unwrapForWhatsApp(text);
+      return text.replace(/\uE010(\d+)\uE011/g, (_, i) => kept[Number(i)]);
+    }
+
     async function copyChatText(btn, text, whatsapp) {
-      const value = whatsapp ? toWhatsAppText(text) : text;
+      const value = whatsapp ? toWhatsAppText(text) : unwrapPlain(text);
       try {
         await navigator.clipboard.writeText(value);
         btn.classList.add("copied");
@@ -6632,13 +6682,13 @@
         const rail = actionRailFor(turn);
         const copy = el("button", "chat-copy-btn");
         copy.type = "button";
-        copy.title = "Copy message";
+        copy.title = "Copy message — hard wrapping undone, formatting untouched";
         copy.setAttribute("aria-label", "Copy message");
         copy.appendChild(copyGlyphSvg());
         copy.addEventListener("click", (ev) => { ev.stopPropagation(); copyChatText(copy, turn.__text, false); });
         const wa = el("button", "chat-copy-btn whatsapp", "WA");
         wa.type = "button";
-        wa.title = "Copy for WhatsApp — convert Markdown formatting";
+        wa.title = "Copy for WhatsApp — unwrapped AND converted to WhatsApp formatting";
         wa.setAttribute("aria-label", "Copy message formatted for WhatsApp");
         wa.addEventListener("click", (ev) => { ev.stopPropagation(); copyChatText(wa, turn.__text, true); });
         rail.append(copy, wa);
