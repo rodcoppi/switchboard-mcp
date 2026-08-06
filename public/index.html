@@ -6874,15 +6874,23 @@
       return chip;
     }
 
-    // A small copy button that lifts `text` to the clipboard, with a brief tick.
-    function copyButton(text) {
+    /**
+     * A small copy button that lifts `text` to the clipboard, with a brief
+     * tick. `unwrap` makes it paste-ready (prose reflows; code, logs and
+     * tables are recognised and copied byte-for-byte) — the fenced blocks in
+     * a chat message are usually the DRAFT the operator is about to send, and
+     * this button is the one he actually clicks.
+     */
+    function copyButton(text, unwrap) {
       const btn = el("button", "copy-btn", "copy");
       btn.type = "button";
-      btn.title = "Copy to clipboard";
+      btn.title = unwrap
+        ? "Copy — hard wrapping undone (code and logs copied as-is)"
+        : "Copy to clipboard";
       btn.setAttribute("aria-label", "Copy action output");
       btn.addEventListener("click", (e) => {
         e.stopPropagation();
-        navigator.clipboard.writeText(text).then(
+        navigator.clipboard.writeText(unwrap ? unwrapPlain(text) : text).then(
           () => {
             btn.textContent = "copied";
             setTimeout(() => (btn.textContent = "copy"), 1200);
@@ -6970,7 +6978,7 @@
         const code = pre.querySelector("code");
         const wrap = el("div", "code-wrap");
         pre.replaceWith(wrap);
-        wrap.append(pre, copyButton((code ? code.textContent : pre.textContent) || ""));
+        wrap.append(pre, copyButton((code ? code.textContent : pre.textContent) || "", true));
       }
     }
 
