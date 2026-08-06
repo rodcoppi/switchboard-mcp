@@ -553,3 +553,18 @@ describe("unwrap by exact wrap width (the rule that replaced the percentages)", 
     expect(unwrapPlain(code)).toBe(code);
   });
 });
+
+describe("the copy button ON a code block", () => {
+  // The button the owner actually clicks: the little "copy" floating over a
+  // fenced block. It was the ONLY copy path still handing over raw text —
+  // and the fenced block is exactly where an agent puts the draft message.
+  it("fenced blocks get the unwrapping copy button; tool output stays verbatim", () => {
+    expect(script).toContain('copyButton((code ? code.textContent : pre.textContent) || "", true)');
+    expect(script).toContain("wrap.append(pre, copyButton(text));"); // tool input/result: byte-for-byte
+  });
+
+  it("copyButton unwraps only when asked", () => {
+    const src = script.match(/function copyButton[\s\S]*?\n    }/)?.[0] ?? "";
+    expect(src).toContain("unwrap ? unwrapPlain(text) : text");
+  });
+});
