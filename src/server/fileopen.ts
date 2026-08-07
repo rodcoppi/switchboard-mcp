@@ -24,6 +24,7 @@
 // the bytes never touch this process, so a 200 MB video opens fine — which is
 // the whole reason this exists.
 
+import fs from "node:fs";
 import path from "node:path";
 
 /**
@@ -66,7 +67,7 @@ export function refusalFor(filePath: string): string {
 export type ExecCapture = (
   file: string,
   args: string[],
-  opts?: { cwd?: string },
+  opts?: { cwd?: string; env?: NodeJS.ProcessEnv },
 ) => Promise<{ stdout: string }>;
 
 export interface FileOpener {
@@ -101,6 +102,47 @@ export function createWindowsFileOpener(deps: {
     return win;
   }
 
+  /**
+   * Explorer opens the window BEHIND whatever has focus: Windows refuses the
+   * foreground to a process that did not get it from a user gesture, and our
+   * caller is a background hub. The window then sits behind the browser and
+   * the operator concludes the button is broken (it was "opening" 13 windows
+   * he never saw). Releasing the foreground lock the documented way — a
+   * synthetic ALT keypress around SetForegroundWindow — is what every launcher
+   * does. Best-effort: a failure here just leaves the window where it was.
+   */
+  async function raiseWindow(winPath: string): Promise<void> {
+    const ps = [
+      "Add-Type @'",
+      "using System;using System.Runtime.InteropServices;",
+      "public class SbFg {",
+      ' [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);',
+      ' [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int n);',
+      ' [DllImport("user32.dll")] public static extern void keybd_event(byte b, byte s, uint f, IntPtr e);',
+      "}",
+      "'@ -EA SilentlyContinue",
+      // The path is EMBEDDED, not passed as an environment variable: a Linux
+      // env var does not reach a Windows process unless it is listed in
+      // WSLENV, so the first version handed PowerShell an empty target and
+      // quietly raised nothing. Single-quoted PS literal, quotes doubled.
+      `$t = '${winPath.replace(/'/g, "''")}'`,
+      "$sh = New-Object -ComObject Shell.Application",
+      "$w = $sh.Windows() | Where-Object { try { $_.Document.Folder.Self.Path -eq $t } catch { $false } } | Select-Object -Last 1",
+      "if ($w) { $h=[IntPtr]$w.HWND;",
+      " [SbFg]::keybd_event(0x12,0,0,[IntPtr]::Zero);",
+      " [void][SbFg]::ShowWindow($h,9); [void][SbFg]::SetForegroundWindow($h);",
+      " [SbFg]::keybd_event(0x12,0,2,[IntPtr]::Zero) }",
+    ].join("\n");
+    // -EncodedCommand, not -Command: this script is multi-line and carries a
+    // here-string, and passing that as one argv through execFile → cmd → PS
+    // mangles it silently (it "succeeds" and does nothing — exactly what the
+    // first attempt did). Base64 of UTF-16LE is the one form nothing rewrites.
+    const encoded = Buffer.from(ps, "utf16le").toString("base64");
+    await deps.exec("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", encoded], {
+      cwd: "/mnt/c",
+    });
+  }
+
   async function runExplorer(arg: string): Promise<void> {
     // cwd /mnt/c: Windows executables warn (and misbehave) when started from
     // a \\wsl$ UNC working directory — same reason as the terminal opener.
@@ -120,12 +162,26 @@ export function createWindowsFileOpener(deps: {
 
   return {
     async open(realPath: string): Promise<void> {
-      await runExplorer(await toWindowsPath(realPath));
+      const win = await toWindowsPath(realPath);
+      await runExplorer(win);
+      // Only a FOLDER gets raised: a file handed to its default app owns its
+      // own window, and stealing focus from a video player is not our call.
+      try {
+        if (fs.statSync(realPath).isDirectory()) {
+          await new Promise((r) => setTimeout(r, 600)); // let Explorer create it
+          await raiseWindow(win);
+        }
+      } catch {
+        /* best-effort: the window is open either way */
+      }
     },
     async reveal(realPath: string): Promise<void> {
       // `/select,<path>` is ONE argv token (Explorer's own comma syntax):
       // Explorer opens the parent folder and highlights the entry.
-      await runExplorer(`/select,${await toWindowsPath(realPath)}`);
+      const win = await toWindowsPath(realPath);
+      await runExplorer(`/select,${win}`);
+      await new Promise((r) => setTimeout(r, 600));
+      await raiseWindow(win.replace(/\\[^\\]+$/, "")).catch(() => {});
     },
   };
 }

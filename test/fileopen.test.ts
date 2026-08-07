@@ -143,3 +143,32 @@ describe("createWindowsFileOpener.reveal", () => {
     expect(calls[2].args).toEqual(["/select,C:\\shot.png"]);
   });
 });
+
+describe("bringing the window to the front", () => {
+  const calls: { file: string; args: string[] }[] = [];
+  const exec = (async (file: string, args: string[]) => {
+    calls.push({ file, args });
+    return { stdout: file === "wslpath" ? "\\\\wsl$\\Ubuntu\\home\\r\\proj\n" : "" };
+  }) as never;
+
+  it("raises a revealed folder — Explorer opens it BEHIND the browser otherwise", async () => {
+    calls.length = 0;
+    const opener = createWindowsFileOpener({ exec, distro: "Ubuntu" });
+    await opener!.reveal("/home/r/proj/file.txt");
+    const ps = calls.find((c) => c.file === "powershell.exe");
+    expect(ps).toBeDefined();
+    // The documented way to release the foreground lock: a synthetic ALT
+    // around SetForegroundWindow. Without it Windows denies the foreground
+    // to a background process and the window never surfaces.
+    // -EncodedCommand (base64 of UTF-16LE): a multi-line script with a
+    // here-string does not survive being passed as one -Command argv.
+    expect(ps!.args).toContain("-EncodedCommand");
+    const decoded = Buffer.from(ps!.args[ps!.args.length - 1], "base64").toString("utf16le");
+    expect(decoded).toContain("SetForegroundWindow");
+    expect(decoded).toContain("keybd_event");
+    // The target is EMBEDDED: a Linux env var never reaches a Windows
+    // process (WSLENV), so passing it that way raised nothing at all.
+    expect(decoded).toContain("\\\\wsl$\\Ubuntu\\home\\r\\proj");
+    expect(decoded).not.toContain("$env:SB_TARGET");
+  });
+});
