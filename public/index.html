@@ -7191,6 +7191,10 @@
         body.textContent = "";
         if (!data.ok) {
           body.appendChild(el("div", "preview-status stale", data.error || `HTTP ${res.status}`));
+          // A missing file is exactly when you want to go LOOK in the folder,
+          // so keep that door open (the hub falls back to the nearest folder
+          // that still exists). No "browser": there are no bytes to serve.
+          wirePreviewActions("#preview-browser", "#preview-reveal", filePath, { folderOnly: true });
           return;
         }
         $("#preview-name").textContent = data.name;
@@ -7212,13 +7216,19 @@
      * addEventListener. Every previewed file gets both doors — the server
      * decides what a browser tab does with it (render or download).
      */
-    function wirePreviewActions(browserSel, revealSel, realPath) {
+    function wirePreviewActions(browserSel, revealSel, realPath, opts) {
       const browser = $(browserSel);
       const reveal = $(revealSel);
-      browser.hidden = reveal.hidden = realPath === null;
-      browser.onclick = realPath === null
+      const folderOnly = !!(opts && opts.folderOnly);
+      browser.hidden = realPath === null || folderOnly; // nothing to serve
+      reveal.hidden = realPath === null;
+      browser.onclick = browser.hidden
         ? null
         : () => window.open(`/api/files/raw?path=${encodeURIComponent(realPath)}`, "_blank", "noopener");
+      reveal.title = folderOnly
+        ? "Open the folder where this file should be (Windows Explorer)"
+        : "Show this file in its folder (Windows Explorer)";
+      reveal.textContent = folderOnly ? "folder ↗" : "folder";
       reveal.onclick = realPath === null ? null : () => revealInFolder(realPath, reveal);
     }
 
@@ -7236,7 +7246,13 @@
           toast(data.error || `Could not show it in the folder (HTTP ${res.status}).`, "warn", 8000);
           return;
         }
-        toast(`Showing ${filePath.split("/").pop()} in Explorer.`, "ok");
+        toast(
+          data.fellBackToFolder
+            ? `The file is gone — opened the nearest folder: ${data.path}`
+            : `Showing ${filePath.split("/").pop()} in Explorer.`,
+          "ok",
+          data.fellBackToFolder ? 6000 : undefined,
+        );
       } catch (err) {
         toast(`Could not show it in the folder: ${err && err.message ? err.message : err}`, "warn");
       } finally {
@@ -7399,6 +7415,7 @@
         body.textContent = "";
         if (!data.ok) {
           body.appendChild(el("div", "preview-status stale", data.error || `HTTP ${res.status}`));
+          wirePreviewActions("#inline-file-browser", "#inline-file-reveal", filePath, { folderOnly: true });
           return;
         }
         $("#inline-file-name").textContent = data.name;
