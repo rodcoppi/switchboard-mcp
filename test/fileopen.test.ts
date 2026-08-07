@@ -168,7 +168,8 @@ describe("bringing the window to the front", () => {
     expect(decoded).toContain("keybd_event");
     // The target is EMBEDDED: a Linux env var never reaches a Windows
     // process (WSLENV), so passing it that way raised nothing at all.
-    expect(decoded).toContain("\\\\wsl$\\Ubuntu\\home\\r\\proj");
+    // reveal raises the PARENT folder (where the file sits), not the file.
+    expect(decoded).toContain(String.raw`\\wsl$\Ubuntu\home\r`);
     expect(decoded).not.toContain("$env:SB_TARGET");
   });
 });
