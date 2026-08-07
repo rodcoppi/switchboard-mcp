@@ -1139,8 +1139,51 @@ export function createApiRouter(options: ApiOptions): express.Router {
     try {
       real = resolveInScope(rawPath, fileScopeRoots());
     } catch (err) {
+      // The file is gone (renamed, moved, never written) — walk UP to the
+      // nearest folder that does exist and reveal that instead. "Show me
+      // where it should be" is exactly what the operator wants when a
+      // preview answers "file not found", and it is strictly less than
+      // revealing the file itself.
       const status = err instanceof PreviewError ? err.status : 500;
-      res.status(status).json({ ok: false, error: (err as Error).message });
+      // resolveInScope is a FILE resolver (it refuses directories on
+      // purpose), so the scope check for a folder is done here: realpath it,
+      // then require it to sit under one of the same roots.
+      const roots = fileScopeRoots()
+        .map((r) => {
+          try {
+            return fs.realpathSync(r);
+          } catch {
+            return null;
+          }
+        })
+        .filter((r): r is string => r !== null);
+      const inScope = (dir: string): boolean =>
+        roots.some((root) => dir === root || dir.startsWith(root + path.sep));
+      let parent = path.dirname(normalizeIncomingPath(rawPath));
+      let fallback: string | null = null;
+      for (let up = 0; up < 8 && parent !== "/" && parent !== "."; up++) {
+        try {
+          const realDir = fs.realpathSync(parent);
+          if (fs.statSync(realDir).isDirectory() && inScope(realDir)) {
+            fallback = realDir;
+            break;
+          }
+        } catch {
+          /* does not exist yet — keep walking up */
+        }
+        parent = path.dirname(parent);
+      }
+      if (status !== 404 || !fallback) {
+        res.status(status).json({ ok: false, error: (err as Error).message });
+        return;
+      }
+      try {
+        await fileOpener.reveal(fallback);
+        log.info(`[files] revealed the nearest existing folder for a missing file: ${fallback}`);
+        res.json({ ok: true, path: fallback, fellBackToFolder: true });
+      } catch (e) {
+        res.status(500).json({ ok: false, error: `Could not open the folder (${String(e)}).` });
+      }
       return;
     }
     try {

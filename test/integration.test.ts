@@ -962,6 +962,28 @@ describe("REST as operator", () => {
     expect(((await cleared.json()) as any).agent.cliArgs).toBe("");
   });
 
+  it("reveal falls back to the nearest existing folder when the file is gone", async () => {
+    // The owner's case: a preview says "file not found" — which is exactly
+    // when you want to open the folder and look. Revealing the nearest
+    // existing parent is strictly less than revealing the file itself.
+    await registerAgent("sumido");
+    fs.mkdirSync("/tmp/sumido/videos", { recursive: true });
+    try {
+      const res = await fetch(api("/api/files/reveal"), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: "/tmp/sumido/videos/s16/renders/nao-existe.mp4" }),
+      });
+      const body = (await res.json()) as any;
+      if (res.status === 501) return; // no Windows side in this environment
+      expect(res.status).toBe(200);
+      expect(body.fellBackToFolder).toBe(true);
+      expect(body.path).toBe("/tmp/sumido/videos"); // nearest folder that exists
+    } finally {
+      fs.rmSync("/tmp/sumido", { recursive: true, force: true });
+    }
+  });
+
   it("files/origin answers fast even when the search finds nothing", async () => {
     // The walk is synchronous: every millisecond it burns is a millisecond
     // the hub answers nothing at all. Measured at 3.7s in the wild, which
