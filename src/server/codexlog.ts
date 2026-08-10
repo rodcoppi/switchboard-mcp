@@ -301,6 +301,24 @@ function outputToText(output: unknown): string {
  * Parses rollout lines into the SAME ChatItem shape conversation.ts produces,
  * so the dashboard renders codex and claude chats with one code path.
  */
+/**
+ * Text out of a 26.x `item`: content is a list of parts, and the part shape
+ * has varied across builds ({type:"Text"|"text", text}). Anything without
+ * readable text (an image view, an encrypted reasoning blob) yields "".
+ */
+function codexItemText(item: { content?: unknown; text?: unknown }): string {
+  if (typeof item.text === "string" && item.text.trim()) return item.text.trim();
+  if (!Array.isArray(item.content)) return "";
+  return item.content
+    .map((part) =>
+      part && typeof part === "object" && typeof (part as { text?: unknown }).text === "string"
+        ? String((part as { text: string }).text)
+        : "",
+    )
+    .join("")
+    .trim();
+}
+
 export function parseCodexRollout(lines: string[]): ChatItem[] {
   const items: ChatItem[] = [];
   const toolsById = new Map<string, ToolItem>();
@@ -322,6 +340,21 @@ export function parseCodexRollout(lines: string[]): ChatItem[] {
         items.push({ kind: "user", text: p.message.trim(), ts });
       } else if (p.type === "agent_message" && typeof p.message === "string" && p.message.trim()) {
         items.push({ kind: "assistant", text: p.message.trim(), ts });
+      } else if (p.type === "item_completed" && p.item && typeof p.item === "object") {
+        // Codex CLI 26.x moved the conversation into item_completed:
+        //   {type:"item_completed", item:{type:"AgentMessage"|"UserMessage",
+        //                                 content:[{type:"Text", text}]}}
+        // The old flat agent_message/user_message events are gone, which is
+        // why the chat rendered nothing but tool chips for a codex agent
+        // (the tool records live under response_item and never changed).
+        // Both shapes are read: a rollout written by an older CLI still works.
+        const item = p.item as { type?: unknown; content?: unknown; text?: unknown };
+        const kind =
+          item.type === "AgentMessage" ? "assistant" : item.type === "UserMessage" ? "user" : null;
+        if (kind) {
+          const text = codexItemText(item);
+          if (text) items.push({ kind, text, ts });
+        }
       }
       continue;
     }
