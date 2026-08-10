@@ -568,3 +568,30 @@ describe("the copy button ON a code block", () => {
     expect(src).toContain("unwrap ? unwrapPlain(text) : text");
   });
 });
+
+describe("usage bar colour", () => {
+  const usagePaceColor = embeddedFunctionWith<(p: number, e: number) => string>("usagePaceColor", ["usageProjected"]);
+  const shade = (c: string) => (c.includes("danger") ? "red" : c.includes("warn") ? "amber" : "green");
+
+  // The old rule coloured by pace alone (used vs. elapsed) and therefore sat
+  // on green essentially always — a colour that never changes carries no
+  // information. Colour now answers "will this run out before it resets?".
+  it("stays green when the pace lands comfortably under the limit", () => {
+    expect(shade(usagePaceColor(12, 18.9))).toBe("green"); // the reported case
+    expect(shade(usagePaceColor(5, 18.9))).toBe("green");
+  });
+
+  it("goes red when the pace burns the quota before the reset", () => {
+    expect(shade(usagePaceColor(28, 6.7))).toBe("red");  // lands at ~418%
+    expect(shade(usagePaceColor(40, 10))).toBe("red");
+  });
+
+  it("landing exactly at 100% is amber, not an emergency", () => {
+    expect(shade(usagePaceColor(50, 50))).toBe("amber");
+  });
+
+  it("a nearly spent quota is red however slow the pace", () => {
+    expect(shade(usagePaceColor(95, 99))).toBe("red");
+    expect(shade(usagePaceColor(80, 90))).toBe("amber");
+  });
+});
