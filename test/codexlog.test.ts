@@ -194,3 +194,46 @@ describe("codexTokensToday", () => {
     ]);
   });
 });
+
+describe("codex CLI 26.x: the conversation moved into item_completed", () => {
+  it("reads AgentMessage/UserMessage items (the old flat events are gone)", () => {
+    // Codex 26.x stopped emitting event_msg/agent_message and now wraps every
+    // turn in item_completed. The tool records never changed, which is why a
+    // codex chat rendered as nothing but tool chips: all text vanished.
+    const lines = [
+      JSON.stringify({
+        timestamp: "2026-08-08T22:07:19.199Z",
+        type: "event_msg",
+        payload: {
+          type: "item_completed",
+          item: { type: "UserMessage", content: [{ type: "text", text: "assume o serviço" }] },
+        },
+      }),
+      JSON.stringify({
+        timestamp: "2026-08-08T22:07:26.176Z",
+        type: "event_msg",
+        payload: {
+          type: "item_completed",
+          item: { type: "AgentMessage", content: [{ type: "Text", text: "Vou inventariar a pasta." }] },
+        },
+      }),
+      // An item with no readable text must not become an empty bubble.
+      JSON.stringify({
+        type: "event_msg",
+        payload: { type: "item_completed", item: { type: "ImageView", content: [] } },
+      }),
+    ];
+    const items = parseCodexRollout(lines);
+    expect(items.map((i) => i.kind)).toEqual(["user", "assistant"]);
+    expect((items[0] as any).text).toBe("assume o serviço");
+    expect((items[1] as any).text).toBe("Vou inventariar a pasta.");
+  });
+
+  it("still reads the OLD flat events (a rollout from an older CLI)", () => {
+    const lines = [
+      JSON.stringify({ type: "event_msg", payload: { type: "user_message", message: "oi" } }),
+      JSON.stringify({ type: "event_msg", payload: { type: "agent_message", message: "olá" } }),
+    ];
+    expect(parseCodexRollout(lines).map((i) => (i as any).text)).toEqual(["oi", "olá"]);
+  });
+});
