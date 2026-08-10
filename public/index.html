@@ -3728,12 +3728,40 @@
       const chunks = Math.min(totalChunks, Math.max(1, Math.ceil((now - start) / chunkMs)));
       return (chunks / totalChunks) * 100;
     }
+    /**
+     * Colour answers ONE question: am I going to run out before this window
+     * resets? Two ways to be in trouble, and the worse one wins:
+     *   - the bar is simply high (75% / 90% of the quota is gone), or
+     *   - the PROJECTION says so: consuming at this pace for the rest of the
+     *     window lands above the limit.
+     * The previous version coloured by pace ALONE (used vs. elapsed), which
+     * is defensible and useless in practice: it sat on green essentially
+     * always, so the colour carried no information — and nobody could guess
+     * "green means you are under your time-proportional share".
+     */
     function usagePaceColor(percent, expected) {
-      if (expected <= 0) return percent > 0 ? "var(--danger)" : "var(--online)";
-      const ratio = percent / expected;
-      if (ratio <= 1) return "var(--online)";
-      if (ratio >= 2) return "var(--danger)";
-      return `hsl(${Math.round(140 * (2 - ratio))} 70% 55%)`;
+      // Thresholds carry slack on purpose: landing exactly at 100% means the
+      // quota lasts precisely as long as the window, which is fine, not an
+      // emergency. Red is for "runs out BEFORE the reset" (or nearly gone).
+      const projected = usageProjected(percent, expected);
+      if (percent >= 90 || projected >= 115) return "var(--danger)";
+      if (percent >= 75 || projected >= 95) return "var(--warn)";
+      return "var(--online)";
+    }
+    /** Where this window LANDS at reset if the current pace holds (%). */
+    function usageProjected(percent, expected) {
+      const elapsed = Math.min(100, Math.max(1, expected)) / 100; // never divide by 0
+      return percent / elapsed;
+    }
+    /** The sentence behind the colour, for the row's tooltip. */
+    function usagePaceHint(percent, expected) {
+      const projected = Math.round(usageProjected(percent, expected));
+      const share = Math.round(expected);
+      return (
+        `${Math.round(percent)}% used with ${share}% of the window elapsed. ` +
+        `At this pace it lands at ~${projected}% by reset` +
+        (projected >= 100 ? " — it runs out first." : ".")
+      );
     }
     function usageLabel(l) {
       if (l.label) return l.label;
@@ -3847,6 +3875,7 @@
         el("span", "usage-row-pct", `${Math.round(item.percent)}%`),
       );
       const bar = el("div", "usage-bar");
+      if (item.hint) row.title = item.hint;
       const fill = el("div", "usage-bar-fill");
       fill.style.width = `${Math.min(100, Math.max(0, item.percent))}%`;
       fill.style.background = item.color;
@@ -3887,11 +3916,11 @@
         );
         for (const l of limits) {
           const win = usageWindow(l.group);
+          const exp = win ? usageExpected(l.resetsAt, win.windowMs, win.chunkMs, now) : null;
           appendUsageRow(section, {
             label: usageLabel(l), percent: l.percent, resetsAt: l.resetsAt,
-            color: win
-              ? usagePaceColor(l.percent, usageExpected(l.resetsAt, win.windowMs, win.chunkMs, now))
-              : "var(--accent)",
+            color: exp === null ? "var(--accent)" : usagePaceColor(l.percent, exp),
+            hint: exp === null ? null : usagePaceHint(l.percent, exp),
           });
         }
         if (usageClaude.stale || limits.length === 0) {
