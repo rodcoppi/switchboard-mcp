@@ -128,6 +128,56 @@ export function pickFolderScript(startIn: string): string {
   ].join("; ");
 }
 
+/**
+ * The FILE twin of pickFolderScript. Same window-owning and foreground
+ * gymnastics — a dialog that opens behind the browser is a dialog nobody
+ * answers. `fileName` pre-fills the box so the operator only confirms: the
+ * caller reaches here because a file was DRAGGED IN and the browser hid its
+ * path, so the name is known and the folder usually is not.
+ */
+export function pickFileScript(startIn: string, fileName: string): string {
+  const quotedDir = `'${startIn.replace(/'/g, "''")}'`;
+  const quotedName = `'${fileName.replace(/'/g, "''")}'`;
+  return [
+    "Add-Type -AssemblyName System.Windows.Forms",
+    "$sig = '" +
+      '[DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h); ' +
+      '[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow(); ' +
+      '[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, IntPtr pid); ' +
+      '[DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId(); ' +
+      '[DllImport("user32.dll")] public static extern bool AttachThreadInput(uint a, uint b, bool attach); ' +
+      '[DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr h); ' +
+      "[DllImport(\"user32.dll\")] public static extern bool ShowWindow(IntPtr h, int cmd);'",
+    "$fg = Add-Type -MemberDefinition $sig -Name FgFile -Namespace Win32 -PassThru",
+    "$dialog = New-Object System.Windows.Forms.OpenFileDialog",
+    "$dialog.Title = 'Switchboard — point at the file you dragged'",
+    "$dialog.CheckFileExists = $true",
+    "$dialog.Multiselect = $false",
+    `$dialog.InitialDirectory = ${quotedDir}`,
+    `$dialog.FileName = ${quotedName}`,
+    "$owner = New-Object System.Windows.Forms.Form",
+    "$owner.TopMost = $true",
+    "$owner.ShowInTaskbar = $false",
+    "$owner.FormBorderStyle = 'None'",
+    "$owner.Opacity = 0",
+    "$owner.Size = New-Object System.Drawing.Size(1,1)",
+    "$owner.StartPosition = 'Manual'",
+    "$owner.Location = New-Object System.Drawing.Point(-32000,-32000)",
+    "$owner.Show()",
+    "$foreThread = $fg::GetWindowThreadProcessId($fg::GetForegroundWindow(), [IntPtr]::Zero)",
+    "$thisThread = $fg::GetCurrentThreadId()",
+    "[void]$fg::AttachThreadInput($thisThread, $foreThread, $true)",
+    "[void]$fg::BringWindowToTop($owner.Handle)",
+    "[void]$fg::SetForegroundWindow($owner.Handle)",
+    "[void]$fg::AttachThreadInput($thisThread, $foreThread, $false)",
+    "$owner.Activate()",
+    "$result = $dialog.ShowDialog($owner)",
+    "$owner.Dispose()",
+    "if ($result -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $dialog.FileName } " +
+      `else { Write-Output '${PICK_CANCELLED}' }`,
+  ].join("; ");
+}
+
 export interface PickFolderDeps {
   exec?: (file: string, args: string[]) => Promise<{ stdout: string }>;
   /** WSL distro name (default: the env var WSL sets). */
@@ -225,6 +275,62 @@ export async function pickWindowsFolder(
   // Windows path → WSL path. A folder inside the distro comes back as
   // \\wsl$\<distro>\… and lands on /home/…; one on the Windows drives becomes
   // /mnt/c/… , which is a real path the agent can be opened in.
+  try {
+    const { stdout: wsl } = await exec("wslpath", ["-u", picked]);
+    return wsl.replace(/\r?\n/g, "").trim();
+  } catch {
+    throw new PickError(`Could not translate "${picked}" into a WSL path.`);
+  }
+}
+
+/**
+ * Opens the native file dialog and answers with the WSL path the operator
+ * pointed at (null when they cancel). Exists for one case: a file dragged
+ * into the dashboard whose original the hub could not locate — refusing it,
+ * or copying a multi-gigabyte render into ~/.switchboard, are both wrong.
+ */
+export async function pickWindowsFile(
+  fileName: string,
+  startIn?: string,
+  deps: PickFolderDeps = {},
+): Promise<string | null> {
+  const distro = deps.distro ?? process.env.WSL_DISTRO_NAME;
+  if (!distro) {
+    throw new PickError(
+      "The native file dialog is a Windows + WSL feature (WSL_DISTRO_NAME is not set).",
+      true,
+    );
+  }
+  const exec =
+    deps.exec ??
+    (async (file: string, args: string[]) => {
+      const { stdout } = await execFileAsync(file, args, {
+        timeout: deps.timeoutMs ?? 180_000,
+        maxBuffer: 1024 * 64,
+        cwd: "/mnt/c",
+      });
+      return { stdout };
+    });
+
+  const requested = startIn ?? (deps.homeDir ?? os.homedir());
+  const script = pickFileScript(
+    requested.startsWith("/") ? toWslUnc(distro, requested) : requested,
+    fileName,
+  );
+  const shell = deps.shell ?? findPowerShell();
+
+  let stdout: string;
+  try {
+    ({ stdout } = await exec(shell, ["-NoProfile", "-STA", "-Command", script]));
+  } catch (err) {
+    const message = (err as NodeJS.ErrnoException).code === "ENOENT"
+      ? `${shell} was not found — the native dialog needs Windows interop.`
+      : `The native file dialog failed: ${(err as Error).message}`;
+    throw new PickError(message, true);
+  }
+
+  const picked = stdout.replace(/\r?\n/g, "").trim();
+  if (picked === "" || picked === PICK_CANCELLED) return null;
   try {
     const { stdout: wsl } = await exec("wslpath", ["-u", picked]);
     return wsl.replace(/\r?\n/g, "").trim();

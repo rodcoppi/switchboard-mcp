@@ -8859,6 +8859,38 @@
       /** Staging is for the SMALL and origin-less; never a video duplicator. */
       const STAGE_MAX_BYTES = 25 * 1024 * 1024;
 
+      /**
+       * Last resort for a heavy dropped file: ask the operator to point at
+       * it in the native dialog, pre-filled with its name. One click, and the
+       * path is referenced in place — no copy, no refusal. (A browser hides
+       * the source path of a dragged file; the hub can usually find it by
+       * name+size, and this covers the times it cannot.)
+       */
+      async function askForFile(name, prettySize) {
+        toast(`${name} (${prettySize}): point at it so I can reference it — no copy is made.`, "ok", 6000);
+        try {
+          const res = await fetch("/api/fs/pick-file", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ name }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (data.cancelled) return null;
+          if (!res.ok || !data.ok || !data.path) {
+            toast(
+              data.error || "Could not open the file dialog — paste the path instead.",
+              "warn",
+              8000,
+            );
+            return null;
+          }
+          return data.path;
+        } catch {
+          toast("Could not open the file dialog — paste the path instead.", "warn", 8000);
+          return null;
+        }
+      }
+
       async function attachFiles(files) {
         const list = Array.from(files || []);
         if (!list.length) return;
@@ -8874,13 +8906,12 @@
               toast(`Using the original: ${origin}`, "ok", 4500);
               continue;
             }
+            // No original found. A heavy file is NEVER copied and NEVER
+            // refused — the operator points at it once in the native dialog
+            // and the composer references it where it lives.
             if (file.size > STAGE_MAX_BYTES) {
-              toast(
-                `${file.name}: original not found and too big to copy (${fmtBytes(file.size)}). ` +
-                  `Use "Copy as path" in the file manager and paste the path.`,
-                "warn",
-                8000,
-              );
+              const picked = await askForFile(file.name, fmtBytes(file.size));
+              if (picked) insertPathAttachments([picked]);
               continue;
             }
             // No origin anywhere (pasted screenshot, attachment dragged
@@ -8978,12 +9009,8 @@
               continue;
             }
             if (file.size > STAGE_MAX_BYTES) {
-              toast(
-                `${file.name}: original not found and too big to copy (${fmtBytes(file.size)}). ` +
-                  `Use "Copy as path" and paste it in the terminal.`,
-                "warn",
-                8000,
-              );
+              const picked = await askForFile(file.name, fmtBytes(file.size));
+              if (picked) typePath(picked);
               continue;
             }
             const saved = await uploadFile(file, file.name || "dropped.bin");
