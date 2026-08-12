@@ -1973,19 +1973,19 @@
     .msg-reaction { margin-top: 0; margin-left: 10px; }
     /* An image named in a message, shown. Small on purpose: the picture is a
        confirmation of WHICH file, not the file itself — click opens it. */
-    .chat-thumb { margin: 8px 0 2px; }
-    .chat-thumb img {
+    .chat-thumbs { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 10px; }
+    .chat-thumbs img {
+      width: 112px;
+      height: 112px;
+      object-fit: cover;      /* square crop: a panorama stays legible */
+      object-position: center;
       display: block;
-      max-width: min(360px, 100%);
-      max-height: 200px;
-      width: auto;
-      height: auto;
       border: 1px solid var(--border);
       border-radius: var(--radius-sm);
       background: var(--bg-inset);
       cursor: zoom-in;
     }
-    .chat-thumb img:hover { border-color: var(--border-strong); }
+    .chat-thumbs img:hover { border-color: var(--border-strong); }
     /* A drop zone announcing itself — inset dashes, zinc grammar, no glow. */
     #screen-chat.drop-target,
     #chat-composer.drop-target,
@@ -7039,26 +7039,34 @@
     function attachImageThumbs(container) {
       const seen = new Set();
       let made = 0;
+      let strip = null;
       for (const link of container.querySelectorAll(".path-link")) {
         if (made >= THUMBS_PER_MESSAGE) break;
         const p = link.dataset.fullPath || link.textContent.trim();
         if (!THUMB_EXT.test(p) || seen.has(p)) continue;
         seen.add(p);
         made += 1;
-        const fig = el("div", "chat-thumb");
         const img = el("img");
         img.loading = "lazy";
         img.alt = p.split("/").pop() || p;
+        img.title = p;
         img.src = `/api/files/raw?path=${encodeURIComponent(p)}`;
-        img.addEventListener("error", () => fig.remove()); // gone or out of scope
+        img.addEventListener("error", () => {
+          img.remove(); // gone or out of scope
+          if (strip && !strip.childElementCount) strip.remove();
+        });
         img.addEventListener("click", (ev) => {
           ev.stopPropagation();
           openPreview(p);
         });
-        fig.appendChild(img);
-        // After the paragraph the path sits in, so the text keeps its flow.
-        const host = link.closest("p, li, blockquote, div") || link;
-        host.insertAdjacentElement("afterend", fig);
+        // ONE strip at the TOP of the message: a wide screenshot rendered at
+        // its own ratio became an unreadable sliver, and a picture below the
+        // text is found after you already read past it.
+        if (!strip) {
+          strip = el("div", "chat-thumbs");
+          container.insertBefore(strip, container.firstChild);
+        }
+        strip.appendChild(img);
       }
     }
 
