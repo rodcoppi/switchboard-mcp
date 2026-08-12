@@ -595,3 +595,24 @@ describe("usage bar colour", () => {
     expect(shade(usagePaceColor(80, 90))).toBe("amber");
   });
 });
+
+describe("image thumbnails in the chat", () => {
+  it("a picture appears under its path, and the path stays", () => {
+    // The path is what you copy and hand to an agent, so it is never
+    // replaced — the thumbnail is added under the paragraph it sits in.
+    const src = script.match(/function attachImageThumbs[\s\S]*?\n    }/)?.[0] ?? "";
+    expect(src).toContain("/api/files/raw?path=");      // same scoped route as the preview
+    expect(src).toContain('img.loading = "lazy"');
+    expect(src).toContain("insertAdjacentElement(\"afterend\", fig)");
+    expect(src).toContain("THUMBS_PER_MESSAGE");        // a wall of pictures is not a chat
+  });
+
+  it("a missing image drops its thumbnail instead of showing a broken box", () => {
+    const src = script.match(/function attachImageThumbs[\s\S]*?\n    }/)?.[0] ?? "";
+    expect(src).toContain('img.addEventListener("error", () => fig.remove())');
+  });
+
+  it("the chip carries the RESOLVED path — a relative one would 404", () => {
+    expect(script).toContain("link.dataset.fullPath = full;");
+  });
+});
