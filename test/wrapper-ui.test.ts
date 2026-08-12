@@ -604,19 +604,27 @@ describe("usage bar colour", () => {
 });
 
 describe("image thumbnails in the chat", () => {
-  it("a picture appears under its path, and the path stays", () => {
+  it("pictures ride in ONE strip at the top, and the path stays in the text", () => {
     // The path is what you copy and hand to an agent, so it is never
-    // replaced — the thumbnail is added under the paragraph it sits in.
+    // replaced. The strip goes on top: a picture below the text is found
+    // after you already read past it.
     const src = script.match(/function attachImageThumbs[\s\S]*?\n    }/)?.[0] ?? "";
     expect(src).toContain("/api/files/raw?path=");      // same scoped route as the preview
     expect(src).toContain('img.loading = "lazy"');
-    expect(src).toContain("insertAdjacentElement(\"afterend\", fig)");
+    expect(src).toContain("container.insertBefore(strip, container.firstChild)");
     expect(src).toContain("THUMBS_PER_MESSAGE");        // a wall of pictures is not a chat
   });
 
-  it("a missing image drops its thumbnail instead of showing a broken box", () => {
+  it("thumbnails are square crops — a panorama must stay legible", () => {
+    expect(html).toContain("object-fit: cover;      /* square crop: a panorama stays legible */");
+    expect(html).toContain("width: 112px;");
+    expect(html).toContain("height: 112px;");
+  });
+
+  it("a missing image drops its thumbnail, and an empty strip disappears", () => {
     const src = script.match(/function attachImageThumbs[\s\S]*?\n    }/)?.[0] ?? "";
-    expect(src).toContain('img.addEventListener("error", () => fig.remove())');
+    expect(src).toContain("img.remove();");
+    expect(src).toContain("if (strip && !strip.childElementCount) strip.remove();");
   });
 
   it("the chip carries the RESOLVED path — a relative one would 404", () => {
