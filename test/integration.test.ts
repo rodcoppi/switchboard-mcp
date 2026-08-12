@@ -1028,7 +1028,7 @@ describe("REST as operator", () => {
       fs.rmSync("/tmp/origem", { recursive: true, force: true });
       fs.rmSync("/tmp/origem-b", { recursive: true, force: true });
     }
-  });
+  }, 30_000); // three searches, each allowed a 2.5s budget
 });
 
 describe("SSE events beyond message_created (PRD 10.1)", () => {

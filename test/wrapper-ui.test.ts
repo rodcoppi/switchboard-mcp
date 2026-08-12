@@ -337,13 +337,20 @@ describe("drag-and-drop staging", () => {
   // The real terminal's contract: dragged in means it goes up. A drop used
   // to be refused unless it was a pasted screenshot, and outside the
   // composer it NAVIGATED the browser away from the dashboard.
-  it("dropping stages the SMALL and origin-less — no blanket refusal, no blanket copy", () => {
+  it("a dropped file is never refused and a heavy one is never copied", () => {
     // v1 refused everything but screenshots; v2 staged everything (the owner:
-    // "vc vai duplicar um vídeo?"); v3 is the contract: origin first, stage
-    // small, refuse huge with advice.
-    expect(script).not.toContain("Use “Copy path” and paste it"); // v1's blanket refusal
+    // "vc vai duplicar um vídeo?"); v3 refused the heavy origin-less ones.
+    // v4 is the contract he asked for twice: find the original, else ASK for
+    // it (native dialog, no copy) — small origin-less files still stage.
+    expect(script).not.toContain("Use “Copy path” and paste it"); // v1's refusal
+    expect(script).not.toContain("too big to copy");              // v3's refusal
+    expect(script).toContain("askForFile(file.name, fmtBytes(file.size))");
     expect(script).toContain("staged for 24h (no original found to reference)");
-    expect(script).toContain("too big to copy");
+  });
+
+  it("the picker is the last resort, after the origin search", () => {
+    const src = script.match(/async function attachFiles[\s\S]*?\n      }/)?.[0] ?? "";
+    expect(src.indexOf("resolveDropOrigin(file)")).toBeLessThan(src.indexOf("askForFile("));
   });
 
   it("stray drops never navigate the dashboard away", () => {

@@ -34,7 +34,7 @@ import { GROUP_NAME_RE, resolveGroup, type Store } from "./store.js";
 // translation below. No runtime cycle: launcher.ts imports this module with
 // `import type` only (erased at compile time).
 import { LaunchError, normalizeIncomingPath, type Launcher } from "./launcher.js";
-import { PickError, pickWindowsFolder } from "./winpicker.js";
+import { PickError, pickWindowsFile, pickWindowsFolder } from "./winpicker.js";
 import { TerminalError } from "./terminal.js";
 import { PreviewError, rawMime, readPreview, resolveInScope } from "./filepreview.js";
 import { isOpenable, refusalFor, type FileOpener } from "./fileopen.js";
@@ -438,43 +438,63 @@ function downloadRoots(): string[] {
  * fallback, never the default (dragging a 2 GB video must not duplicate it).
  * Ambiguity returns null: linking the WRONG twin is worse than staging.
  */
-const DROP_SCAN_BUDGET_MS = 400;
+const DROP_SCAN_BUDGET_MS = 2500;
 
-function findDropOrigin(
-  filename: string,
-  size: number,
-  mtimeMs: number | null,
-  agentCwds: string[],
-): string | null {
-  // HARD time budget. This walk is synchronous (readdirSync/statSync), so
-  // every millisecond it spends is a millisecond the hub answers NOTHING —
-  // no SSE, no health, no MCP. Measured at 3.7s for a common filename with
-  // Windows folders in scope (/mnt/* is 9p, ~1ms per stat), which reads to
-  // the operator as "the dashboard died". A miss is cheap (the file gets
-  // staged instead); a frozen hub is not.
-  const deadline = Date.now() + DROP_SCAN_BUDGET_MS;
-  const profiles: string[] = [];
+/**
+ * The user-facing folders a dragged file plausibly comes from, on BOTH sides
+ * of the WSL boundary. Videos/Pictures/Music matter more than they look: a
+ * heavy file dragged into the chat is almost always a render or a recording,
+ * and those live exactly there.
+ */
+function personalRoots(): string[] {
+  const roots: string[] = [];
   let mounts: fs.Dirent[] = [];
   try {
     mounts = fs.readdirSync("/mnt", { withFileTypes: true });
   } catch { /* not WSL */ }
   for (const mount of mounts) {
     if (!mount.isDirectory() || !/^[a-z]$/i.test(mount.name)) continue;
+    const drive = path.join("/mnt", mount.name);
     let users: fs.Dirent[] = [];
     try {
-      users = fs.readdirSync(path.join("/mnt", mount.name, "Users"), { withFileTypes: true });
-    } catch { continue; }
+      users = fs.readdirSync(path.join(drive, "Users"), { withFileTypes: true });
+    } catch {
+      continue;
+    }
     for (const u of users) {
       if (!u.isDirectory()) continue;
-      for (const sub of ["Desktop", "Documents"]) {
-        profiles.push(path.join("/mnt", mount.name, "Users", u.name, sub));
+      for (const sub of ["Desktop", "Documents", "Videos", "Pictures", "Music", "OneDrive"]) {
+        roots.push(path.join(drive, "Users", u.name, sub));
       }
     }
   }
+  return roots;
+}
+
+/**
+ * Finds the ORIGINAL of a file dropped on the dashboard. Browsers hide the
+ * source path, but the hub is local: name + size (+mtime as tiebreaker, ±2s
+ * for filesystem precision) almost always pin the origin. Referencing the
+ * origin is the real terminal's drag contract; a COPY is never made for a
+ * heavy file — dragging a 2 GB render must not duplicate it.
+ *
+ * ASYNC on purpose: the first version walked synchronously and froze the hub
+ * for seconds (no SSE, no health, no MCP) whenever the name was common and
+ * Windows folders were in scope — /mnt/* is 9p, roughly a millisecond per
+ * stat. Yielding between directories lets the budget be generous instead of
+ * stingy, which is what actually makes the search FIND things.
+ */
+async function findDropOrigin(
+  filename: string,
+  size: number,
+  mtimeMs: number | null,
+  agentCwds: string[],
+): Promise<string | null> {
+  const deadline = Date.now() + DROP_SCAN_BUDGET_MS;
   const searches = [
     ...agentCwds.filter((c) => c && c.trim() !== "").map((root) => ({ root, maxDepth: AGENT_FILES_MAX_DEPTH })),
     ...downloadRoots().map((root) => ({ root, maxDepth: 3 })),
-    ...profiles.map((root) => ({ root, maxDepth: 3 })),
+    ...personalRoots().map((root) => ({ root, maxDepth: 4 })),
   ];
   const allowedRoots = searches.map((x) => x.root);
   const needle = filename.toLowerCase();
@@ -489,7 +509,7 @@ function findDropOrigin(
         if (Date.now() > deadline) return matches.length === 1 ? matches[0].full : null;
         let entries: fs.Dirent[];
         try {
-          entries = fs.readdirSync(path.join(root, relDir), { withFileTypes: true });
+          entries = await fs.promises.readdir(path.join(root, relDir), { withFileTypes: true });
         } catch {
           continue;
         }
@@ -506,7 +526,7 @@ function findDropOrigin(
           if (entry.name.toLowerCase() !== needle) continue;
           try {
             const full = resolveInScope(path.join(root, rel), allowedRoots);
-            const st = fs.statSync(full);
+            const st = await fs.promises.stat(full);
             if (st.size !== size) continue;
             if (!matches.some((m) => m.full === full)) matches.push({ full, mtimeMs: st.mtimeMs });
             if (matches.length > 8) return null; // a name this common is nobody's origin
@@ -1620,7 +1640,7 @@ export function createApiRouter(options: ApiOptions): express.Router {
   // reference where it already lives instead of staging a duplicate. null
   // path (200) = not found/ambiguous; the dashboard then decides (stage the
   // small, refuse the huge).
-  router.get("/api/files/origin", (req, res) => {
+  router.get("/api/files/origin", async (req, res) => {
     const name = typeof req.query.name === "string" ? req.query.name.trim() : "";
     const size = Number(req.query.size);
     const mtime = req.query.mtime === undefined ? null : Number(req.query.mtime);
@@ -1640,8 +1660,42 @@ export function createApiRouter(options: ApiOptions): express.Router {
       return;
     }
     const cwds = [...new Set(store.listAgents().map((a) => a.cwd))];
-    const found = findDropOrigin(name, size, mtime, cwds);
+    const found = await findDropOrigin(name, size, mtime, cwds);
     res.json({ ok: true, path: found });
+  });
+
+  // POST /api/fs/pick-file { name?, startIn? } — native OPEN FILE dialog,
+  // answering with the WSL path the operator pointed at. The drop path uses
+  // it as its last resort: a dragged file whose original the hub could not
+  // find is neither refused nor copied — the operator confirms where it is,
+  // once, and the composer references it in place.
+  router.post("/api/fs/pick-file", async (req, res) => {
+    const raw = (req.body ?? {}) as Record<string, unknown>;
+    const name = typeof raw.name === "string" ? path.basename(raw.name) : "";
+    const startIn = typeof raw.startIn === "string" && raw.startIn.trim() !== "" ? raw.startIn.trim() : undefined;
+    try {
+      const picked = await pickWindowsFile(name, startIn);
+      if (picked === null) {
+        res.json({ ok: true, cancelled: true });
+        return;
+      }
+      log.info(`[api] file picked in the Windows dialog: ${picked}`);
+      res.json({ ok: true, path: picked });
+    } catch (err) {
+      if (err instanceof PickError) {
+        res.status(err.unsupported ? 503 : 500).json({
+          ok: false,
+          error: err.message,
+          fallback: err.unsupported,
+        });
+        return;
+      }
+      res.status(408).json({
+        ok: false,
+        error: "The file dialog was not answered in time.",
+        fallback: true,
+      });
+    }
   });
 
   // GET /api/agents/:name/files/resolve?file=<basename>&hint=downloads — turns
