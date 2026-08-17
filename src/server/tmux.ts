@@ -98,6 +98,70 @@ const SAFE_PANE_COMMANDS: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * Shells that may be HOLDING an agent instead of waiting for a command — the
+ * only commands allowed a second look (see paneAgentReadsTty). Anything else
+ * outside the allow-list stays an outright refusal.
+ */
+const HOLDING_SHELLS: ReadonlySet<string> = new Set(["sh", "dash", "ash", "bash", "zsh", "fish"]);
+
+/** One row of `ps -e -o pid=,ppid=,stat=,comm=`. */
+export interface ProcRow {
+  pid: number;
+  ppid: number;
+  /** ps STAT field; "+" means the process is in the tty's FOREGROUND group. */
+  stat: string;
+  comm: string;
+}
+
+/** Parses `ps -e -o pid=,ppid=,stat=,comm=`. Unparsable lines are skipped. */
+export function parseProcTable(stdout: string): ProcRow[] {
+  const rows: ProcRow[] = [];
+  for (const line of stdout.split("\n")) {
+    const m = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.+?)\s*$/.exec(line);
+    if (!m) continue;
+    rows.push({ pid: Number(m[1]), ppid: Number(m[2]), stat: m[3], comm: m[4] });
+  }
+  return rows;
+}
+
+/**
+ * SECOND LOOK for the pane guard, and the reason it is still default-deny.
+ *
+ * tmux reports the pane's foreground process GROUP LEADER, which is not always
+ * the process reading the tty: `sh -c 'claude …'` on a shell that does not exec
+ * (dash) leaves `sh` as the leader with claude as its child, in the same
+ * foreground group — pane_current_command says "sh" while every keystroke lands
+ * in claude. That read the whole fleet as unsafe and refused every nudge
+ * (17/08) on panes where no shell would ever see the text.
+ *
+ * So: when the pane's command is a shell, accept it ONLY if a descendant on the
+ * allow-list is in the tty's FOREGROUND group ("+" in STAT) — i.e. an agent is
+ * literally the one reading. A shell waiting at its prompt has no such
+ * descendant and is refused exactly as before; a backgrounded agent (no "+")
+ * does not count either. Pure and exported for direct unit testing.
+ */
+export function paneAgentReadsTty(panePid: number, table: readonly ProcRow[]): boolean {
+  const children = new Map<number, ProcRow[]>();
+  for (const row of table) {
+    const list = children.get(row.ppid);
+    if (list) list.push(row);
+    else children.set(row.ppid, [row]);
+  }
+  const seen = new Set<number>([panePid]);
+  const queue = [panePid];
+  while (queue.length > 0) {
+    for (const child of children.get(queue.shift()!) ?? []) {
+      if (seen.has(child.pid)) continue; // defensive: never loop on a cycle
+      seen.add(child.pid);
+      const cmd = normalizePaneCommand(child.comm);
+      if (SAFE_PANE_COMMANDS.has(cmd) && child.stat.includes("+")) return true;
+      if (HOLDING_SHELLS.has(cmd)) queue.push(child.pid); // shell holding a shell
+    }
+  }
+  return false;
+}
+
+/**
  * Normalizes one pane_current_command line for the guard: trim, lowercase,
  * basename (defensive: the format normally yields a bare name), and strip a
  * leading "-" (login-shell argv[0] convention, e.g. "-bash").
@@ -345,6 +409,33 @@ export function createTmux(options: TmuxOptions = {}): Tmux {
     return stdout.trim();
   }
 
+  /**
+   * `#{pane_pid} #{pane_current_command}` per pane — THE guard's read. One
+   * tmux call carries both halves: the command classifies the pane, the pid
+   * lets the second look walk its process tree. A line without a pid still
+   * yields its command (pid null → the second look simply cannot clear it).
+   */
+  async function panesWithPids(
+    session: string,
+  ): Promise<Array<{ pid: number | null; cmd: string }>> {
+    assertValidSession(session);
+    const { stdout } = await exec("tmux", [
+      "list-panes",
+      "-t",
+      paneTarget(session),
+      "-F",
+      "#{pane_pid} #{pane_current_command}",
+    ]);
+    const panes: Array<{ pid: number | null; cmd: string }> = [];
+    for (const line of stdout.split("\n")) {
+      const trimmed = line.trim();
+      if (trimmed === "") continue;
+      const m = /^(\d+)\s+(.+?)$/.exec(trimmed);
+      panes.push(m ? { pid: Number(m[1]), cmd: m[2] } : { pid: null, cmd: trimmed });
+    }
+    return panes;
+  }
+
   async function sendKeysLiteral(session: string, text: string): Promise<void> {
     assertValidSession(session);
     if (/[\r\n]/.test(text)) {
@@ -586,9 +677,11 @@ export function createTmux(options: TmuxOptions = {}): Tmux {
   async function paneSafety(
     session: string,
   ): Promise<{ safe: boolean; reason?: string }> {
+    let panes: Array<{ pid: number | null; cmd: string }>;
     let raw: string;
     try {
-      raw = await paneCommand(session);
+      panes = await panesWithPids(session);
+      raw = panes.map((p) => p.cmd).join("\n");
     } catch (err) {
       return {
         safe: false,
@@ -598,6 +691,10 @@ export function createTmux(options: TmuxOptions = {}): Tmux {
       };
     }
     if (isSafePaneCommand(raw)) return { safe: true };
+    // Second look before refusing: a shell that merely HOLDS the agent (it did
+    // not exec) is reported as the pane's command while the agent is the one
+    // reading the tty — see paneAgentReadsTty. Every pane must clear it.
+    if (await everyShellPaneHoldsAnAgent(panes)) return { safe: true };
     return {
       safe: false,
       reason:
@@ -605,6 +702,30 @@ export function createTmux(options: TmuxOptions = {}): Tmux {
         `(pane_current_command=${JSON.stringify(raw)} outside the node/claude/cat allow-list — ` +
         `the text could be executed as a command)`,
     };
+  }
+
+  /**
+   * True when EVERY pane of the session either runs an allow-listed command
+   * outright or is a shell whose foreground descendant is one. Fail-closed:
+   * any error (no tmux, no ps, unreadable table) → false, i.e. the original
+   * refusal stands.
+   */
+  async function everyShellPaneHoldsAnAgent(
+    panes: ReadonlyArray<{ pid: number | null; cmd: string }>,
+  ): Promise<boolean> {
+    try {
+      if (panes.length === 0) return false;
+      const suspects = panes.filter((p) => !isSafePaneCommand(p.cmd));
+      // Only shells get the second look — a python/ssh/psql pane stays unsafe.
+      if (!suspects.every((p) => HOLDING_SHELLS.has(normalizePaneCommand(p.cmd)))) return false;
+      if (suspects.some((p) => p.pid === null)) return false; // no pid → cannot clear it
+      const { stdout } = await exec("ps", ["-e", "-o", "pid=,ppid=,stat=,comm="]);
+      const table = parseProcTable(stdout);
+      if (table.length === 0) return false;
+      return suspects.every((p) => paneAgentReadsTty(p.pid!, table));
+    } catch {
+      return false;
+    }
   }
 
   async function isPaneSafeToNudge(session: string): Promise<boolean> {
