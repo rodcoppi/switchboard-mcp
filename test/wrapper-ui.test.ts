@@ -631,3 +631,55 @@ describe("image thumbnails in the chat", () => {
     expect(script).toContain("link.dataset.fullPath = full;");
   });
 });
+
+describe("reply/quote a message", () => {
+  // The function reads window.getSelection(); node has no window, so the
+  // "nothing selected" case is stubbed — the selected case is exercised live
+  // in the browser (a real Range cannot be faked meaningfully here).
+  const quoteExcerptFrom = ((): ((turn: any) => string) => {
+    let src = "";
+    source.forEachChild((node) => {
+      if (ts.isFunctionDeclaration(node) && node.name?.text === "quoteExcerptFrom") {
+        src = script.slice(node.getStart(source), node.getEnd());
+      }
+    });
+    return new Function(
+      "window",
+      `const QUOTE_MAX = 220;\n${src}\nreturn quoteExcerptFrom;`,
+    )({ getSelection: () => null }) as (turn: any) => string;
+  })();
+  const fakeTurn = (text: string) => ({ __text: text, contains: () => false });
+
+  // The anchor must be WORDS: the agent re-reads its own conversation, where
+  // it sees text — not clock times, not our internal ids. So the quote is a
+  // short excerpt, never the whole message (the owner's case: replying to one
+  // paragraph of a long answer without pasting the answer back).
+  it("keeps a long message down to an excerpt", () => {
+    const long = "palavra ".repeat(400);
+    const out = quoteExcerptFrom(fakeTurn(long));
+    expect(out.length).toBeLessThanOrEqual(230);
+    expect(out.endsWith("…")).toBe(true);
+  });
+
+  it("quotes a short message whole (nothing to trim)", () => {
+    expect(quoteExcerptFrom(fakeTurn("beleza, pode seguir"))).toBe("beleza, pode seguir");
+  });
+
+  it("collapses newlines so the quote stays one line", () => {
+    expect(quoteExcerptFrom(fakeTurn("uma\n\nlinha\ne outra"))).toBe("uma linha e outra");
+  });
+
+  it("cuts on a word boundary, never mid-word", () => {
+    const out = quoteExcerptFrom(fakeTurn("abcdefghij ".repeat(40)));
+    // Every word that survived is a WHOLE one: no "abcdef…" fragments.
+    for (const w of out.replace(/…$/, "").trim().split(/\s+/)) {
+      expect(w).toBe("abcdefghij");
+    }
+  });
+
+  it("the composer gets a quote block, not the message", () => {
+    const src = script.match(/function quoteTurnIntoComposer[\s\S]*?\n    }/)?.[0] ?? "";
+    expect(src).toContain("> ↩ ${who}: ${excerpt}");
+    expect(src).toContain("input.value = block + input.value.replace"); // replaces a previous quote
+  });
+});

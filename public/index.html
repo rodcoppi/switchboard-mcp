@@ -1971,6 +1971,7 @@
     }
     .nudge-peek:hover { color: var(--link-bright); }
     .msg-reaction { margin-top: 0; margin-left: 10px; }
+    .chat-copy-btn.quote { font-size: 13px; line-height: 1; }
     /* An image named in a message, shown. Small on purpose: the picture is a
        confirmation of WHICH file, not the file itself — click opens it. */
     .chat-thumbs { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 10px; }
@@ -6735,8 +6736,50 @@
         wa.title = "Copy for WhatsApp — unwrapped AND converted to WhatsApp formatting";
         wa.setAttribute("aria-label", "Copy message formatted for WhatsApp");
         wa.addEventListener("click", (ev) => { ev.stopPropagation(); copyChatText(wa, turn.__text, true); });
-        rail.append(copy, wa);
+        const quote = el("button", "chat-copy-btn quote", "↩");
+        quote.type = "button";
+        quote.title = "Reply to this — quotes a short excerpt (select text first to quote exactly that)";
+        quote.setAttribute("aria-label", "Reply to this message");
+        quote.addEventListener("click", (ev) => { ev.stopPropagation(); quoteTurnIntoComposer(turn); });
+        rail.append(quote, copy, wa);
       }
+    }
+
+    /**
+     * "Reply to THIS message" without pasting the message.
+     *
+     * The anchor has to be WORDS: the agent re-reads its own conversation,
+     * where it sees text — not clock times and not our internal ids — so
+     * "about your 12:34 message" anchors nothing. A short excerpt does, and
+     * it costs a line instead of a screen. Select part of a message first and
+     * that selection is quoted instead: replying to one paragraph of a long
+     * answer is the case that started this.
+     */
+    const QUOTE_MAX = 220;
+    function quoteExcerptFrom(turn) {
+      const sel = window.getSelection();
+      const picked =
+        sel && !sel.isCollapsed && turn.contains(sel.anchorNode) ? String(sel).trim() : "";
+      const source = picked || String(turn.__text || "").trim();
+      const oneLine = source.replace(/\s+/g, " ").trim();
+      if (oneLine.length <= QUOTE_MAX) return oneLine;
+      // Cut on a word, not mid-syllable; the ellipsis says it is an excerpt.
+      return oneLine.slice(0, QUOTE_MAX).replace(/\s+\S*$/, "") + "…";
+    }
+    function quoteTurnIntoComposer(turn) {
+      const excerpt = quoteExcerptFrom(turn);
+      if (!excerpt) return;
+      const who = turn.classList.contains("user") ? "eu" : displayOf(screenState.name || "");
+      const input = $("#chat-input");
+      if (!input) return;
+      const block = `> ↩ ${who}: ${excerpt}\n\n`;
+      // Prepend: the quote heads the message, the answer follows under it.
+      input.value = block + input.value.replace(/^> ↩ [\s\S]*?\n\n/, "");
+      input.disabled = false;
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+      input.dispatchEvent(new Event("input", { bubbles: true })); // autogrow
+      window.getSelection()?.removeAllRanges();
     }
 
     // After each render, only the LAST 5 user turns carry an edit pencil.
