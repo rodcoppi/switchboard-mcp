@@ -838,6 +838,46 @@ describe("the question a blocked pane is asking", () => {
     expect(st.blockedPrompt).toBe("Channels: server:whatsapp");
   });
 
+  it("a question WITH previews: the box beside the list is not part of the labels", async () => {
+    // Claude Code's AskUserQuestion draws the choices in a left column and a
+    // bordered preview box to their right, so one pane line carries both. The
+    // owner's dashboard showed "É funcionário, não │ olhar e perguntar que
+    // parte do seu dia é exatamente isso: │" on a button (17/08). Verbatim
+    // layout of that frame — including the label that wraps to a second line.
+    const { parsePaneStatus } = await import("../src/server/dispatcher.js");
+    const pane = [
+      " ☐ O take",
+      "",
+      "Qual é o teu take pro clímax do short?",
+      "",
+      "  1. A chaveira, não o preço      ┌──────────────────────────────────────┐",
+      "❯ 2. Não é pra você ainda         │ CLÍMAX: Isso aí não é pra você       │",
+      "  3. É funcionário, não           │ olhar e perguntar que parte do seu   │",
+      "    assistente                    │ dia é exatamente isso: abrir três    │",
+      "                                  │ sistemas, copiar de um pro outro.    │",
+      "                                  └──────────────────────────────────────┘",
+      "",
+      "Enter to select · ↑/↓ to navigate · Esc to cancel",
+    ].join("\n");
+    const st = parsePaneStatus(pane);
+    expect(st.blocked).toBe(true);
+    expect(st.blockedPrompt).toBe("Qual é o teu take pro clímax do short?");
+    expect(st.blockedOptions).toEqual([
+      "A chaveira, não o preço",
+      "Não é pra você ainda",
+      "É funcionário, não assistente", // the wrapped continuation belongs to it
+    ]);
+  });
+
+  it("stripSidePanel keeps the left column and drops a pure-border line", async () => {
+    const { stripSidePanel } = await import("../src/server/dispatcher.js");
+    expect(stripSidePanel("  2. No   │ preview text │")).toBe("  2. No");
+    expect(stripSidePanel("        └────────────┘")).toBe("");
+    expect(stripSidePanel("  2. No — plain text, em dash and all")).toBe(
+      "  2. No — plain text, em dash and all",
+    );
+  });
+
   it("an ordinary frame asks nothing", async () => {
     const { parsePaneStatus } = await import("../src/server/dispatcher.js");
     const st = parsePaneStatus("● done\n❯ \n  ⏵⏵ bypass permissions on (shift+tab to cycle)");

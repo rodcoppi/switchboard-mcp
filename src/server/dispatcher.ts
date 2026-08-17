@@ -100,6 +100,18 @@ export interface PaneStatus {
 }
 
 /**
+ * Keeps only what is LEFT of the TUI's box drawing on one pane line. A dialog
+ * that shows previews puts a bordered box beside the choice list, so the line
+ * carries two columns; every border glyph lives in U+2500–U+257F, which no
+ * option label uses. A line that is only box drawing collapses to "".
+ * Exported for direct unit testing.
+ */
+export function stripSidePanel(line: string): string {
+  const cut = line.search(/[\u2500-\u257F]/); // box drawing, the whole block
+  return (cut === -1 ? line : line.slice(0, cut)).trimEnd();
+}
+
+/**
  * Reads the live TUI frame for what the operator wants at a glance. Claude Code
  * and Codex run in the alternate screen (no scrollback), so a captured pane is
  * only the CURRENT frame — never stale.
@@ -131,22 +143,40 @@ export function parsePaneStatus(pane: string): PaneStatus {
   const blockedOptions: string[] = [];
   let blockedPrompt: string | null = null;
   if (blocked) {
-    for (let i = 0; i < paneLines.length; i++) {
-      const opt = /^\s*[❯>]?\s*(\d+)\.\s+(\S.*?)\s*$/.exec(paneLines[i]);
+    // Column-aware: a question with previews draws the choices on the LEFT and
+    // a bordered preview box on the RIGHT, both on the same pane line, so the
+    // raw line reads "3. É funcionário, não   │ olhar e perguntar que parte…│".
+    // Cutting at the box means each option keeps its own words and nothing
+    // else (the owner saw the preview text spliced into the buttons, 17/08).
+    const left = paneLines.map(stripSidePanel);
+    for (let i = 0; i < left.length; i++) {
+      const opt = /^\s*[❯>]?\s*(\d+)\.\s+(\S.*?)\s*$/.exec(left[i]);
       if (!opt) continue;
       const n = Number(opt[1]);
       if (n !== blockedOptions.length + 1) continue; // 1,2,3… only
       if (blockedOptions.length === 0) {
         // The question is the nearest non-empty line above the first choice.
         for (let j = i - 1; j >= 0 && j > i - 6; j--) {
-          const t = paneLines[j].trim();
+          const t = left[j].trim();
           if (t && !/^[─━-]{3,}$/.test(t)) {
             blockedPrompt = t.slice(0, 200);
             break;
           }
         }
       }
-      blockedOptions.push(opt[2].slice(0, 160));
+      // A long label WRAPS in the choice column ("3. É funcionário, não" /
+      // "   assistente"): the continuation lines are indented, unnumbered and
+      // stop at the first blank one. Without them the button loses the half of
+      // the sentence that changes its meaning.
+      let label = opt[2];
+      for (let j = i + 1; j < left.length && j <= i + 3; j++) {
+        const cont = left[j];
+        if (cont.trim() === "") break;
+        if (/^\s*[❯>]?\s*\d+\.\s/.test(cont)) break; // next choice
+        if (!/^\s{2,}\S/.test(cont)) break; // not a continuation of this column
+        label += ` ${cont.trim()}`;
+      }
+      blockedOptions.push(label.slice(0, 160));
     }
   }
   const waitMatch = pane.match(/Waiting for \d+ background (?:agents?|tasks?) to finish/i);
