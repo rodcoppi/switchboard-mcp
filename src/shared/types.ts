@@ -81,6 +81,14 @@ export interface Agent {
    * with his words. Ephemeral, like activity.
    */
   composerBusy?: boolean;
+  /**
+   * What a blocked pane is ASKING, and the choices it offers. The dashboard
+   * renders them as buttons: while a dialog owns the TUI a chat message
+   * never reaches the input at all, so answering has to be its own act.
+   * Ephemeral, like activity; "" / [] when nothing is being asked.
+   */
+  blockedPrompt?: string;
+  blockedOptions?: string[];
   permission?: AgentPermission; // permission/plan mode from the TUI footer (ephemeral)
   goalActive?: boolean; // a /goal is active in the session (ephemeral)
   goalFor?: string; // how long the goal has run, e.g. "21m" (ephemeral)

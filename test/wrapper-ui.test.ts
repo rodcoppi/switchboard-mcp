@@ -683,3 +683,24 @@ describe("reply/quote a message", () => {
     expect(src).toContain("input.value = block + input.value.replace"); // replaces a previous quote
   });
 });
+
+describe("the agent's question in the chat", () => {
+  it("the composer refuses to type into a pane a dialog owns", () => {
+    // Before: the message looked sent and vanished — worse, its Enter could
+    // land on the highlighted choice.
+    const src = script.match(/async function sendChatMessage[\s\S]*?\n    }/)?.[0] ?? "";
+    expect(src).toContain("live && live.blocked");
+    expect(src).toContain("waiting on a question in its terminal");
+  });
+
+  it("the question is surfaced with its choices as buttons", () => {
+    const src = script.match(/function updateChatAsk[\s\S]*?\n    }/)?.[0] ?? "";
+    expect(src).toContain("agent.blockedOptions");
+    expect(src).toContain("answerAgentAsk(screenState.name, i + 1)");
+    expect(src).toContain("dataset.signature"); // survives re-renders unchanged
+  });
+
+  it("the panel is re-derived after a chat render, like the reopen spinner", () => {
+    expect(script).toContain("renderChat(view, items);\n        // Re-derive the pinned surfaces");
+  });
+});
