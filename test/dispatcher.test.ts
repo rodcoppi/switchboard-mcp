@@ -602,6 +602,8 @@ describe("parsePaneStatus", () => {
       working: true,
       blocked: false,
       composerBusy: false,
+      blockedPrompt: null,
+      blockedOptions: [],
       waitingFor: null,
       permission: "bypass",
       goalActive: true,
@@ -616,6 +618,8 @@ describe("parsePaneStatus", () => {
       working: false,
       blocked: false,
       composerBusy: false,
+      blockedPrompt: null,
+      blockedOptions: [],
       waitingFor: null,
       permission: "plan",
       goalActive: false,
@@ -629,6 +633,8 @@ describe("parsePaneStatus", () => {
       working: false,
       blocked: false,
       composerBusy: false,
+      blockedPrompt: null,
+      blockedOptions: [],
       waitingFor: null,
       permission: null,
       goalActive: false,
@@ -791,5 +797,51 @@ describe("composerBusy: never type into a half-written prompt", () => {
     dispatcher.flushPending();
     await new Promise((r) => setTimeout(r, 20));
     expect(world.nudges).toHaveLength(1);
+  });
+});
+
+describe("the question a blocked pane is asking", () => {
+  // While a dialog owns the TUI the chat cannot reach the input at all —
+  // worse, its Enter lands on the highlighted choice. So the dashboard has to
+  // SHOW the question and answer it as its own act.
+  it("reads the prompt and its choices, in order", async () => {
+    const { parsePaneStatus } = await import("../src/server/dispatcher.js");
+    const pane = [
+      " Bash command",
+      "   rm -rf /tmp/x",
+      " Do you want to proceed?",
+      " ❯ 1. Yes",
+      "   2. Yes, and always allow access to prova/ from this project",
+      "   3. No",
+      " Esc to cancel · Tab to amend",
+    ].join("\n");
+    const st = parsePaneStatus(pane);
+    expect(st.blocked).toBe(true);
+    expect(st.blockedPrompt).toBe("Do you want to proceed?");
+    expect(st.blockedOptions).toEqual([
+      "Yes",
+      "Yes, and always allow access to prova/ from this project",
+      "No",
+    ]);
+  });
+
+  it("reads the development-channel warning the same way", async () => {
+    const { parsePaneStatus } = await import("../src/server/dispatcher.js");
+    const pane = [
+      "  WARNING: Loading development channels",
+      "  Channels: server:whatsapp",
+      "  ❯ 1. I am using this for local development",
+      "    2. Exit",
+    ].join("\n");
+    const st = parsePaneStatus(pane);
+    expect(st.blockedOptions).toEqual(["I am using this for local development", "Exit"]);
+    expect(st.blockedPrompt).toBe("Channels: server:whatsapp");
+  });
+
+  it("an ordinary frame asks nothing", async () => {
+    const { parsePaneStatus } = await import("../src/server/dispatcher.js");
+    const st = parsePaneStatus("● done\n❯ \n  ⏵⏵ bypass permissions on (shift+tab to cycle)");
+    expect(st.blockedOptions).toEqual([]);
+    expect(st.blockedPrompt).toBeNull();
   });
 });

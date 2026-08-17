@@ -1878,6 +1878,26 @@
       color: var(--text-faint);
     }
     .chat-typing-note:empty { display: none; }
+    /* The agent's own question, surfaced in the chat: while a dialog owns the
+       TUI the composer cannot reach it, so answering lives here. */
+    .chat-ask {
+      width: 100%;
+      max-width: 880px;
+      margin: 10px auto 4px;
+      padding: 12px 14px;
+      background: var(--bg-elev-2);
+      border: 1px solid var(--warn);
+      border-radius: var(--radius);
+    }
+    .chat-ask-eyebrow {
+      font-family: var(--mono);
+      font-size: var(--fs-eyebrow);
+      color: var(--warn);
+      margin-bottom: 6px;
+    }
+    .chat-ask-q { color: var(--text); margin-bottom: 10px; }
+    .chat-ask-options { display: flex; flex-wrap: wrap; gap: 8px; }
+    .chat-ask-opt { text-align: left; }
     @keyframes typing-bounce {
       0%, 60%, 100% { transform: translateY(0); opacity: 0.5; }
       30% { transform: translateY(-4px); opacity: 1; }
@@ -5736,6 +5756,15 @@
     }
 
     async function sendChatMessage(name, text) {
+      // A dialog owns the TUI: keystrokes never reach the input, and the
+      // Enter that follows lands on the highlighted choice. Refuse rather
+      // than "send" a message that silently answers a permission prompt.
+      const live = state.agents.get(name);
+      if (live && live.blocked) {
+        throw new Error(
+          "This agent is waiting on a question in its terminal — answer it above, then send.",
+        );
+      }
       const bytesOf = (s) => {
         const b64 = btoa(unescape(encodeURIComponent(s)));
         return fetch(`/api/agents/${encodeURIComponent(name)}/terminal/input`, {
@@ -5876,6 +5905,11 @@
           if (it.kind === "assistant" && it.model) screenState.model = it.model; // track current model
         }
         renderChat(view, items);
+        // Re-derive the pinned surfaces: renderChat rebuilds the view, which
+        // would otherwise drop the "agent is asking" panel a second after it
+        // appeared (the same trap the reopen spinner fell into).
+        updateChatAsk();
+        updateChatTyping();
         setScreenHint(`${items.length} messages`, false);
         renderScreenStatus(); // the model pill follows the latest assistant turn
         if (atBottom) view.scrollTop = view.scrollHeight;
@@ -6150,9 +6184,73 @@
       }
     }
 
+    /**
+     * The agent is asking something in its terminal. While that is open the
+     * chat cannot reach it at all (the CLI reads keys as choices), so the
+     * question is surfaced HERE with its choices as buttons — answering is
+     * an act of its own, not a message. Clicking types the choice's number,
+     * which is how these lists are answered.
+     */
+    function updateChatAsk() {
+      const view = $("#screen-chat");
+      if (!view) return;
+      const old = view.querySelector(".chat-ask");
+      const agent = screenState.name ? state.agents.get(screenState.name) : null;
+      const asking = !!(agent && agent.blocked && screenState.mode === "chat");
+      const options = (agent && agent.blockedOptions) || [];
+      if (!asking || !options.length) {
+        old?.remove();
+        return;
+      }
+      const signature = (agent.blockedPrompt || "") + "|" + options.join("|");
+      if (old && old.dataset.signature === signature) return; // unchanged
+      old?.remove();
+      const box = el("div", "chat-ask");
+      box.dataset.signature = signature;
+      box.append(
+        el("div", "chat-ask-eyebrow", "⏸ waiting for you in the terminal"),
+        el("div", "chat-ask-q", agent.blockedPrompt || "The agent is asking something."),
+      );
+      const row = el("div", "chat-ask-options");
+      options.forEach((label, i) => {
+        const b = el("button", "btn chat-ask-opt", `${i + 1}. ${label}`);
+        b.type = "button";
+        b.addEventListener("click", async () => {
+          for (const other of row.querySelectorAll("button")) other.disabled = true;
+          try {
+            await answerAgentAsk(screenState.name, i + 1);
+            box.remove();
+          } catch (err) {
+            toast(`Could not answer: ${err && err.message ? err.message : err}`, "warn");
+            for (const other of row.querySelectorAll("button")) other.disabled = false;
+          }
+        });
+        row.appendChild(b);
+      });
+      box.appendChild(row);
+      const atBottom = view.scrollHeight - view.scrollTop - view.clientHeight < 160;
+      view.appendChild(box);
+      if (atBottom) view.scrollTop = view.scrollHeight;
+    }
+
+    /** Types the chosen number into the pane — how these lists are answered. */
+    async function answerAgentAsk(name, choice) {
+      const b64 = btoa(String(choice));
+      const res = await fetch(`/api/agents/${encodeURIComponent(name)}/terminal/input`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ b64 }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `HTTP ${res.status}`);
+      }
+    }
+
     // Sibling of updateChatTyping(): the composer STOP button is visible iff an
     // agent is open, we're in chat mode, and that agent is mid-turn (working).
     function updateStopButton() {
+      updateChatAsk();
       const btn = $("#chat-stop");
       if (!btn) return;
       const agent = screenState.name ? state.agents.get(screenState.name) : null;

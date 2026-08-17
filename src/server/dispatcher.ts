@@ -79,6 +79,15 @@ export interface PaneStatus {
    */
   composerBusy: boolean;
   /**
+   * The question a blocked pane is asking and the choices it offers, read
+   * off the frame. The dashboard shows them as buttons: with a dialog open
+   * the chat's keystrokes never reach the input — worse, its Enter lands on
+   * the highlighted choice — so "answer the dialog" has to be its own act,
+   * not a message.
+   */
+  blockedPrompt: string | null;
+  blockedOptions: string[];
+  /**
    * "Waiting for N background agents to finish", verbatim, when the TUI shows
    * it. This state has NO "esc to interrupt" (the turn's text is done), so
    * without it the poll reads a waiting agent as idle and the chat renders
@@ -117,6 +126,29 @@ export function parsePaneStatus(pane: string): PaneStatus {
     composerBusy = m[1].trim().length > 0;
     break;
   }
+  // The choice list, in order. "❯ 1. Yes" / "  2. No" — the caret marks the
+  // highlighted one and is not part of the label.
+  const blockedOptions: string[] = [];
+  let blockedPrompt: string | null = null;
+  if (blocked) {
+    for (let i = 0; i < paneLines.length; i++) {
+      const opt = /^\s*[❯>]?\s*(\d+)\.\s+(\S.*?)\s*$/.exec(paneLines[i]);
+      if (!opt) continue;
+      const n = Number(opt[1]);
+      if (n !== blockedOptions.length + 1) continue; // 1,2,3… only
+      if (blockedOptions.length === 0) {
+        // The question is the nearest non-empty line above the first choice.
+        for (let j = i - 1; j >= 0 && j > i - 6; j--) {
+          const t = paneLines[j].trim();
+          if (t && !/^[─━-]{3,}$/.test(t)) {
+            blockedPrompt = t.slice(0, 200);
+            break;
+          }
+        }
+      }
+      blockedOptions.push(opt[2].slice(0, 160));
+    }
+  }
   const waitMatch = pane.match(/Waiting for \d+ background (?:agents?|tasks?) to finish/i);
   const waitingFor = waitMatch ? waitMatch[0] : null;
   const goalMatch = pane.match(/\/goal active(?:\s*\(([^)]+)\))?/i);
@@ -134,7 +166,7 @@ export function parsePaneStatus(pane: string): PaneStatus {
           ? "plan"
           : "default";
   }
-  return { working, blocked, composerBusy, waitingFor, permission, goalActive, goalFor };
+  return { working, blocked, composerBusy, blockedPrompt, blockedOptions, waitingFor, permission, goalActive, goalFor };
 }
 
 /** Back-compat shim: whether the CLI is mid-turn. */
@@ -411,7 +443,7 @@ export class Dispatcher {
       for (const { name, tmuxSession } of this.store.listAgents()) {
         const agent = this.store.getAgent(name);
         if (!agent || agent.status !== "online") continue;
-        let status: PaneStatus = { working: false, blocked: false, composerBusy: false, waitingFor: null, permission: null, goalActive: false, goalFor: null };
+        let status: PaneStatus = { working: false, blocked: false, composerBusy: false, blockedPrompt: null, blockedOptions: [], waitingFor: null, permission: null, goalActive: false, goalFor: null };
         try {
           status = parsePaneStatus(await this.tmux.capturePane(tmuxSession, 30));
         } catch {
@@ -420,6 +452,8 @@ export class Dispatcher {
         const next: AgentActivity = status.working ? "working" : "idle";
         const blocked = status.blocked;
         const composerBusy = status.composerBusy;
+        const blockedPrompt = status.blockedPrompt ?? "";
+        const blockedOptions = status.blockedOptions;
         // Only write on a real change (any field), so a steady agent is free.
         const permission = status.permission ?? agent.permission;
         const goalFor = status.goalActive ? status.goalFor ?? undefined : undefined;
@@ -433,7 +467,9 @@ export class Dispatcher {
           (agent.goalFor ?? undefined) === goalFor &&
           (agent.waitingFor ?? "") === waitingFor &&
           !!agent.blocked === blocked &&
-          !!agent.composerBusy === composerBusy
+          !!agent.composerBusy === composerBusy &&
+          (agent.blockedPrompt ?? "") === blockedPrompt &&
+          (agent.blockedOptions ?? []).join("|") === blockedOptions.join("|")
         ) {
           continue;
         }
@@ -441,6 +477,8 @@ export class Dispatcher {
           activity: next,
           blocked,
           composerBusy,
+          blockedPrompt,
+          blockedOptions,
           waitingFor,
           permission,
           goalActive: status.goalActive,
@@ -502,7 +540,7 @@ export class Dispatcher {
     // this nudge's Enter as its answer. Fail-CLOSED — an unreadable pane is
     // treated as blocked, exactly like the pane guard.
     if (this.tmux.capturePane) {
-      let live: PaneStatus = { working: false, blocked: true, composerBusy: true, waitingFor: null, permission: null, goalActive: false, goalFor: null };
+      let live: PaneStatus = { working: false, blocked: true, composerBusy: true, blockedPrompt: null, blockedOptions: [], waitingFor: null, permission: null, goalActive: false, goalFor: null };
       try {
         live = parsePaneStatus(await this.tmux.capturePane(agent.tmuxSession, 30));
       } catch {
