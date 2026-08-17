@@ -537,7 +537,9 @@ describe.skipIf(!hasTmux)("CLI Phase 4 + real hub + real tmux", () => {
     // pane starts WITHOUT readiness markers, so the kickoff must WAIT.
     const name = NAME_PREFIX + "k";
     const session = `sb-${name}`;
-    await tmux.newSession(session, dir, "cat");
+    // `exec`: dash does not exec the last command, so without it the pane
+    // reports "sh" and the guard refuses to type (the 17/08 outage).
+    await tmux.newSession(session, dir, "exec cat");
 
     const kickoff = runKickoffAgent({
       name,
