@@ -389,24 +389,28 @@ describe("buildWireClaudeArgs across agent types", () => {
 describe("buildAgentCommand + bootCommand", () => {
   const base = { name: "moov", token: "t0k", agentType: "claude" as const };
 
-  it("without a boot command the argv is byte-identical to always", () => {
-    expect(buildAgentCommand({ ...base, claudeArgs: ["-c"] })).toEqual([
-      "env",
-      "SWITCHBOARD_AGENT_NAME=moov",
-      "SWITCHBOARD_AGENT_TOKEN=t0k",
-      "claude",
-      "-c",
-    ]);
+  it("execs TWICE, so the PANE becomes the CLI (not a shell holding it)", () => {
+    // tmux runs a new-session command through the server's default-shell, and
+    // dash does not exec the last command of a `-c` string: it forks and stays
+    // the pane's foreground process, so tmux reports "sh" and the pane guard
+    // refuses every keystroke (17/08 — the whole fleet went mute with every
+    // claude alive). The OUTER exec hands the pane to our own shell, the INNER
+    // one hands it to the CLI. Measured on tmux 3.4: `sh -c 'exec cat'` → the
+    // pane reads "sh"; `exec sh -c 'exec cat'` → "cat".
+    const argv = buildAgentCommand({ ...base, claudeArgs: ["-c"] });
+    expect(argv.slice(0, 3)).toEqual(["exec", "sh", "-c"]);
+    expect(argv[3]).toBe(
+      "exec 'env' 'SWITCHBOARD_AGENT_NAME=moov' 'SWITCHBOARD_AGENT_TOKEN=t0k' 'claude' '-c'",
+    );
   });
 
   it("wraps setup + exec in ONE shell so exports carry into the CLI", () => {
     const argv = buildAgentCommand({ ...base, claudeArgs: ["-c"], bootCommand: "export FOO=1 && docker compose up -d" });
-    expect(argv).toHaveLength(3);
-    expect(argv[0]).toBe("sh");
-    expect(argv[1]).toBe("-c");
-    expect(argv[2]).toMatch(/^export FOO=1 && docker compose up -d && exec 'env' /);
-    expect(argv[2]).toContain("'SWITCHBOARD_AGENT_TOKEN=t0k'");
-    expect(argv[2]).toContain("'-c'");
+    expect(argv).toHaveLength(4);
+    expect(argv.slice(0, 3)).toEqual(["exec", "sh", "-c"]);
+    expect(argv[3]).toMatch(/^export FOO=1 && docker compose up -d && exec 'env' /);
+    expect(argv[3]).toContain("'SWITCHBOARD_AGENT_TOKEN=t0k'");
+    expect(argv[3]).toContain("'-c'");
   });
 
   it("quotes argv safely — a single quote in an arg cannot escape the shell", () => {
@@ -415,10 +419,12 @@ describe("buildAgentCommand + bootCommand", () => {
       claudeArgs: ["--append-system-prompt", "it's here"],
       bootCommand: "true",
     });
-    expect(argv[2]).toContain(`'it'\\''s here'`);
+    expect(argv[3]).toContain(`'it'\\''s here'`);
   });
 
-  it("blank boot commands are the standard boot, not an empty sh chain", () => {
-    expect(buildAgentCommand({ ...base, bootCommand: "   " })[0]).toBe("env");
+  it("a blank boot command adds no chain — just the exec", () => {
+    const argv = buildAgentCommand({ ...base, bootCommand: "   " });
+    expect(argv[3].startsWith("exec ")).toBe(true);
+    expect(argv[3]).not.toContain("&&");
   });
 });

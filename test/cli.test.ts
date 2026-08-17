@@ -78,41 +78,37 @@ describe("parseClaudeArgs", () => {
 // ---------------------------------------------------------------------------
 
 describe("buildAgentCommand", () => {
+  // The argv is spliced into ONE `sh -c 'exec …'` line (see buildAgentCommand:
+  // without exec the shell stays the pane's foreground process and the pane
+  // guard refuses every keystroke). Order and boundaries are asserted on that
+  // line — each element quoted, so a value with spaces stays one argv.
   it("assembles env NAME/TOKEN + claude (no extra args)", () => {
-    expect(buildAgentCommand({ name: "alpha", token: "tok123" })).toEqual([
-      "env",
-      "SWITCHBOARD_AGENT_NAME=alpha",
-      "SWITCHBOARD_AGENT_TOKEN=tok123",
-      "claude",
-    ]);
+    const argv = buildAgentCommand({ name: "alpha", token: "tok123" });
+    expect(argv.slice(0, 3)).toEqual(["exec", "sh", "-c"]);
+    expect(argv[3]).toBe(
+      "exec 'env' 'SWITCHBOARD_AGENT_NAME=alpha' 'SWITCHBOARD_AGENT_TOKEN=tok123' 'claude'",
+    );
   });
 
   it("appends the parsed claude-args with argv semantics (quotes preserve spaces)", () => {
-    expect(
-      buildAgentCommand({
-        name: "beta",
-        token: "t",
-        claudeArgs: "--model opus --append-system-prompt 'a b'",
-      }),
-    ).toEqual([
-      "env",
-      "SWITCHBOARD_AGENT_NAME=beta",
-      "SWITCHBOARD_AGENT_TOKEN=t",
-      "claude",
-      "--model",
-      "opus",
-      "--append-system-prompt",
-      "a b",
-    ]);
+    const argv = buildAgentCommand({
+      name: "beta",
+      token: "t",
+      claudeArgs: "--model opus --append-system-prompt 'a b'",
+    });
+    // "a b" survives as ONE argument — the quoting is what carries argv
+    // boundaries through the shell line.
+    expect(argv[3]).toBe(
+      "exec 'env' 'SWITCHBOARD_AGENT_NAME=beta' 'SWITCHBOARD_AGENT_TOKEN=t' 'claude' " +
+        "'--model' 'opus' '--append-system-prompt' 'a b'",
+    );
   });
 
   it("injectable claudeBin (tests use sh/cat in place of the real claude)", () => {
-    expect(buildAgentCommand({ name: "g", token: "t", claudeBin: "cat" })).toEqual([
-      "env",
-      "SWITCHBOARD_AGENT_NAME=g",
-      "SWITCHBOARD_AGENT_TOKEN=t",
-      "cat",
-    ]);
+    const argv = buildAgentCommand({ name: "g", token: "t", claudeBin: "cat" });
+    expect(argv[3]).toBe(
+      "exec 'env' 'SWITCHBOARD_AGENT_NAME=g' 'SWITCHBOARD_AGENT_TOKEN=t' 'cat'",
+    );
   });
 });
 

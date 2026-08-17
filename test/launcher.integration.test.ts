@@ -224,7 +224,7 @@ describe.skipIf(!hasTmux)("dashboard launch + real hub + real tmux", () => {
 
     // Pre-existing session on the SAME name, tagged with a marker so we can
     // prove it was replaced (not reused).
-    await tmux.newSession(session, dir, "cat");
+    await tmux.newSession(session, dir, "exec cat"); // exec: see dispatcher.integration
     await tmux.sendKeysLiteral(session, "OLDPANE-MARKER-xyz");
     await tmux.sendEnter(session);
     await pollUntil(

@@ -172,16 +172,13 @@ describe("wire argv assembly (buildWireClaudeArgs + buildAgentCommand)", () => {
       claudeArgs: buildWireClaudeArgs("--model opus"),
       claudeBin: "claude",
     });
-    expect(cmd).toEqual([
-      "env",
-      "SWITCHBOARD_AGENT_NAME=api",
-      "SWITCHBOARD_AGENT_TOKEN=tok123",
-      "claude",
-      "-c",
-      "--dangerously-skip-permissions",
-      "--model",
-      "opus",
-    ]);
+    // One `sh -c 'exec …'` line now (a shell that does not exec becomes the
+    // pane's foreground process and the guard refuses to type into it).
+    expect(cmd.slice(0, 3)).toEqual(["exec", "sh", "-c"]);
+    expect(cmd[3]).toBe(
+      "exec 'env' 'SWITCHBOARD_AGENT_NAME=api' 'SWITCHBOARD_AGENT_TOKEN=tok123' " +
+        "'claude' '-c' '--dangerously-skip-permissions' '--model' 'opus'",
+    );
   });
 });
 

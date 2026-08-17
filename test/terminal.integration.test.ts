@@ -48,7 +48,10 @@ async function newCatSession(name: string, cols = 80, rows = 24): Promise<void> 
     String(cols),
     "-y",
     String(rows),
-    "cat",
+    // `exec` matters: tmux runs this through default-shell, and dash does NOT
+    // exec the last command — the pane would report "sh" and the pane guard
+    // would refuse every keystroke (exactly the 17/08 fleet-wide outage).
+    "exec cat",
   ]);
 }
 
