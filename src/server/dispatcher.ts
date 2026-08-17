@@ -72,6 +72,13 @@ export interface PaneStatus {
    */
   blocked: boolean;
   /**
+   * The operator is MID-SENTENCE in this pane: its prompt line already holds
+   * text. A nudge typed now lands inside that half-written prompt and the
+   * Enter sends the mix — the owner's words and ours, submitted together.
+   * Waiting costs a few seconds; interrupting costs him the message.
+   */
+  composerBusy: boolean;
+  /**
    * "Waiting for N background agents to finish", verbatim, when the TUI shows
    * it. This state has NO "esc to interrupt" (the turn's text is done), so
    * without it the poll reads a waiting agent as idle and the chat renders
@@ -99,6 +106,17 @@ export function parsePaneStatus(pane: string): PaneStatus {
     /Do you trust the files in this folder\?/i.test(pane) ||
     /Loading development channels/i.test(pane) ||
     /❯\s*\d+\.\s/.test(pane); // the numbered choice list a modal renders
+  // The LAST prompt line is the live input (the TUI keeps it at the bottom);
+  // anything after the caret is text waiting to be sent. NBSP is what the
+  // CLIs pad the caret with, and trim() drops it like any other space.
+  let composerBusy = false;
+  const paneLines = pane.split("\n");
+  for (let i = paneLines.length - 1; i >= 0; i--) {
+    const m = /^\s*[❯›>]\s*(.*)$/.exec(paneLines[i]);
+    if (!m) continue;
+    composerBusy = m[1].trim().length > 0;
+    break;
+  }
   const waitMatch = pane.match(/Waiting for \d+ background (?:agents?|tasks?) to finish/i);
   const waitingFor = waitMatch ? waitMatch[0] : null;
   const goalMatch = pane.match(/\/goal active(?:\s*\(([^)]+)\))?/i);
@@ -116,7 +134,7 @@ export function parsePaneStatus(pane: string): PaneStatus {
           ? "plan"
           : "default";
   }
-  return { working, blocked, waitingFor, permission, goalActive, goalFor };
+  return { working, blocked, composerBusy, waitingFor, permission, goalActive, goalFor };
 }
 
 /** Back-compat shim: whether the CLI is mid-turn. */
@@ -213,6 +231,11 @@ export class Dispatcher {
       this.pendingNudge.add(agent.name);
       return "coalesced";
     }
+    if (agent.composerBusy) {
+      // Half-written prompt in the pane: queue rather than type into it.
+      this.pendingNudge.add(agent.name);
+      return "coalesced";
+    }
     // The immediate nudge covers ALL unread (count + senders come from the
     // store), so it discharges any coalescing debt — without this delete, a
     // stale pending entry would make the next flush fire a duplicate nudge.
@@ -243,6 +266,7 @@ export class Dispatcher {
       if (agent.status !== "online") continue;
       if (this.inCooldown(agent)) continue;
       if (agent.blocked) continue; // a modal still owns the pane — keep waiting
+      if (agent.composerBusy) continue; // the operator is mid-sentence in there
       if (this.store.unreadCount(name) === 0) {
         // Spec: only nudge with unread > 0. The debt is DISCHARGED (agent
         // read everything via check_messages) — drop the entry, otherwise it
@@ -387,7 +411,7 @@ export class Dispatcher {
       for (const { name, tmuxSession } of this.store.listAgents()) {
         const agent = this.store.getAgent(name);
         if (!agent || agent.status !== "online") continue;
-        let status: PaneStatus = { working: false, blocked: false, waitingFor: null, permission: null, goalActive: false, goalFor: null };
+        let status: PaneStatus = { working: false, blocked: false, composerBusy: false, waitingFor: null, permission: null, goalActive: false, goalFor: null };
         try {
           status = parsePaneStatus(await this.tmux.capturePane(tmuxSession, 30));
         } catch {
@@ -395,6 +419,7 @@ export class Dispatcher {
         }
         const next: AgentActivity = status.working ? "working" : "idle";
         const blocked = status.blocked;
+        const composerBusy = status.composerBusy;
         // Only write on a real change (any field), so a steady agent is free.
         const permission = status.permission ?? agent.permission;
         const goalFor = status.goalActive ? status.goalFor ?? undefined : undefined;
@@ -407,13 +432,15 @@ export class Dispatcher {
           !!agent.goalActive === status.goalActive &&
           (agent.goalFor ?? undefined) === goalFor &&
           (agent.waitingFor ?? "") === waitingFor &&
-          !!agent.blocked === blocked
+          !!agent.blocked === blocked &&
+          !!agent.composerBusy === composerBusy
         ) {
           continue;
         }
         const updated = this.store.updateAgent(name, {
           activity: next,
           blocked,
+          composerBusy,
           waitingFor,
           permission,
           goalActive: status.goalActive,
@@ -475,20 +502,24 @@ export class Dispatcher {
     // this nudge's Enter as its answer. Fail-CLOSED — an unreadable pane is
     // treated as blocked, exactly like the pane guard.
     if (this.tmux.capturePane) {
-      let blockedNow = true;
+      let live: PaneStatus = { working: false, blocked: true, composerBusy: true, waitingFor: null, permission: null, goalActive: false, goalFor: null };
       try {
-        blockedNow = parsePaneStatus(await this.tmux.capturePane(agent.tmuxSession, 30)).blocked;
+        live = parsePaneStatus(await this.tmux.capturePane(agent.tmuxSession, 30));
       } catch {
-        /* unreadable → stay blocked */
+        /* unreadable → stay blocked AND busy: fail closed on both */
       }
-      if (blockedNow) {
-        this.store.updateAgent(agent.name, { lastNudgeAt: prevNudgeAt, blocked: true });
-        this.pendingNudge.add(agent.name); // deliver once the modal is answered
-        this.log.info(
-          `[dispatcher] nudge for ${agent.name} HELD: a modal dialog owns the pane ` +
-            `(typing now would answer it). Queued for the next flush.`,
-        );
-        return { sent: false, reason: "a dialog is open in the pane" };
+      if (live.blocked || live.composerBusy) {
+        const why = live.blocked
+          ? "a modal dialog owns the pane (typing now would answer it)"
+          : "the operator is mid-sentence in that pane (typing now would land inside the prompt)";
+        this.store.updateAgent(agent.name, {
+          lastNudgeAt: prevNudgeAt,
+          blocked: live.blocked,
+          composerBusy: live.composerBusy,
+        });
+        this.pendingNudge.add(agent.name); // delivered once the pane is free
+        this.log.info(`[dispatcher] nudge for ${agent.name} HELD: ${why}. Queued for the next flush.`);
+        return { sent: false, reason: why };
       }
     }
 

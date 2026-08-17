@@ -601,6 +601,7 @@ describe("parsePaneStatus", () => {
     expect(parsePaneStatus(pane)).toEqual({
       working: true,
       blocked: false,
+      composerBusy: false,
       waitingFor: null,
       permission: "bypass",
       goalActive: true,
@@ -614,6 +615,7 @@ describe("parsePaneStatus", () => {
     expect(parsePaneStatus(pane)).toEqual({
       working: false,
       blocked: false,
+      composerBusy: false,
       waitingFor: null,
       permission: "plan",
       goalActive: false,
@@ -626,6 +628,7 @@ describe("parsePaneStatus", () => {
     expect(parsePaneStatus("just some output\n")).toEqual({
       working: false,
       blocked: false,
+      composerBusy: false,
       waitingFor: null,
       permission: null,
       goalActive: false,
@@ -713,7 +716,9 @@ describe("a modal dialog holds the nudge (security regression)", () => {
 
     // Operator answers the dialog; the pane goes back to normal.
     world.paneText.set("sb-beta", "❯ \n  ⏵⏵ bypass permissions on (shift+tab to cycle)");
-    store.updateAgent("beta", { blocked: false });
+    // The dialog pane also reads as a busy caret ("❯ 1. Yes"), so both flags
+    // clear when it is answered — `blocked` is the one that mattered here.
+    store.updateAgent("beta", { blocked: false, composerBusy: false });
     dispatcher.flushPending();
     await new Promise((r) => setTimeout(r, 20));
     expect(world.nudges).toHaveLength(1);
@@ -742,5 +747,49 @@ describe("a modal dialog holds the nudge (security regression)", () => {
     world.alive.add("sb-beta");
     store.updateAgent("beta", { blocked: true });
     expect(deliver(dispatcher, "alpha", "beta", "oi")).toBe("coalesced");
+  });
+});
+
+describe("composerBusy: never type into a half-written prompt", () => {
+  // The owner's complaint, verbatim: "às vezes eu tô digitando coisa e do
+  // nada vem um texto do switchboard e cola no meio do meu prompt e envia
+  // sozinho". The nudge is text + Enter, so it lands inside whatever he was
+  // typing and submits the mix.
+  it("sees text waiting at the caret", async () => {
+    const { parsePaneStatus } = await import("../src/server/dispatcher.js");
+    const typing = ["● alguma saída anterior", "❯ mandei o contrato pro marcelo", "  ⏵⏵ bypass permissions on (shift+tab to cycle)"].join("\n");
+    expect(parsePaneStatus(typing).composerBusy).toBe(true);
+  });
+
+  it("an empty caret is free (NBSP padding included)", async () => {
+    const { parsePaneStatus } = await import("../src/server/dispatcher.js");
+    expect(parsePaneStatus("● pronto\n❯ \u00a0\n  ⏵⏵ bypass permissions on").composerBusy).toBe(false);
+    expect(parsePaneStatus("● pronto\n❯\n  ? for shortcuts").composerBusy).toBe(false);
+  });
+
+  it("reads the LAST caret — earlier ones are conversation history", async () => {
+    const { parsePaneStatus } = await import("../src/server/dispatcher.js");
+    const pane = ["❯ uma pergunta antiga já enviada", "● a resposta do agente", "❯ "].join("\n");
+    expect(parsePaneStatus(pane).composerBusy).toBe(false);
+  });
+
+  it("queues the nudge instead of typing, and delivers once the prompt clears", async () => {
+    const world = mockTmux();
+    const dispatcher = makeDispatcher(world.tmux);
+    registerOnline("alpha");
+    registerOnline("beta");
+    world.alive.add("sb-beta");
+    world.paneText.set("sb-beta", "❯ estou escrevendo uma coisa longa\n  ⏵⏵ bypass permissions on");
+
+    expect(deliver(dispatcher, "alpha", "beta", "oi")).toBe("nudged");
+    await new Promise((r) => setTimeout(r, 20));
+    expect(world.nudges).toHaveLength(0); // his sentence survives
+    expect(store.getAgent("beta")!.lastNudgeAt).toBeNull(); // no cooldown imposed
+
+    world.paneText.set("sb-beta", "❯ \n  ⏵⏵ bypass permissions on");
+    store.updateAgent("beta", { composerBusy: false });
+    dispatcher.flushPending();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(world.nudges).toHaveLength(1);
   });
 });

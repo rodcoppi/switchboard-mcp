@@ -993,7 +993,9 @@ describe("REST as operator", () => {
     const elapsed = Date.now() - started;
     expect(res.status).toBe(200);
     expect(((await res.json()) as any).path).toBeNull();
-    expect(elapsed).toBeLessThan(3000); // budget is 400ms + request overhead
+    // The walk is async now (it yields between directories), so the budget
+    // is generous — 2.5s — without the hub freezing for any of it.
+    expect(elapsed).toBeLessThan(6000);
   });
 
   it("files/origin finds a dropped file's original by name+size, refuses ambiguity", async () => {

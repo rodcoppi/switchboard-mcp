@@ -75,6 +75,12 @@ export interface Agent {
    * Enter would answer the dialog (proven 04/08). Ephemeral, like activity.
    */
   blocked?: boolean;
+  /**
+   * The operator has a half-written prompt in that pane. The dispatcher waits
+   * instead of typing: a nudge landing mid-sentence gets submitted together
+   * with his words. Ephemeral, like activity.
+   */
+  composerBusy?: boolean;
   permission?: AgentPermission; // permission/plan mode from the TUI footer (ephemeral)
   goalActive?: boolean; // a /goal is active in the session (ephemeral)
   goalFor?: string; // how long the goal has run, e.g. "21m" (ephemeral)
