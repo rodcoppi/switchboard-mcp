@@ -98,70 +98,6 @@ const SAFE_PANE_COMMANDS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Shells that may be HOLDING an agent instead of waiting for a command — the
- * only commands allowed a second look (see paneAgentReadsTty). Anything else
- * outside the allow-list stays an outright refusal.
- */
-const HOLDING_SHELLS: ReadonlySet<string> = new Set(["sh", "dash", "ash", "bash", "zsh", "fish"]);
-
-/** One row of `ps -e -o pid=,ppid=,stat=,comm=`. */
-export interface ProcRow {
-  pid: number;
-  ppid: number;
-  /** ps STAT field; "+" means the process is in the tty's FOREGROUND group. */
-  stat: string;
-  comm: string;
-}
-
-/** Parses `ps -e -o pid=,ppid=,stat=,comm=`. Unparsable lines are skipped. */
-export function parseProcTable(stdout: string): ProcRow[] {
-  const rows: ProcRow[] = [];
-  for (const line of stdout.split("\n")) {
-    const m = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.+?)\s*$/.exec(line);
-    if (!m) continue;
-    rows.push({ pid: Number(m[1]), ppid: Number(m[2]), stat: m[3], comm: m[4] });
-  }
-  return rows;
-}
-
-/**
- * SECOND LOOK for the pane guard, and the reason it is still default-deny.
- *
- * tmux reports the pane's foreground process GROUP LEADER, which is not always
- * the process reading the tty: `sh -c 'claude …'` on a shell that does not exec
- * (dash) leaves `sh` as the leader with claude as its child, in the same
- * foreground group — pane_current_command says "sh" while every keystroke lands
- * in claude. That read the whole fleet as unsafe and refused every nudge
- * (17/08) on panes where no shell would ever see the text.
- *
- * So: when the pane's command is a shell, accept it ONLY if a descendant on the
- * allow-list is in the tty's FOREGROUND group ("+" in STAT) — i.e. an agent is
- * literally the one reading. A shell waiting at its prompt has no such
- * descendant and is refused exactly as before; a backgrounded agent (no "+")
- * does not count either. Pure and exported for direct unit testing.
- */
-export function paneAgentReadsTty(panePid: number, table: readonly ProcRow[]): boolean {
-  const children = new Map<number, ProcRow[]>();
-  for (const row of table) {
-    const list = children.get(row.ppid);
-    if (list) list.push(row);
-    else children.set(row.ppid, [row]);
-  }
-  const seen = new Set<number>([panePid]);
-  const queue = [panePid];
-  while (queue.length > 0) {
-    for (const child of children.get(queue.shift()!) ?? []) {
-      if (seen.has(child.pid)) continue; // defensive: never loop on a cycle
-      seen.add(child.pid);
-      const cmd = normalizePaneCommand(child.comm);
-      if (SAFE_PANE_COMMANDS.has(cmd) && child.stat.includes("+")) return true;
-      if (HOLDING_SHELLS.has(cmd)) queue.push(child.pid); // shell holding a shell
-    }
-  }
-  return false;
-}
-
-/**
  * Normalizes one pane_current_command line for the guard: trim, lowercase,
  * basename (defensive: the format normally yields a bare name), and strip a
  * leading "-" (login-shell argv[0] convention, e.g. "-bash").
@@ -179,6 +115,15 @@ function normalizePaneCommand(line: string): string {
  * lines when the session has several panes — send-keys would hit one of
  * them, so EVERY pane must be on the allow-list). FAIL-CLOSED / default-deny:
  * empty or unknown → unsafe. Exported for direct unit testing.
+ *
+ * It reads the pane's foreground process-group LEADER, and it deliberately
+ * does NOT go looking for an allow-listed process somewhere UNDER a shell.
+ * That heuristic was tried (to rescue panes whose launch left a shell holding
+ * the agent) and it has a hole: with job control off, a shell sitting at its
+ * prompt keeps a background `node` in the tty's foreground group, so the pane
+ * would pass while the SHELL is the thing reading the keys. The fix belongs at
+ * launch — the pane must BE the agent (see buildAgentCommand) — and this stays
+ * the security boundary it was written to be.
  */
 export function isSafePaneCommand(raw: string): boolean {
   const lines = raw
@@ -200,15 +145,13 @@ export interface NudgeResult {
 }
 
 /**
- * Quotes ONE argv element for the shell command tmux runs. Context: tmux's
- * `new-session [shell-command]` joins its trailing arguments with spaces and
- * executes the result via `sh -c` — it does NOT preserve argv boundaries. So
- * to give newSession real ARRAY semantics (each element = exactly one argv of
- * the final process — Phase 4 needs this for
- * `env SWITCHBOARD_AGENT_TOKEN=<token> claude <args>`), every element is
- * shell-quoted here before joining. POSIX single-quote strategy: wrap in
- * '…' and escape embedded single quotes as '\'' — safe for ANY content.
- * Exported for direct unit testing.
+ * Quotes ONE argv element for a string a SHELL will parse. newSession does not
+ * need it any more (tmux execs a multi-argument command directly, argv
+ * boundaries and all), but a boot command does: `<setup> && exec <cli argv>`
+ * is one shell line, and the CLI's arguments have to survive that shell's own
+ * word splitting. POSIX single-quote strategy: wrap in '…' and escape embedded
+ * single quotes as '\'' — safe for ANY content. Exported for direct unit
+ * testing.
  */
 export function quoteShellArg(arg: string): string {
   if (arg.length === 0) return "''";
@@ -409,33 +352,6 @@ export function createTmux(options: TmuxOptions = {}): Tmux {
     return stdout.trim();
   }
 
-  /**
-   * `#{pane_pid} #{pane_current_command}` per pane — THE guard's read. One
-   * tmux call carries both halves: the command classifies the pane, the pid
-   * lets the second look walk its process tree. A line without a pid still
-   * yields its command (pid null → the second look simply cannot clear it).
-   */
-  async function panesWithPids(
-    session: string,
-  ): Promise<Array<{ pid: number | null; cmd: string }>> {
-    assertValidSession(session);
-    const { stdout } = await exec("tmux", [
-      "list-panes",
-      "-t",
-      paneTarget(session),
-      "-F",
-      "#{pane_pid} #{pane_current_command}",
-    ]);
-    const panes: Array<{ pid: number | null; cmd: string }> = [];
-    for (const line of stdout.split("\n")) {
-      const trimmed = line.trim();
-      if (trimmed === "") continue;
-      const m = /^(\d+)\s+(.+?)$/.exec(trimmed);
-      panes.push(m ? { pid: Number(m[1]), cmd: m[2] } : { pid: null, cmd: trimmed });
-    }
-    return panes;
-  }
-
   async function sendKeysLiteral(session: string, text: string): Promise<void> {
     assertValidSession(session);
     if (/[\r\n]/.test(text)) {
@@ -462,10 +378,23 @@ export function createTmux(options: TmuxOptions = {}): Tmux {
     assertValidSession(session);
     const args = ["new-session", "-d", "-s", session, "-c", cwd];
     if (Array.isArray(cmd)) {
-      // Argv semantics: tmux would space-join multiple trailing args into one
-      // sh -c string anyway, so we do the join OURSELVES with each element
-      // shell-quoted — array boundaries survive exactly (see quoteShellArg).
-      args.push(cmd.map(quoteShellArg).join(" "));
+      // REAL argv: with MULTIPLE trailing arguments tmux execs the command
+      // directly — no shell, no quoting, and the pane process becomes the
+      // command itself. With ONE string it hands the line to the server's
+      // default-shell, and a shell that does not exec the last command (dash)
+      // stays the pane's foreground process-group leader: tmux then reports
+      // pane_current_command="sh", the guard sees a shell and refuses every
+      // keystroke — the outage that muted the whole fleet on 17/08. Measured
+      // on tmux 3.4: `new-session env A=1 cat` leaves the pane reading "cat";
+      // `new-session "env A=1 cat"` reads "sh". An argument with spaces still
+      // arrives as ONE argv (asserted in test/cli.test.ts).
+      //
+      // ONE element is the exception, and it is a trap: a single trailing
+      // argument is a shell-COMMAND to tmux, not argv, so `["cat"]` would land
+      // in the same dash that never execs and the pane would read "sh" again.
+      // There the guarantee has to come from `exec` (hence quoteShellArg).
+      if (cmd.length === 1) args.push(`exec ${quoteShellArg(cmd[0])}`);
+      else if (cmd.length > 1) args.push(...cmd);
     } else if (cmd !== undefined) {
       args.push(cmd);
     }
@@ -677,11 +606,9 @@ export function createTmux(options: TmuxOptions = {}): Tmux {
   async function paneSafety(
     session: string,
   ): Promise<{ safe: boolean; reason?: string }> {
-    let panes: Array<{ pid: number | null; cmd: string }>;
     let raw: string;
     try {
-      panes = await panesWithPids(session);
-      raw = panes.map((p) => p.cmd).join("\n");
+      raw = await paneCommand(session);
     } catch (err) {
       return {
         safe: false,
@@ -691,10 +618,6 @@ export function createTmux(options: TmuxOptions = {}): Tmux {
       };
     }
     if (isSafePaneCommand(raw)) return { safe: true };
-    // Second look before refusing: a shell that merely HOLDS the agent (it did
-    // not exec) is reported as the pane's command while the agent is the one
-    // reading the tty — see paneAgentReadsTty. Every pane must clear it.
-    if (await everyShellPaneHoldsAnAgent(panes)) return { safe: true };
     return {
       safe: false,
       reason:
@@ -702,30 +625,6 @@ export function createTmux(options: TmuxOptions = {}): Tmux {
         `(pane_current_command=${JSON.stringify(raw)} outside the node/claude/cat allow-list — ` +
         `the text could be executed as a command)`,
     };
-  }
-
-  /**
-   * True when EVERY pane of the session either runs an allow-listed command
-   * outright or is a shell whose foreground descendant is one. Fail-closed:
-   * any error (no tmux, no ps, unreadable table) → false, i.e. the original
-   * refusal stands.
-   */
-  async function everyShellPaneHoldsAnAgent(
-    panes: ReadonlyArray<{ pid: number | null; cmd: string }>,
-  ): Promise<boolean> {
-    try {
-      if (panes.length === 0) return false;
-      const suspects = panes.filter((p) => !isSafePaneCommand(p.cmd));
-      // Only shells get the second look — a python/ssh/psql pane stays unsafe.
-      if (!suspects.every((p) => HOLDING_SHELLS.has(normalizePaneCommand(p.cmd)))) return false;
-      if (suspects.some((p) => p.pid === null)) return false; // no pid → cannot clear it
-      const { stdout } = await exec("ps", ["-e", "-o", "pid=,ppid=,stat=,comm="]);
-      const table = parseProcTable(stdout);
-      if (table.length === 0) return false;
-      return suspects.every((p) => paneAgentReadsTty(p.pid!, table));
-    } catch {
-      return false;
-    }
   }
 
   async function isPaneSafeToNudge(session: string): Promise<boolean> {

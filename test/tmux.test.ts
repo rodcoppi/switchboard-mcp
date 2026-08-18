@@ -15,8 +15,6 @@ import {
   createTmux,
   defaultExec,
   isSafePaneCommand,
-  paneAgentReadsTty,
-  parseProcTable,
   type ExecFn,
   type ExecResult,
 } from "../src/server/tmux.js";
@@ -168,6 +166,12 @@ describe("exact targets per command (critical finding from NOTES.md, tmux 3.4)",
 });
 
 describe("pane guard (PRD 10.3/P2, non-negotiable) — ALLOW-LIST, FAIL-CLOSED", () => {
+  // A shell is unsafe even when an agent is running somewhere under it. That
+  // rescue was tried in August and has a hole: with job control off, a shell at
+  // its prompt keeps a background `node` in the tty's foreground group, so the
+  // pane would pass the check while the SHELL reads the keys. Launches make the
+  // pane BE the agent instead (buildAgentCommand); this stays default-deny.
+
   it.each(["bash", "zsh", "sh", "dash", "fish", "ksh", "csh", "tcsh", "busybox"])(
     'a pane running the shell "%s" is UNSAFE',
     async (shell) => {
@@ -233,90 +237,6 @@ describe("pane guard (PRD 10.3/P2, non-negotiable) — ALLOW-LIST, FAIL-CLOSED",
     const { exec } = fakeExec(() => "claude\nbash\n");
     const tmux = createTmux({ exec });
     expect(await tmux.isPaneSafeToNudge("sb-alpha")).toBe(false);
-  });
-
-  // -------------------------------------------------------------------------
-  // Second look: a shell that HOLDS the agent. tmux reports the pane's
-  // foreground group LEADER, and `sh -c 'claude …'` on a shell that does not
-  // exec (dash) stays that leader with claude as its child — the pane reads
-  // "sh" while every keystroke lands in claude. Refusing there muted the whole
-  // fleet (17/08). Still default-deny: only shells get the second look, and
-  // only for an allow-listed descendant IN the tty's foreground group.
-  // -------------------------------------------------------------------------
-  /** exec mock: `list-panes` answers "<pid> <cmd>" lines, `ps` the table. */
-  function fakeExecWithProcs(paneLines: string, psTable: string): { exec: ExecFn } {
-    const { exec } = fakeExec((args) =>
-      args[0] === "-e" ? psTable : paneLines,
-    ); // ps -e -o pid=,ppid=,stat=,comm=
-    return { exec };
-  }
-
-  it('a "sh" pane whose claude child reads the tty IS safe (the fleet-wide outage)', async () => {
-    const { exec } = fakeExecWithProcs(
-      "2070 sh\n",
-      "   2070    2000 Ss+  sh\n   2072    2070 Sl+  claude\n   2954    2072 Sl+  analytics-mcp\n",
-    );
-    const tmux = createTmux({ exec });
-    expect(await tmux.isPaneSafeToNudge("sb-alpha")).toBe(true);
-  });
-
-  it("a shell with NO agent under it stays UNSAFE (a prompt would run the text)", async () => {
-    const { exec } = fakeExecWithProcs(
-      "2070 bash\n",
-      "   2070    2000 Ss+  bash\n   2500    2070 S+   sleep\n",
-    );
-    const tmux = createTmux({ exec });
-    expect(await tmux.isPaneSafeToNudge("sb-alpha")).toBe(false);
-  });
-
-  it("a BACKGROUNDED agent does not count: the shell is the one reading", async () => {
-    const { exec } = fakeExecWithProcs(
-      "2070 bash\n",
-      "   2070    2000 Ss+  bash\n   2072    2070 Sl   claude\n", // no "+"
-    );
-    const tmux = createTmux({ exec });
-    expect(await tmux.isPaneSafeToNudge("sb-alpha")).toBe(false);
-  });
-
-  it("only SHELLS get the second look — python holding claude stays UNSAFE", async () => {
-    const { exec } = fakeExecWithProcs(
-      "2070 python3\n",
-      "   2070    2000 Ss+  python3\n   2072    2070 Sl+  claude\n",
-    );
-    const tmux = createTmux({ exec });
-    expect(await tmux.isPaneSafeToNudge("sb-alpha")).toBe(false);
-  });
-
-  it("multiple panes: the second look must clear EVERY shell pane", async () => {
-    const { exec } = fakeExecWithProcs(
-      "2070 sh\n3000 bash\n",
-      "   2070    2000 Ss+  sh\n   2072    2070 Sl+  claude\n   3000    2000 Ss+  bash\n",
-    );
-    const tmux = createTmux({ exec });
-    expect(await tmux.isPaneSafeToNudge("sb-alpha")).toBe(false);
-  });
-
-  it("ps unreadable → the refusal stands (fail-closed)", async () => {
-    const { exec } = fakeExec((args) => {
-      if (args[0] === "-e") throw new Error("ps: not found");
-      return "2070 sh\n";
-    });
-    const tmux = createTmux({ exec });
-    expect(await tmux.isPaneSafeToNudge("sb-alpha")).toBe(false);
-  });
-
-  it("paneAgentReadsTty walks nested shells and never loops on a cycle", () => {
-    const table = parseProcTable(
-      "   10    1 Ss+  sh\n   11   10 S+   bash\n   12   11 Sl+  node\n   13   13 S+   weird\n",
-    );
-    expect(paneAgentReadsTty(10, table)).toBe(true);
-    expect(paneAgentReadsTty(13, table)).toBe(false); // self-parent, no descent
-    expect(paneAgentReadsTty(99, table)).toBe(false); // unknown pid
-  });
-
-  it("parseProcTable skips unparsable lines (ps headers, noise)", () => {
-    const table = parseProcTable("  PID PPID STAT COMMAND\n   7    1 Ss+  sh\ngarbage\n");
-    expect(table).toEqual([{ pid: 7, ppid: 1, stat: "Ss+", comm: "sh" }]);
   });
 
   it("defensive normalization: full path, uppercase and login shell (-bash)", () => {

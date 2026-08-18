@@ -70,10 +70,11 @@ describe.skipIf(!hasTmux)("dispatcher + real tmux (Phase 3 Done When)", () => {
   async function newTestSession(name: string, cmd?: string): Promise<string> {
     const session = PREFIX + name;
     createdSessions.push(session);
-    // `exec`: tmux runs this through default-shell and dash does NOT exec the
-    // last command, so the pane would report "sh" and the guard would refuse
-    // every keystroke — the fleet-wide outage of 17/08, in miniature.
-    await tmux.newSession(session, dir, cmd ? `exec ${cmd}` : undefined);
+    // ARRAY, like production: tmux execs it directly and the pane process IS
+    // the command. A single string goes through the default-shell instead, and
+    // on dash the pane would report "sh" — the guard would then refuse every
+    // keystroke, which is the fleet-wide outage of 17/08 in miniature.
+    await tmux.newSession(session, dir, cmd ? [cmd] : undefined);
     return session;
   }
 
