@@ -85,8 +85,11 @@
       --led-amber:   0 0 0 3px rgba(217, 161, 61, 0.12);
 
       /* --- semantic roles (kept as the JS/markup expect) ---------------- */
-      --unread-bg:   #fafafa;
-      --unread-fg:   #09090b;
+      /* Unread is the ONE place the zinc tone-on-tone gives way to colour: an
+         unanswered message is the only thing on this board that is asking for
+         you, and it should be findable across the room (owner call, 18/08). */
+      --unread-bg:   #e8b73f;
+      --unread-fg:   #1c1403;
       --danger:      #e05252;
       --warn:        #d9a13d;                  /* caution amber, muted */
       --ok:          #3fb950;
@@ -818,7 +821,23 @@
       font-family: var(--mono);
       font-size: var(--fs-xs); font-weight: 700;
       border-radius: var(--radius-pill);
-      box-shadow: 0 0 8px rgba(245, 166, 35, 0.4);
+      box-shadow: 0 0 8px rgba(232, 183, 63, 0.45);
+      animation: unread-pulse 2.6s ease-in-out infinite;
+    }
+    /* SLOW on purpose: a beacon, not an alarm. The badge only ever appears when
+       something is genuinely waiting, so it breathes at about the rate of a calm
+       breath — fast enough to catch the eye crossing the screen, slow enough to
+       sit next to for an hour. It never disappears at the trough (0.55): a count
+       you cannot read is worse than one that does not move. */
+    @keyframes unread-pulse {
+      0%, 100% {
+        opacity: 1;
+        box-shadow: 0 0 8px rgba(232, 183, 63, 0.45);
+      }
+      50% {
+        opacity: 0.55;
+        box-shadow: 0 0 14px rgba(232, 183, 63, 0.22);
+      }
     }
     .remove-btn.confirming {
       border-color: var(--danger);
@@ -1315,6 +1334,7 @@
       color: var(--unread-fg);
       font-size: var(--fs-eyebrow);
       font-weight: 700;
+      animation: unread-pulse 2.6s ease-in-out infinite;
     }
 
     /* Lightbox. One in the file, for the launcher — a form you touch once per
@@ -3191,6 +3211,9 @@
         animation-iteration-count: 1 !important;
         transition-duration: 0.001ms !important;
       }
+      /* The unread badge loses its breath but keeps its amber and full opacity —
+         the pulse was the flourish, the colour is the information. */
+      .unread-badge, .tab-unread { opacity: 1 !important; }
     }
   </style>
 </head>
