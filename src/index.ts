@@ -22,6 +22,16 @@ import { registerSendCommand } from "./cli/send.js";
 import { registerStopCommands } from "./cli/stop.js";
 import { registerRenameCommand } from "./cli/rename.js";
 import { registerLogsCommand } from "./cli/logs.js";
+import { hydrateWslDistroEnv } from "./shared/wsl.js";
+
+// WSL_DISTRO_NAME, once, for the whole process tree. It is exported only to
+// sessions WSL itself starts, so a hub launched by the Windows login hook has
+// an env WITHOUT it — and every Windows-side feature (the native folder/file
+// dialogs, open folder, open in a new terminal, the desktop shortcut) refused
+// to work with "WSL_DISTRO_NAME is not set" on a machine that is plainly WSL
+// (18/08). Resolving it HERE also fixes it for the agents: the launcher hands
+// the hub's environment to each one it opens.
+hydrateWslDistroEnv();
 
 const program = new Command();
 
