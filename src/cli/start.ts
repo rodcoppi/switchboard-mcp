@@ -138,21 +138,20 @@ export function buildAgentCommand(input: {
     input.claudeBin ?? agentTypeDescriptor(input.agentType).bin,
     ...extraArgs,
   ];
-  // TWO `exec`s, both load-bearing. tmux runs a new-session command through
-  // the server's default-shell, and dash does NOT exec the last command of a
-  // `-c` string: it forks and stays as the pane's foreground process. tmux
-  // then reports pane_current_command="sh", the pane guard sees a SHELL and
-  // refuses every keystroke — "Refusing to type into …: its pane is not
-  // running an agent" on a pane whose claude was alive all along (17/08, the
-  // whole fleet, after the login autostart made /bin/sh the hub's shell).
-  // The OUTER exec makes that shell hand the pane over to our own `sh -c`;
-  // the INNER one makes ours hand it to the CLI. Measured on tmux 3.4:
-  // `sh -c 'exec cat'` → pane reads "sh"; `exec sh -c 'exec cat'` → "cat".
-  const line = base.map(shq).join(" ");
+  // NO SHELL when there is nothing for a shell to do: tmux runs a
+  // multi-argument command through execvp, so `base` IS the pane process and
+  // its arguments keep their boundaries with no quoting at all. Passing one
+  // string instead hands the line to the server's default-shell, and a shell
+  // that does not exec the last command (dash) stays the pane's foreground
+  // leader — tmux reports "sh", the guard sees a shell and refuses every
+  // keystroke (17/08, the whole fleet).
   const boot = input.bootCommand?.trim();
-  // A failing setup (non-zero) stops the chain: the session dies at birth and
-  // the launcher reports it, instead of an agent running half-prepared.
-  return ["exec", "sh", "-c", boot ? `${boot} && exec ${line}` : `exec ${line}`];
+  if (!boot) return base;
+  // A setup line needs a shell, so this one gets a real one — and hands the
+  // pane over with `exec`. A failing setup (non-zero) stops the chain: the
+  // session dies at birth and the launcher reports it, instead of an agent
+  // running half-prepared.
+  return ["sh", "-c", `${boot} && exec ${base.map(shq).join(" ")}`];
 }
 
 /** POSIX single-quote escaping — the one safe way to splice argv into sh. */

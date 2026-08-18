@@ -78,16 +78,17 @@ describe("parseClaudeArgs", () => {
 // ---------------------------------------------------------------------------
 
 describe("buildAgentCommand", () => {
-  // The argv is spliced into ONE `sh -c 'exec …'` line (see buildAgentCommand:
-  // without exec the shell stays the pane's foreground process and the pane
-  // guard refuses every keystroke). Order and boundaries are asserted on that
-  // line — each element quoted, so a value with spaces stays one argv.
+  // REAL argv, no shell: tmux execs a multi-argument command directly, so this
+  // array IS the pane process. A shell in front (one string) would stay the
+  // pane's foreground leader on dash and the guard would refuse every
+  // keystroke — the 17/08 outage.
   it("assembles env NAME/TOKEN + claude (no extra args)", () => {
-    const argv = buildAgentCommand({ name: "alpha", token: "tok123" });
-    expect(argv.slice(0, 3)).toEqual(["exec", "sh", "-c"]);
-    expect(argv[3]).toBe(
-      "exec 'env' 'SWITCHBOARD_AGENT_NAME=alpha' 'SWITCHBOARD_AGENT_TOKEN=tok123' 'claude'",
-    );
+    expect(buildAgentCommand({ name: "alpha", token: "tok123" })).toEqual([
+      "env",
+      "SWITCHBOARD_AGENT_NAME=alpha",
+      "SWITCHBOARD_AGENT_TOKEN=tok123",
+      "claude",
+    ]);
   });
 
   it("appends the parsed claude-args with argv semantics (quotes preserve spaces)", () => {
@@ -96,19 +97,27 @@ describe("buildAgentCommand", () => {
       token: "t",
       claudeArgs: "--model opus --append-system-prompt 'a b'",
     });
-    // "a b" survives as ONE argument — the quoting is what carries argv
-    // boundaries through the shell line.
-    expect(argv[3]).toBe(
-      "exec 'env' 'SWITCHBOARD_AGENT_NAME=beta' 'SWITCHBOARD_AGENT_TOKEN=t' 'claude' " +
-        "'--model' 'opus' '--append-system-prompt' 'a b'",
-    );
+    // "a b" is ONE element here and one argv at the other end: tmux passes each
+    // element through untouched.
+    expect(argv).toEqual([
+      "env",
+      "SWITCHBOARD_AGENT_NAME=beta",
+      "SWITCHBOARD_AGENT_TOKEN=t",
+      "claude",
+      "--model",
+      "opus",
+      "--append-system-prompt",
+      "a b",
+    ]);
   });
 
   it("injectable claudeBin (tests use sh/cat in place of the real claude)", () => {
-    const argv = buildAgentCommand({ name: "g", token: "t", claudeBin: "cat" });
-    expect(argv[3]).toBe(
-      "exec 'env' 'SWITCHBOARD_AGENT_NAME=g' 'SWITCHBOARD_AGENT_TOKEN=t' 'cat'",
-    );
+    expect(buildAgentCommand({ name: "g", token: "t", claudeBin: "cat" })).toEqual([
+      "env",
+      "SWITCHBOARD_AGENT_NAME=g",
+      "SWITCHBOARD_AGENT_TOKEN=t",
+      "cat",
+    ]);
   });
 });
 
@@ -326,6 +335,8 @@ describe("runKickoffAgent", () => {
 // ---------------------------------------------------------------------------
 
 describe("quoteShellArg / newSession(array)", () => {
+  // quoteShellArg is now for BOOT COMMANDS only (`<setup> && exec <cli argv>`
+  // is one shell line); newSession does not quote anything any more.
   it("quoteShellArg: simple stays raw; spaces and metachars are quoted; ' escaped", () => {
     expect(quoteShellArg("claude")).toBe("claude");
     expect(quoteShellArg("SWITCHBOARD_AGENT_NAME=alpha")).toBe("SWITCHBOARD_AGENT_NAME=alpha");
@@ -335,7 +346,10 @@ describe("quoteShellArg / newSession(array)", () => {
     expect(quoteShellArg("")).toBe("''");
   });
 
-  it("newSession(array) joins the shell-quoted elements into a single shell-command", async () => {
+  it("newSession(array) passes REAL argv — one tmux argument per element", async () => {
+    // tmux execs a multi-argument command directly (no shell), which is what
+    // makes the pane process BE the agent instead of a shell holding it. An
+    // argument with spaces still lands as ONE argv, with no quoting of ours.
     const calls: string[][] = [];
     const exec: ExecFn = async (_file, args) => {
       calls.push([...args]);
@@ -352,9 +366,25 @@ describe("quoteShellArg / newSession(array)", () => {
     // (newSession also runs best-effort set-option title calls after — assert
     // on the new-session command only.)
     const newSession = calls.find((a) => a[0] === "new-session");
-    expect(newSession).toEqual(
-      ["new-session", "-d", "-s", "s1", "-c", "/tmp", "env 'A=b c' claude --append-system-prompt 'x y'"],
-    );
+    expect(newSession).toEqual([
+      "new-session", "-d", "-s", "s1", "-c", "/tmp",
+      "env", "A=b c", "claude", "--append-system-prompt", "x y",
+    ]);
+  });
+
+  it("newSession(array) of ONE element still hands the pane over (exec)", async () => {
+    // tmux only does argv with MULTIPLE trailing arguments; a single one is a
+    // shell-command, so `["cat"]` would go through the default-shell and leave
+    // the pane reading "sh" on dash. Measured on tmux 3.4.
+    const calls: string[][] = [];
+    const exec: ExecFn = async (_file, args) => {
+      calls.push([...args]);
+      return { stdout: "", stderr: "" };
+    };
+    const tmux = createTmux({ exec });
+    await tmux.newSession("s1", "/tmp", ["my agent"]);
+    const newSession = calls.find((a) => a[0] === "new-session");
+    expect(newSession).toEqual(["new-session", "-d", "-s", "s1", "-c", "/tmp", "exec 'my agent'"]);
   });
 
   it("newSession(string) keeps the legacy behavior (raw command)", async () => {
