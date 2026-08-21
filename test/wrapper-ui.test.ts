@@ -704,3 +704,98 @@ describe("the agent's question in the chat", () => {
     expect(script).toContain("renderChat(view, items);\n        // Re-derive the pinned surfaces");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Agent-to-agent traffic in the chat. The two MCP calls that ARE the network's
+// conversation (send_message / check_messages) must read as MESSAGES, not as
+// tool chips: the incoming half already unfolded under the nudge's blue peek
+// while the outgoing half sat collapsed behind "mcp__switchboard__send_message"
+// and the incoming result showed as raw JSON.
+// ---------------------------------------------------------------------------
+
+describe("switchboardTraffic", () => {
+  // Closes over two page-level consts and two helpers — rebuild the scope, the
+  // same way the BARE_URL_RE block above does.
+  const fnNames = new Set(["switchboardTraffic", "jsonish"]);
+  const srcs: string[] = [];
+  source.forEachChild((node) => {
+    if (ts.isFunctionDeclaration(node) && node.name && fnNames.has(node.name.text)) {
+      srcs.push(script.slice(node.getStart(source), node.getEnd()));
+    }
+  });
+  if (srcs.length !== 2) throw new Error(`expected 2 functions, found ${srcs.length}`);
+  const traffic = new Function(
+    `const SB_SEND_TOOL = "mcp__switchboard__send_message";
+     const SB_CHECK_TOOL = "mcp__switchboard__check_messages";
+     const displayOf = (n) => String(n);
+     const fmtTime = () => "11:08 AM";
+     ${srcs.join("\n")}
+     return switchboardTraffic;`,
+  )() as (it: Record<string, unknown>) => null | {
+    dir: string;
+    line: string;
+    show: string;
+    quotes: Array<{ head: string; body: string }>;
+  };
+
+  it("a send reads as the message it is, addressed and quotable", () => {
+    const got = traffic({
+      name: "mcp__switchboard__send_message",
+      input: { to: "roteirista", message: "corte do S21 aplicado, md5 confere" },
+      result: '{"ok":true,"delivery":"nudged"}',
+    });
+    expect(got).toEqual({
+      dir: "out",
+      line: "Sent a message to roteirista.",
+      show: "show what was sent ▸",
+      hide: "hide what was sent ▾",
+      quotes: [{ head: "→ roteirista", body: "corte do S21 aplicado, md5 confere" }],
+    });
+  });
+
+  it("a REFUSED send is not traffic — the chip's error state tells it better", () => {
+    const refused = { name: "mcp__switchboard__send_message", input: { to: "x", message: "oi" } };
+    expect(traffic({ ...refused, result: '{"ok":false,"error":"rate limit"}' })).toBeNull();
+    expect(traffic({ ...refused, result: "{}", isError: true })).toBeNull();
+  });
+
+  it("check_messages unfolds every message that came in, by sender", () => {
+    const got = traffic({
+      name: "mcp__switchboard__check_messages",
+      result: JSON.stringify({
+        ok: true,
+        messages: [
+          { id: "1", from: "operator", body: "RODADA DE SEXTA", created_at: "2026-08-21T14:08:19.835Z" },
+          { id: "2", from: "vide-editor", body: "capa conferida", created_at: "2026-08-21T14:09:00.000Z" },
+        ],
+      }),
+    });
+    expect(got?.dir).toBe("in");
+    expect(got?.line).toBe("Read 2 messages from operator, vide-editor.");
+    expect(got?.show).toBe("show what operator, vide-editor sent ▸");
+    expect(got?.quotes).toEqual([
+      { head: "operator · 11:08 AM", body: "RODADA DE SEXTA" },
+      { head: "vide-editor · 11:08 AM", body: "capa conferida" },
+    ]);
+  });
+
+  it("one message says message, not messages", () => {
+    const got = traffic({
+      name: "mcp__switchboard__check_messages",
+      result: JSON.stringify({ ok: true, messages: [{ from: "operator", body: "oi" }] }),
+    });
+    expect(got?.line).toBe("Read 1 message from operator.");
+  });
+
+  it("an empty check is left as a plain chip (no card for nothing)", () => {
+    expect(
+      traffic({ name: "mcp__switchboard__check_messages", result: '{"ok":true,"messages":[]}' }),
+    ).toBeNull();
+    expect(traffic({ name: "mcp__switchboard__check_messages", result: "not json" })).toBeNull();
+  });
+
+  it("every other tool keeps its chip", () => {
+    expect(traffic({ name: "Bash", input: { command: "ls" }, result: "a\nb" })).toBeNull();
+    expect(traffic({ name: "mcp__switchboard__list_agents", result: '{"ok":true}' })).toBeNull();
+  });
+});
