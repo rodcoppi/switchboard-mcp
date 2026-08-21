@@ -127,12 +127,19 @@ export function buildAgentCommand(input: {
   agentType?: AgentType;
   /** Setup shell line to run first: `<boot> && exec <cli>` (exports carry). */
   bootCommand?: string;
+  /**
+   * PATH for the agent's process, when it must differ from the hub's own —
+   * see withWindowsInterop: a hub started with a shortened PATH would
+   * otherwise hand every agent a Windows-less environment.
+   */
+  pathValue?: string;
 }): string[] {
   const extraArgs = Array.isArray(input.claudeArgs)
     ? input.claudeArgs
     : parseClaudeArgs(input.claudeArgs);
   const base = [
     "env",
+    ...(input.pathValue ? [`PATH=${input.pathValue}`] : []),
     `SWITCHBOARD_AGENT_NAME=${input.name}`,
     `SWITCHBOARD_AGENT_TOKEN=${input.token}`,
     input.claudeBin ?? agentTypeDescriptor(input.agentType).bin,

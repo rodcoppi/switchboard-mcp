@@ -6,7 +6,7 @@
 // with "WSL_DISTRO_NAME is not set" on a machine that is plainly WSL (18/08).
 
 import { describe, expect, it } from "vitest";
-import { distroFromRootUnc, resolveWslDistro } from "../src/shared/wsl.js";
+import { distroFromRootUnc, resolveWslDistro, withWindowsInterop } from "../src/shared/wsl.js";
 
 describe("distroFromRootUnc", () => {
   it("reads the distro out of both UNC spellings", () => {
@@ -60,5 +60,42 @@ describe("hydrateWslDistroEnv", () => {
     const kept: NodeJS.ProcessEnv = { WSL_DISTRO_NAME: "Pinned" };
     hydrateWslDistroEnv(kept);
     expect(kept.WSL_DISTRO_NAME).toBe("Pinned");
+  });
+});
+
+describe("withWindowsInterop", () => {
+  // The hub bakes its own environment into every agent it launches, so a PATH
+  // missing the Windows directories does not fail at the hub — it fails later,
+  // in ten agents at once, as a Stop hook dying with "/bin/sh: 1:
+  // powershell.exe: not found" (22/08, after a hand restart with a shortened
+  // PATH). powershell.exe lives in the WindowsPowerShell/v1.0 one, which is
+  // exactly the one an abbreviated PATH tends to drop.
+  const all = () => true;
+
+  it("appends only what is missing, and only at the END", () => {
+    expect(withWindowsInterop("/usr/bin:/mnt/c/Windows/System32", all)).toBe(
+      "/usr/bin:/mnt/c/Windows/System32:/mnt/c/Windows:/mnt/c/Windows/System32/WindowsPowerShell/v1.0",
+    );
+    // Last is right: a Linux binary must win over a Windows one of the same
+    // name (there is a powershell in both worlds on some setups).
+    expect(withWindowsInterop("/usr/bin", all).startsWith("/usr/bin:")).toBe(true);
+  });
+
+  it("a complete PATH is returned untouched (callers use that to skip the override)", () => {
+    const complete =
+      "/usr/bin:/mnt/c/Windows/System32:/mnt/c/Windows:/mnt/c/Windows/System32/WindowsPowerShell/v1.0";
+    expect(withWindowsInterop(complete, all)).toBe(complete);
+  });
+
+  it("never invents a directory that is not on this machine", () => {
+    expect(withWindowsInterop("/usr/bin", () => false)).toBe("/usr/bin");
+    const onlyOne = (dir: string) => dir === "/mnt/c/Windows/System32";
+    expect(withWindowsInterop("/usr/bin", onlyOne)).toBe("/usr/bin:/mnt/c/Windows/System32");
+  });
+
+  it("an empty PATH does not start with a colon", () => {
+    expect(withWindowsInterop("", all)).toBe(
+      "/mnt/c/Windows/System32:/mnt/c/Windows:/mnt/c/Windows/System32/WindowsPowerShell/v1.0",
+    );
   });
 });
