@@ -297,6 +297,11 @@ export interface DispatcherOptions {
   now?: () => number;
   /** Flush cadence override for tests (default FLUSH_INTERVAL_MS = 5s). */
   flushIntervalMs?: number;
+  /**
+   * Injectable wait, used by the composer rescue to let the TUI repaint before
+   * it believes the screen. Tests pass a no-op so nothing sleeps for real.
+   */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 /** Outcome of a manual (forced) nudge — consumed by POST /api/agents/:name/nudge. */
@@ -312,6 +317,8 @@ export class Dispatcher {
   private readonly bus: EventBus;
   private readonly tmux: DispatcherTmux;
   private readonly now: () => number;
+  /** Injectable wait — the rescue has to let the TUI repaint (tests pass a no-op). */
+  private readonly sleep: (ms: number) => Promise<void>;
   private readonly flushIntervalMs: number;
 
   /** Agents waiting for a nudge once their cooldown expires (coalescing). */
@@ -355,6 +362,7 @@ export class Dispatcher {
     this.bus = options.bus;
     this.tmux = options.tmux;
     this.now = options.now ?? Date.now;
+    this.sleep = options.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
     this.flushIntervalMs = options.flushIntervalMs ?? FLUSH_INTERVAL_MS;
   }
 
@@ -689,14 +697,30 @@ export class Dispatcher {
           );
           return;
         }
-        // Erase it: backspaces are what these TUIs honour (Ctrl-U does not).
-        // A few extra are harmless — backspace stops at the start of the line.
-        await sendKeysHex(agent.tmuxSession, Buffer.alloc(expected.length + 4, 0x7f));
-        const after = parsePaneStatus(await capturePane(agent.tmuxSession, 30, true));
+        // The text goes in the log BEFORE anything is erased. Everything below
+        // is written to fail closed, but "closed" must never mean "his sentence
+        // is gone with no record of it".
+        this.log.info(`[dispatcher] ${agent.name}'s unsent prompt text, saved before the rescue: ${JSON.stringify(expected)}`);
+        // Erase it: backspaces are what these TUIs honour (Ctrl-U, Escape and
+        // Ctrl-A/Ctrl-K do nothing — all four measured on a live pane). Extra
+        // ones are harmless: backspace stops at the start of the line. The
+        // margin is generous because one grapheme is not always one backspace.
+        await sendKeysHex(agent.tmuxSession, Buffer.alloc(expected.length + 8, 0x7f));
+        // …and then WAIT before believing the screen. These TUIs do not repaint
+        // the composer the instant it empties (measured: a pane still showed
+        // the old line a full second after the backspaces landed, and only
+        // repainted when the next key arrived), so a single immediate read
+        // reports "still busy" for a line that is already gone — and that read
+        // is what decides whether his text gets typed back.
+        let after = parsePaneStatus(await capturePane(agent.tmuxSession, 30, true));
+        for (let i = 0; i < 3 && after.composerBusy; i++) {
+          await this.sleep(400);
+          after = parsePaneStatus(await capturePane(agent.tmuxSession, 30, true));
+        }
         if (after.composerBusy) {
           this.log.warn(
-            `[dispatcher] could not clear ${agent.name}'s prompt (still holding text); ` +
-              `leaving it untouched.`,
+            `[dispatcher] could not clear ${agent.name}'s prompt (still holding text after ` +
+              `the backspaces); leaving it untouched — its text is in the line above.`,
           );
           return;
         }

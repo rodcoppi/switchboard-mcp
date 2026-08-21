@@ -71,6 +71,7 @@ function makeDispatcher(tmux: DispatcherTmux): Dispatcher {
     bus,
     tmux,
     now: () => nowMs,
+    sleep: async () => {}, // the rescue's repaint wait, instant in tests
   });
 }
 
@@ -1060,7 +1061,7 @@ describe("no message stays in limbo: the hub borrows the line and gives it back"
 
     expect(bytes).toHaveLength(1);
     expect(bytes[0].every((b) => b === 0x7f)).toBe(true); // backspaces only
-    expect(bytes[0].length).toBe("meia frase".length + 4);
+    expect(bytes[0].length).toBe("meia frase".length + 8); // generous margin
     expect(nudges).toHaveLength(1);
     expect(nudges[0].text).toContain("new message(s) from: beta");
     expect(typed).toEqual(["meia frase"]); // put back verbatim…
