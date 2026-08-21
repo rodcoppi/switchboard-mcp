@@ -234,6 +234,12 @@ export class Dispatcher {
   /** Agents waiting for a nudge once their cooldown expires (coalescing). */
   private readonly pendingNudge = new Set<string>();
   /**
+   * Agents whose nudges are on hold because their prompt holds unsent text —
+   * tracked only so the warning is logged ONCE per stall instead of every
+   * five-second flush.
+   */
+  private readonly heldByComposer = new Set<string>();
+  /**
    * Agents whose LAST nudge attempt failed (pane guard abort or tmux error).
    * Breaks the perpetual online↔offline flap for "session alive but pane on a
    * shell with unread > 0": pollOnce only promotes a quarantined agent back
@@ -328,7 +334,25 @@ export class Dispatcher {
       if (agent.status !== "online") continue;
       if (this.inCooldown(agent)) continue;
       if (agent.blocked) continue; // a modal still owns the pane — keep waiting
-      if (agent.composerBusy) continue; // the operator is mid-sentence in there
+      if (agent.composerBusy) {
+        // The operator is mid-sentence in there — but "mid-sentence" can also
+        // mean text that was typed and never submitted (a chat message whose
+        // Enter was refused), and then this wait never ends: the agent is
+        // never nudged again and every message piles up as "coalesced" while
+        // nothing says so (21/08, six agents deaf at once). Waiting is still
+        // right — typing into his half-written line is worse — so the fix is
+        // to SAY it, once per stall, with what is holding it.
+        if (!this.heldByComposer.has(name) && this.store.unreadCount(name) > 0) {
+          this.heldByComposer.add(name);
+          this.log.warn(
+            `[dispatcher] holding nudges for ${name}: its pane has unsent text in the prompt ` +
+              `(${this.store.unreadCount(name)} message(s) waiting). Submit or clear that line — ` +
+              `the dashboard offers both on the agent's chat.`,
+          );
+        }
+        continue;
+      }
+      this.heldByComposer.delete(name);
       if (this.store.unreadCount(name) === 0) {
         // Spec: only nudge with unread > 0. The debt is DISCHARGED (agent
         // read everything via check_messages) — drop the entry, otherwise it

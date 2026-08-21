@@ -885,3 +885,58 @@ describe("the question a blocked pane is asking", () => {
     expect(st.blockedPrompt).toBeNull();
   });
 });
+
+describe("a prompt holding unsent text stops being a silent stall", () => {
+  // Waiting is right — typing into a half-written line would submit the
+  // operator's words together with ours. But the wait has no end when the text
+  // was LEFT there (a chat message whose Enter was refused): the agent is never
+  // nudged again and messages pile up as "coalesced". Six agents sat like that
+  // at once on 21/08 with nothing on screen or in the log to say why.
+  it("warns ONCE per stall, naming the agent and the backlog, and still never types", async () => {
+    const { tmux, nudges } = mockTmux();
+    const logPath = path.join(dir, "hub.log");
+    const dispatcher = new Dispatcher({
+      store,
+      config,
+      log: new Logger({ stdout: false, filePath: logPath }),
+      bus,
+      tmux,
+      now: () => nowMs,
+    });
+    registerOnline("alpha");
+    store.updateAgent("alpha", { composerBusy: true });
+    store.registerAgent({ name: "beta", role: "", tmuxSession: "sb-beta", cwd: "" });
+
+    expect(deliver(dispatcher, "beta", "alpha", "m1")).toBe("coalesced");
+    nowMs += COOLDOWN + 1000; // cooldown is not what is holding it
+    dispatcher.flushPending();
+    dispatcher.flushPending();
+    dispatcher.flushPending();
+    await settle();
+
+    expect(nudges).toEqual([]); // his half-written line is never typed over
+    const held = fs.readFileSync(logPath, "utf8").split("\n").filter((l) => l.includes("holding nudges"));
+    expect(held).toHaveLength(1); // once per stall, not once per 5s flush
+    expect(held[0]).toContain("alpha");
+    expect(held[0]).toContain("1 message(s) waiting");
+  });
+
+  it("the moment the line is cleared, the held nudge goes out", async () => {
+    const { tmux, nudges } = mockTmux();
+    const dispatcher = makeDispatcher(tmux);
+    registerOnline("alpha");
+    store.updateAgent("alpha", { composerBusy: true });
+    store.registerAgent({ name: "beta", role: "", tmuxSession: "sb-beta", cwd: "" });
+
+    deliver(dispatcher, "beta", "alpha", "m1");
+    nowMs += COOLDOWN + 1000;
+    dispatcher.flushPending();
+    expect(nudges).toEqual([]);
+
+    store.updateAgent("alpha", { composerBusy: false }); // he sent or cleared it
+    dispatcher.flushPending();
+    await settle();
+    expect(nudges).toHaveLength(1);
+    expect(nudges[0].session).toBe("sb-alpha");
+  });
+});
