@@ -2013,6 +2013,10 @@
       cursor: pointer;
     }
     .nudge-peek:hover { color: var(--link-bright); }
+    /* The stall panel is the dialog card in a warmer key: nothing is asking a
+       question here, something is STUCK and the operator has to unstick it. */
+    .chat-stall { border-color: rgba(232, 183, 63, 0.45); }
+    .chat-stall .chat-ask-eyebrow { color: var(--unread-bg); }
     .msg-reaction { margin-top: 0; margin-left: 10px; }
     .chat-copy-btn.quote { font-size: 13px; line-height: 1; }
     /* An image named in a message, shown. Small on purpose: the picture is a
@@ -5805,7 +5809,21 @@
         throw new Error(body.error || `HTTP ${res.status}`);
       }
       await new Promise((r) => setTimeout(r, 400));
-      await bytesOf("\r"); // the separate Enter that submits
+      const enter = await bytesOf("\r"); // the separate Enter that submits
+      // The Enter used to be fire-and-forget, and that is how a message could
+      // "not go" in silence: the text landed in the pane, the submit was
+      // refused (the pane guard, a hub restart), and the composer reported
+      // success. Worse, the leftover text made the agent DEAF — a pane with a
+      // half-written prompt is never nudged, so every message queued behind it
+      // as "coalesced" forever (owner, 21/08: "ele mandou msg e nao ta fzendo
+      // os agentes ler"). Say it, and say where the text is.
+      if (!enter.ok) {
+        const body = await enter.json().catch(() => ({}));
+        throw new Error(
+          `${body.error || `HTTP ${enter.status}`} — your text is sitting unsent in the ` +
+            `agent's prompt; clear it below or press Enter in the terminal.`,
+        );
+      }
     }
 
     function mountTerminal(name) {
@@ -6217,6 +6235,81 @@
      * an act of its own, not a message. Clicking types the choice's number,
      * which is how these lists are answered.
      */
+    /**
+     * A pane whose prompt holds unsent text is DEAF: the dispatcher will not
+     * type a nudge into a half-written line, so every message for that agent
+     * queues as "coalesced" — correct behaviour that becomes a trap when the
+     * text is not being written at all but left behind (a chat message whose
+     * Enter was refused). Six agents sat like that at once on 21/08 and
+     * nothing on screen said why they had gone quiet.
+     *
+     * So: when messages are waiting AND the prompt is holding text, say it
+     * where the operator is looking, with the two ways out — send that line,
+     * or clear it (Ctrl-U, the readline kill the CLIs honour).
+     */
+    function updateChatStall() {
+      const view = $("#screen-chat");
+      if (!view) return;
+      const old = view.querySelector(".chat-stall");
+      const agent = screenState.name ? state.agents.get(screenState.name) : null;
+      const unread = (agent && agent.unreadCount) || 0;
+      const stalled = !!(agent && agent.composerBusy && !agent.blocked && unread > 0 && screenState.mode === "chat");
+      if (!stalled) {
+        old?.remove();
+        return;
+      }
+      const signature = `${agent.name}|${unread}`;
+      if (old && old.dataset.signature === signature) return;
+      old?.remove();
+      const box = el("div", "chat-ask chat-stall");
+      box.dataset.signature = signature;
+      box.append(
+        el("div", "chat-ask-eyebrow", "⏸ this agent is not being notified"),
+        el(
+          "div",
+          "chat-ask-q",
+          `${unread} message${unread > 1 ? "s" : ""} waiting. Its prompt holds text that was never ` +
+            `sent, and Switchboard will not type on top of a half-written line.`,
+        ),
+      );
+      const row = el("div", "chat-ask-options");
+      const act = (label, bytes, failure) => {
+        const b = el("button", "btn chat-ask-opt", label);
+        b.type = "button";
+        b.addEventListener("click", async () => {
+          for (const other of row.querySelectorAll("button")) other.disabled = true;
+          try {
+            await sendPaneBytes(screenState.name, bytes);
+            box.remove();
+          } catch (err) {
+            toast(`${failure}: ${err && err.message ? err.message : err}`, "warn");
+            for (const other of row.querySelectorAll("button")) other.disabled = false;
+          }
+        });
+        row.appendChild(b);
+      };
+      act("Send that line", "\r", "Could not send");
+      act("Clear it", "\u0015", "Could not clear"); // Ctrl-U
+      box.appendChild(row);
+      const atBottom = view.scrollHeight - view.scrollTop - view.clientHeight < 160;
+      view.appendChild(box);
+      if (atBottom) view.scrollTop = view.scrollHeight;
+    }
+
+    /** Raw bytes into a pane (the guarded route) — Enter, Ctrl-U, Escape. */
+    async function sendPaneBytes(name, text) {
+      const b64 = btoa(unescape(encodeURIComponent(text)));
+      const res = await fetch(`/api/agents/${encodeURIComponent(name)}/terminal/input`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ b64 }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `HTTP ${res.status}`);
+      }
+    }
+
     function updateChatAsk() {
       const view = $("#screen-chat");
       if (!view) return;
@@ -6261,22 +6354,14 @@
 
     /** Types the chosen number into the pane — how these lists are answered. */
     async function answerAgentAsk(name, choice) {
-      const b64 = btoa(String(choice));
-      const res = await fetch(`/api/agents/${encodeURIComponent(name)}/terminal/input`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ b64 }),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.error || `HTTP ${res.status}`);
-      }
+      await sendPaneBytes(name, String(choice));
     }
 
     // Sibling of updateChatTyping(): the composer STOP button is visible iff an
     // agent is open, we're in chat mode, and that agent is mid-turn (working).
     function updateStopButton() {
       updateChatAsk();
+      updateChatStall();
       const btn = $("#chat-stop");
       if (!btn) return;
       const agent = screenState.name ? state.agents.get(screenState.name) : null;
