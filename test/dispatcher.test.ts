@@ -940,3 +940,57 @@ describe("a prompt holding unsent text stops being a silent stall", () => {
     expect(nudges[0].session).toBe("sb-alpha");
   });
 });
+
+
+describe("the composer's ghost is not a half-written sentence", () => {
+  // An empty Claude Code composer is not blank: it redraws the LAST message you
+  // sent there, dim, as a placeholder. Read as plain text that is indented
+  // typing — so every agent that had ever been messaged looked permanently
+  // mid-sentence, was never nudged again, and its messages piled up as
+  // "coalesced" (six agents deaf at once, 21/08). The only difference is in the
+  // SGR codes, which is why the pane is captured with -e. Both frames below are
+  // verbatim from the owner's vide-editor pane.
+  const E = "\u001b";
+  const footer = `${E}[39m  ${E}[38;5;211m\u23f5\u23f5 bypass permissions on${E}[38;5;246m (shift+tab to cycle)${E}[39m`;
+
+  it("a dim placeholder leaves the composer free", async () => {
+    const { parsePaneStatus } = await import("../src/server/dispatcher.js");
+    const pane = [`${E}[39m\u276f ${E}[2mvou ver o s21 agora${E}[0m`, footer].join("\n");
+    expect(parsePaneStatus(pane).composerBusy).toBe(false);
+  });
+
+  it("text actually typed still holds it", async () => {
+    const { parsePaneStatus } = await import("../src/server/dispatcher.js");
+    expect(parsePaneStatus(`${E}[39m\u276f zz\n${footer}`).composerBusy).toBe(true);
+    // …and a frame with no SGR at all behaves exactly as before.
+    expect(parsePaneStatus("\u276f meia frase\n  \u23f5\u23f5 bypass permissions on").composerBusy).toBe(true);
+    expect(parsePaneStatus("\u276f \n  \u23f5\u23f5 bypass permissions on").composerBusy).toBe(false);
+  });
+
+  it("dropDim keeps what is bright and drops what is not", async () => {
+    const { dropDim, stripAnsi } = await import("../src/server/dispatcher.js");
+    expect(dropDim(`${E}[2mghost${E}[0m`)).toBe("");
+    expect(dropDim(`${E}[2mghost${E}[22m real`)).toBe(" real");
+    expect(dropDim(`kept ${E}[2mgone${E}[0m kept`)).toBe("kept  kept");
+    expect(dropDim("no escapes at all")).toBe("no escapes at all");
+    // A colour change is not a dim change: 39m must not clear it.
+    expect(dropDim(`${E}[2mghost${E}[39m still ghost`)).toBe("");
+    expect(stripAnsi(`${E}[39m\u276f ${E}[2mx${E}[0m`)).toBe("\u276f x");
+  });
+
+  it("the rest of the frame still parses through the escapes", async () => {
+    const { parsePaneStatus } = await import("../src/server/dispatcher.js");
+    const pane = [
+      `${E}[38;5;114m\u25cf Do you want to proceed?${E}[39m`,
+      `${E}[39m \u276f 1. Yes${E}[0m`,
+      `${E}[39m   2. No${E}[0m`,
+      `${E}[2mesc to interrupt${E}[0m`,
+      footer,
+    ].join("\n");
+    const st = parsePaneStatus(pane);
+    expect(st.blocked).toBe(true);
+    expect(st.blockedOptions).toEqual(["Yes", "No"]);
+    expect(st.working).toBe(true); // dim or not, the marker is still the marker
+    expect(st.permission).toBe("bypass");
+  });
+});

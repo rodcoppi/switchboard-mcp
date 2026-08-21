@@ -266,8 +266,12 @@ export interface Tmux {
    * quoteShellArg).
    */
   newSession(session: string, cwd: string, cmd?: string | string[]): Promise<void>;
-  /** `tmux capture-pane -t =<s>: -p -S -<lines>` (default 200 lines back). */
-  capturePane(session: string, lines?: number): Promise<string>;
+  /**
+   * `tmux capture-pane -t =<s>: -p -S -<lines>` (default 200 lines back).
+   * `escapes` adds `-e`, keeping the SGR sequences — the ONLY way to tell a
+   * TUI's ghost placeholder (drawn dim) from text the operator actually typed.
+   */
+  capturePane(session: string, lines?: number, escapes?: boolean): Promise<string>;
   /**
    * `tmux send-keys -t =<s>: -H <hex bytes>` — writes ARBITRARY bytes into the
    * pane, so Escape (1b) and Ctrl-C (03) arrive as real control characters
@@ -416,13 +420,14 @@ export function createTmux(options: TmuxOptions = {}): Tmux {
     }
   }
 
-  async function capturePane(session: string, lines = 200): Promise<string> {
+  async function capturePane(session: string, lines = 200, escapes = false): Promise<string> {
     assertValidSession(session);
     const { stdout } = await exec("tmux", [
       "capture-pane",
       "-t",
       paneTarget(session),
       "-p",
+      ...(escapes ? ["-e"] : []), // keep SGR: DIM is how a TUI draws a placeholder
       "-S",
       `-${lines}`,
     ]);
