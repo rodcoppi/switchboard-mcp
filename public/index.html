@@ -1997,6 +1997,9 @@
     .chat-turn.nudge .chat-bubble { color: var(--text-dim); }
     .chat-turn.nudge .chat-role { color: var(--text-dim); }
     .chat-turn.nudge .chat-role::after { content: " / nudge"; }
+    /* Peer traffic wears the nudge's card; only the eyebrow tells them apart. */
+    .chat-turn.traffic-out .chat-role::after { content: " / sent"; }
+    .chat-turn.traffic-in .chat-role::after { content: " / received"; }
     .chat-avatar.sb { font-family: var(--mono); color: var(--text-dim); }
     .nudge-peek {
       align-self: flex-start;
@@ -6072,7 +6075,7 @@
         const it = items[i];
         const node =
           it.kind === "tool"
-            ? buildToolChip(it)
+            ? buildToolNode(it)
             : it.kind === "thinking"
               ? buildThinkingBlock(it)
               : it.kind === "marker"
@@ -7059,6 +7062,118 @@
       box.append(head, body);
       wireDisclosure(head, box, "Show agent thinking");
       return box;
+    }
+
+    /**
+     * The two MCP calls that ARE the agent network's traffic — one agent
+     * writing to a peer, and an agent reading what came in — are MESSAGES
+     * wearing a tool call's clothes. Rendered as chips they were the one half
+     * of the conversation you could not read: the incoming side already
+     * unfolded under the nudge's blue peek, while the outgoing side sat
+     * collapsed behind "mcp__switchboard__send_message" and the incoming
+     * result showed as raw JSON (the owner, 21/08: "tem coisa que mostra o
+     * azul pra ver o que foi enviado e tem coisa que fica escondida ainda").
+     * Same peek, same quote cards, both directions.
+     *
+     * Returns null for anything else — including a check_messages that found
+     * nothing, which is noise the plain chip already states quietly enough.
+     */
+    const SB_SEND_TOOL = "mcp__switchboard__send_message";
+    const SB_CHECK_TOOL = "mcp__switchboard__check_messages";
+
+    /** JSON out of a tool result, tolerating a preamble before the object. */
+    function jsonish(text) {
+      if (typeof text !== "string") return null;
+      try {
+        return JSON.parse(text);
+      } catch {
+        /* not pure JSON — try from the first brace */
+      }
+      const open = text.indexOf("{");
+      if (open === -1) return null;
+      try {
+        return JSON.parse(text.slice(open));
+      } catch {
+        return null;
+      }
+    }
+
+    function switchboardTraffic(it) {
+      if (it.name === SB_SEND_TOOL) {
+        const i = it.input || {};
+        if (typeof i.message !== "string" || !i.message.trim()) return null;
+        const to = displayOf(String(i.to || "?"));
+        // A refused send (rate limit, unknown recipient, wrong group) is not
+        // traffic — the chip's error state tells that story better.
+        const out = jsonish(it.result);
+        if (it.isError || (out && out.ok === false)) return null;
+        return {
+          dir: "out",
+          line: `Sent a message to ${to}.`,
+          show: "show what was sent ▸",
+          hide: "hide what was sent ▾",
+          quotes: [{ head: `→ ${to}`, body: i.message }],
+        };
+      }
+      if (it.name === SB_CHECK_TOOL) {
+        const data = jsonish(it.result);
+        const msgs = data && Array.isArray(data.messages) ? data.messages : [];
+        if (!msgs.length) return null;
+        const who = [...new Set(msgs.map((m) => displayOf(String(m.from || "?"))))].join(", ");
+        return {
+          dir: "in",
+          line: `Read ${msgs.length} message${msgs.length > 1 ? "s" : ""} from ${who}.`,
+          show: `show what ${who} sent ▸`,
+          hide: `hide what ${who} sent ▾`,
+          quotes: msgs.map((m) => ({
+            head:
+              displayOf(String(m.from || "?")) +
+              (m.created_at ? ` · ${fmtTime(m.created_at)}` : ""),
+            body: String(m.body || ""),
+          })),
+        };
+      }
+      return null;
+    }
+
+    /** Peer traffic, in the switchboard's voice — the nudge card's twin. */
+    function buildPeerTrafficTurn(traffic, it) {
+      const turn = el("div", `chat-turn nudge traffic-${traffic.dir}`);
+      const body = el("div", "chat-turn-body");
+      const meta = el("div", "chat-meta");
+      meta.appendChild(el("span", "chat-role", "switchboard"));
+      if (it.ts) {
+        const t = el("span", "chat-time", fmtTime(it.ts));
+        t.title = fmtFull(it.ts);
+        meta.appendChild(t);
+      }
+      const bubble = el("div", "chat-bubble");
+      bubble.textContent = traffic.line;
+      body.append(meta, bubble);
+      const peek = el("button", "nudge-peek", traffic.show);
+      peek.type = "button";
+      const quotes = el("div", "nudge-quotes");
+      quotes.hidden = true;
+      for (const q of traffic.quotes) {
+        const card = el("div", "nudge-quote");
+        card.append(el("div", "nudge-quote-head", q.head), el("div", "nudge-quote-body", q.body));
+        quotes.appendChild(card);
+      }
+      peek.addEventListener("click", () => {
+        quotes.hidden = !quotes.hidden;
+        peek.textContent = quotes.hidden ? traffic.show : traffic.hide;
+      });
+      body.append(peek, quotes);
+      turn.append(el("div", "chat-avatar sb", "⇄"), body);
+      // Copy/forward read the message itself, never the tool wrapper.
+      turn.__text = traffic.quotes.map((q) => q.body).join("\n\n");
+      return turn;
+    }
+
+    /** A tool call's card: network traffic reads as a message, the rest as a chip. */
+    function buildToolNode(it) {
+      const traffic = switchboardTraffic(it);
+      return traffic ? buildPeerTrafficTurn(traffic, it) : buildToolChip(it);
     }
 
     function buildToolChip(it) {
