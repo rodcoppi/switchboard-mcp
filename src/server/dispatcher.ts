@@ -57,7 +57,7 @@ export interface DispatcherTmux {
   /** Pane guard probe (fail-closed) — used to break the online↔offline flap. */
   isPaneSafeToNudge(session: string): Promise<boolean>;
   /** Reads the pane to tell idle from working. Optional so test mocks may omit it. */
-  capturePane?(session: string, lines?: number): Promise<string>;
+  capturePane?(session: string, lines?: number, escapes?: boolean): Promise<string>;
 }
 
 export interface PaneStatus {
@@ -111,6 +111,38 @@ export function stripSidePanel(line: string): string {
   return (cut === -1 ? line : line.slice(0, cut)).trimEnd();
 }
 
+/** Every SGR/CSI sequence out of a captured line. */
+export function stripAnsi(line: string): string {
+  // eslint-disable-next-line no-control-regex
+  return line.replace(/\u001b\[[0-9;?]*[A-Za-z]/g, "");
+}
+
+/**
+ * The line's text WITHOUT the runs a TUI drew dim — that is how Claude Code
+ * paints the ghost of your last message in an empty composer, and telling it
+ * apart from real typing is the whole point of capturing with -e. SGR 2 turns
+ * dim on; 22 and 0 turn it off. Exported for direct unit testing.
+ */
+export function dropDim(line: string): string {
+  let out = "";
+  let dim = false;
+  let i = 0;
+  const re = /\u001b\[([0-9;?]*)([A-Za-z])/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(line)) !== null) {
+    if (!dim) out += line.slice(i, m.index);
+    i = re.lastIndex;
+    if (m[2] !== "m") continue; // not a colour/attribute change
+    for (const code of m[1].split(";")) {
+      const n = Number(code === "" ? "0" : code);
+      if (n === 2) dim = true;
+      else if (n === 0 || n === 22) dim = false;
+    }
+  }
+  if (!dim) out += line.slice(i);
+  return out;
+}
+
 /**
  * Reads the live TUI frame for what the operator wants at a glance. Claude Code
  * and Codex run in the alternate screen (no scrollback), so a captured pane is
@@ -130,14 +162,25 @@ export function parsePaneStatus(pane: string): PaneStatus {
   // The LAST prompt line is the live input (the TUI keeps it at the bottom);
   // anything after the caret is text waiting to be sent. NBSP is what the
   // CLIs pad the caret with, and trim() drops it like any other space.
+  //
+  // …EXCEPT that an empty composer is not blank: Claude Code redraws the last
+  // message you sent there as a GHOST, and a ghost reads exactly like a
+  // half-written sentence. Every agent that had ever been messaged looked
+  // permanently mid-sentence, so it was never nudged again and its messages
+  // piled up as "coalesced" — six agents deaf at once, 21/08. The two are
+  // distinguishable only in the SGR codes (the ghost is drawn DIM, SGR 2),
+  // which is why the pane is captured with -e and the dim runs are dropped
+  // here before asking whether anything is left.
   let composerBusy = false;
-  const paneLines = pane.split("\n");
-  for (let i = paneLines.length - 1; i >= 0; i--) {
-    const m = /^\s*[❯›>]\s*(.*)$/.exec(paneLines[i]);
+  const rawLines = pane.split("\n");
+  for (let i = rawLines.length - 1; i >= 0; i--) {
+    if (!/[❯›>]/.test(stripAnsi(rawLines[i]))) continue;
+    const m = /^\s*[❯›>]\s*(.*)$/.exec(dropDim(rawLines[i]));
     if (!m) continue;
     composerBusy = m[1].trim().length > 0;
     break;
   }
+  const paneLines = rawLines.map(stripAnsi);
   // The choice list, in order. "❯ 1. Yes" / "  2. No" — the caret marks the
   // highlighted one and is not part of the label.
   const blockedOptions: string[] = [];
@@ -499,7 +542,7 @@ export class Dispatcher {
         if (!agent || agent.status !== "online") continue;
         let status: PaneStatus = { working: false, blocked: false, composerBusy: false, blockedPrompt: null, blockedOptions: [], waitingFor: null, permission: null, goalActive: false, goalFor: null };
         try {
-          status = parsePaneStatus(await this.tmux.capturePane(tmuxSession, 30));
+          status = parsePaneStatus(await this.tmux.capturePane(tmuxSession, 30, true));
         } catch {
           /* unreadable pane: treat as idle/unknown, never throw */
         }
@@ -596,7 +639,7 @@ export class Dispatcher {
     if (this.tmux.capturePane) {
       let live: PaneStatus = { working: false, blocked: true, composerBusy: true, blockedPrompt: null, blockedOptions: [], waitingFor: null, permission: null, goalActive: false, goalFor: null };
       try {
-        live = parsePaneStatus(await this.tmux.capturePane(agent.tmuxSession, 30));
+        live = parsePaneStatus(await this.tmux.capturePane(agent.tmuxSession, 30, true));
       } catch {
         /* unreadable → stay blocked AND busy: fail closed on both */
       }
