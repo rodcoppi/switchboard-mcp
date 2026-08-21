@@ -82,6 +82,14 @@ export interface Agent {
    */
   composerBusy?: boolean;
   /**
+   * WHAT that half-written line says. Ephemeral like the flag, and kept for
+   * one reason: after a long hold the hub borrows the line to deliver a nudge
+   * and types this back, byte for byte (see COMPOSER_HOLD_LIMIT_MS). Public —
+   * the dashboard shows it in the stall panel so the operator recognises his
+   * own sentence before choosing to send or clear it.
+   */
+  composerText?: string;
+  /**
    * What a blocked pane is ASKING, and the choices it offers. The dashboard
    * renders them as buttons: while a dialog owns the TUI a chat message
    * never reaches the input at all, so answering has to be its own act.

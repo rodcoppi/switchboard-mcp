@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { Dispatcher } from "../src/server/dispatcher.js";
+import { COMPOSER_HOLD_LIMIT_MS, Dispatcher } from "../src/server/dispatcher.js";
 import type { DispatcherTmux } from "../src/server/dispatcher.js";
 import { Store } from "../src/server/store.js";
 import { Logger } from "../src/server/log.js";
@@ -602,6 +602,8 @@ describe("parsePaneStatus", () => {
       working: true,
       blocked: false,
       composerBusy: false,
+      composerText: "",
+      composerWrapped: true, // the footer sits right under the prompt line
       blockedPrompt: null,
       blockedOptions: [],
       waitingFor: null,
@@ -618,6 +620,8 @@ describe("parsePaneStatus", () => {
       working: false,
       blocked: false,
       composerBusy: false,
+      composerText: "",
+      composerWrapped: true, // the footer sits right under the prompt line
       blockedPrompt: null,
       blockedOptions: [],
       waitingFor: null,
@@ -633,6 +637,8 @@ describe("parsePaneStatus", () => {
       working: false,
       blocked: false,
       composerBusy: false,
+      composerText: "",
+      composerWrapped: false, // no prompt line at all in this frame
       blockedPrompt: null,
       blockedOptions: [],
       waitingFor: null,
@@ -992,5 +998,132 @@ describe("the composer's ghost is not a half-written sentence", () => {
     expect(st.blockedOptions).toEqual(["Yes", "No"]);
     expect(st.working).toBe(true); // dim or not, the marker is still the marker
     expect(st.permission).toBe("bypass");
+  });
+});
+
+
+describe("no message stays in limbo: the hub borrows the line and gives it back", () => {
+  // A pane holding unsent text was never typed into — right as a rule, fatal as
+  // a permanent one: a line left behind made the agent deaf forever while its
+  // messages sat in the store and the dashboard showed it idle. Past
+  // COMPOSER_HOLD_LIMIT_MS of the SAME untouched text, the hub saves the line,
+  // clears it, nudges, and types it back. It never presses Enter on his words.
+  const E = "\u001b";
+  const box = "\u2500".repeat(20);
+  const frame = (composer: string) =>
+    [box, `${E}[39m\u276f ${composer}`, box, "  \u23f5\u23f5 bypass permissions on (shift+tab to cycle)"].join("\n");
+
+  function rescueTmux(script: string[]) {
+    const typed: string[] = [];
+    const bytes: Buffer[] = [];
+    const nudges: NudgeCall[] = [];
+    let step = 0;
+    const tmux: DispatcherTmux = {
+      async hasSession() { return true; },
+      async isPaneSafeToNudge() { return true; },
+      async nudgeSession(session, text, enterDelayMs) {
+        nudges.push({ session, text, enterDelayMs });
+        return { sent: true };
+      },
+      async capturePane() { return script[Math.min(step++, script.length - 1)]; },
+      async sendKeysLiteral(_session, text) { typed.push(text); },
+      async sendKeysHex(_session, buf) { bytes.push(buf); },
+    };
+    return { tmux, typed, bytes, nudges };
+  }
+
+  async function heldAgent(tmux: DispatcherTmux) {
+    const dispatcher = makeDispatcher(tmux);
+    registerOnline("alpha");
+    store.updateAgent("alpha", { composerBusy: true, composerText: "meia frase" });
+    store.registerAgent({ name: "beta", role: "", tmuxSession: "sb-beta", cwd: "" });
+    deliver(dispatcher, "beta", "alpha", "m1");
+    await settle();
+    return dispatcher;
+  }
+
+  it("delivers the nudge and restores the exact text, without an Enter", async () => {
+    // live read (still held) → after the backspaces (free) → performNudge's own
+    // live re-check (free) → the restore check (free).
+    const { tmux, typed, bytes, nudges } = rescueTmux([
+      frame("meia frase"), frame(""), frame(""), frame(""),
+    ]);
+    const dispatcher = await heldAgent(tmux);
+
+    nowMs += 10_000;
+    dispatcher.flushPending(); // starts the clock on this text
+    expect(nudges).toEqual([]);
+
+    nowMs += COMPOSER_HOLD_LIMIT_MS + 1000;
+    dispatcher.flushPending();
+    await settle();
+
+    expect(bytes).toHaveLength(1);
+    expect(bytes[0].every((b) => b === 0x7f)).toBe(true); // backspaces only
+    expect(bytes[0].length).toBe("meia frase".length + 4);
+    expect(nudges).toHaveLength(1);
+    expect(nudges[0].text).toContain("new message(s) from: beta");
+    expect(typed).toEqual(["meia frase"]); // put back verbatim…
+    expect(typed.join("")).not.toContain("\r"); // …and never submitted
+  });
+
+  it("a line that MOVED means he is writing — the rescue steps aside", async () => {
+    const { tmux, typed, bytes, nudges } = rescueTmux([frame("outra coisa ja")]);
+    const dispatcher = await heldAgent(tmux);
+    nowMs += 10_000;
+    dispatcher.flushPending();
+    nowMs += COMPOSER_HOLD_LIMIT_MS + 1000;
+    dispatcher.flushPending();
+    await settle();
+    expect(bytes).toEqual([]);
+    expect(nudges).toEqual([]);
+    expect(typed).toEqual([]);
+  });
+
+  it("text that runs past the prompt line is never borrowed (half of it would be lost)", async () => {
+    const wrapped = [box, `${E}[39m\u276f uma frase bem longa`, "que continua aqui embaixo", box].join("\n");
+    const { tmux, typed, bytes, nudges } = rescueTmux([wrapped]);
+    const dispatcher = makeDispatcher(tmux);
+    registerOnline("alpha");
+    store.updateAgent("alpha", { composerBusy: true, composerText: "uma frase bem longa" });
+    store.registerAgent({ name: "beta", role: "", tmuxSession: "sb-beta", cwd: "" });
+    deliver(dispatcher, "beta", "alpha", "m1");
+    await settle();
+    nowMs += 10_000;
+    dispatcher.flushPending();
+    nowMs += COMPOSER_HOLD_LIMIT_MS + 1000;
+    dispatcher.flushPending();
+    await settle();
+    expect(bytes).toEqual([]);
+    expect(nudges).toEqual([]);
+    expect(typed).toEqual([]);
+  });
+
+  it("a pane that refuses to clear is left exactly as it was", async () => {
+    // live read (held) → after the backspaces: STILL held.
+    const { tmux, typed, bytes, nudges } = rescueTmux([frame("meia frase"), frame("meia frase")]);
+    const dispatcher = await heldAgent(tmux);
+    nowMs += 10_000;
+    dispatcher.flushPending();
+    nowMs += COMPOSER_HOLD_LIMIT_MS + 1000;
+    dispatcher.flushPending();
+    await settle();
+    expect(bytes).toHaveLength(1); // it tried…
+    expect(nudges).toEqual([]);    // …did not nudge…
+    expect(typed).toEqual([]);     // …and did not double the text either
+  });
+
+  it("a modal dialog is still untouchable — that Enter would answer it", async () => {
+    const dialog = [box, "Do you want to proceed?", " \u276f 1. Yes", "   2. No", box].join("\n");
+    const { tmux, typed, bytes, nudges } = rescueTmux([dialog]);
+    const dispatcher = await heldAgent(tmux);
+    nowMs += 10_000;
+    dispatcher.flushPending();
+    nowMs += COMPOSER_HOLD_LIMIT_MS + 1000;
+    dispatcher.flushPending();
+    await settle();
+    expect(bytes).toEqual([]);
+    expect(nudges).toEqual([]);
+    expect(typed).toEqual([]);
   });
 });

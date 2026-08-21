@@ -44,6 +44,23 @@ import type { NudgeResult } from "./tmux.js";
 export const FLUSH_INTERVAL_MS = 5000;
 
 /**
+ * How long a composer may hold messages back before the hub BORROWS the line.
+ *
+ * A pane whose prompt holds text is never typed into: the nudge would land
+ * inside the operator's sentence and the Enter would send the mix. Right — but
+ * as a permanent rule it means a line left behind (a nudge whose Enter was
+ * refused, an abandoned half-thought) makes the agent deaf forever, and its
+ * messages sit in the store while the dashboard shows it idle. That is the
+ * limbo the owner refused to live with, and rightly.
+ *
+ * So the wait has a ceiling. Past it — and only if the SAME text has been
+ * sitting there untouched the whole time, so nobody is mid-thought — the hub
+ * saves the line, clears it, delivers the nudge, and types the line back
+ * exactly as it was. Nothing is ever submitted on the operator's behalf.
+ */
+export const COMPOSER_HOLD_LIMIT_MS = 90_000;
+
+/**
  * Idle/working sweep cadence. Faster than the 10s status poll because a turn
  * can begin and end within one status interval, and a stale "working" badge is
  * exactly the kind of thing that makes a dashboard feel dead.
@@ -58,6 +75,10 @@ export interface DispatcherTmux {
   isPaneSafeToNudge(session: string): Promise<boolean>;
   /** Reads the pane to tell idle from working. Optional so test mocks may omit it. */
   capturePane?(session: string, lines?: number, escapes?: boolean): Promise<string>;
+  /** Literal text into the pane, no Enter — used to put a borrowed line back. */
+  sendKeysLiteral?(session: string, text: string): Promise<void>;
+  /** Raw bytes — backspaces, to clear a line before borrowing it. */
+  sendKeysHex?(session: string, bytes: Buffer): Promise<void>;
 }
 
 export interface PaneStatus {
@@ -78,6 +99,17 @@ export interface PaneStatus {
    * Waiting costs a few seconds; interrupting costs him the message.
    */
   composerBusy: boolean;
+  /**
+   * WHAT the composer holds, so a rescue can put it back byte for byte after
+   * borrowing the line for a nudge. "" when free.
+   */
+  composerText: string;
+  /**
+   * The text may continue past the prompt line (it wrapped, or the composer
+   * has several lines), so what was read is NOT the whole thing. A rescue
+   * would restore a truncated sentence — so it never runs in this case.
+   */
+  composerWrapped: boolean;
   /**
    * The question a blocked pane is asking and the choices it offers, read
    * off the frame. The dashboard shows them as buttons: with a dialog open
@@ -172,12 +204,20 @@ export function parsePaneStatus(pane: string): PaneStatus {
   // which is why the pane is captured with -e and the dim runs are dropped
   // here before asking whether anything is left.
   let composerBusy = false;
+  let composerText = "";
+  let composerWrapped = false;
   const rawLines = pane.split("\n");
   for (let i = rawLines.length - 1; i >= 0; i--) {
     if (!/[❯›>]/.test(stripAnsi(rawLines[i]))) continue;
     const m = /^\s*[❯›>]\s*(.*)$/.exec(dropDim(rawLines[i]));
     if (!m) continue;
-    composerBusy = m[1].trim().length > 0;
+    composerText = m[1].trim();
+    composerBusy = composerText.length > 0;
+    // Does the sentence continue below? The TUI closes its input box with a
+    // box-drawing rule, so a line that is neither that rule nor blank is more
+    // text — and text we only half-read must never be "restored".
+    const below = stripAnsi(rawLines[i + 1] ?? "").trim();
+    composerWrapped = below !== "" && !/^[\u2500-\u257F]+$/.test(below);
     break;
   }
   const paneLines = rawLines.map(stripAnsi);
@@ -239,7 +279,7 @@ export function parsePaneStatus(pane: string): PaneStatus {
           ? "plan"
           : "default";
   }
-  return { working, blocked, composerBusy, blockedPrompt, blockedOptions, waitingFor, permission, goalActive, goalFor };
+  return { working, blocked, composerBusy, composerText, composerWrapped, blockedPrompt, blockedOptions, waitingFor, permission, goalActive, goalFor };
 }
 
 /** Back-compat shim: whether the CLI is mid-turn. */
@@ -282,6 +322,16 @@ export class Dispatcher {
    * five-second flush.
    */
   private readonly heldByComposer = new Set<string>();
+
+  /**
+   * Per agent: the composer text that is holding its nudges and the moment it
+   * started holding. Reset whenever the text changes — a moving line means the
+   * operator IS writing, and the clock starts over.
+   */
+  private readonly composerHold = new Map<string, { text: string; since: number }>();
+
+  /** Agents whose rescue is already running — never two at once on a pane. */
+  private readonly rescuing = new Set<string>();
   /**
    * Agents whose LAST nudge attempt failed (pane guard abort or tmux error).
    * Breaks the perpetual online↔offline flap for "session alive but pane on a
@@ -378,6 +428,14 @@ export class Dispatcher {
       if (this.inCooldown(agent)) continue;
       if (agent.blocked) continue; // a modal still owns the pane — keep waiting
       if (agent.composerBusy) {
+        const hold = this.composerHold.get(name);
+        const text = agent.composerText ?? "";
+        if (!hold || hold.text !== text) {
+          // First sighting, or he typed something new: (re)start the clock.
+          this.composerHold.set(name, { text, since: this.now() });
+        } else if (this.now() - hold.since >= COMPOSER_HOLD_LIMIT_MS) {
+          this.borrowComposerAndNudge(agent, text);
+        }
         // The operator is mid-sentence in there — but "mid-sentence" can also
         // mean text that was typed and never submitted (a chat message whose
         // Enter was refused), and then this wait never ends: the agent is
@@ -396,6 +454,7 @@ export class Dispatcher {
         continue;
       }
       this.heldByComposer.delete(name);
+      this.composerHold.delete(name);
       if (this.store.unreadCount(name) === 0) {
         // Spec: only nudge with unread > 0. The debt is DISCHARGED (agent
         // read everything via check_messages) — drop the entry, otherwise it
@@ -540,7 +599,7 @@ export class Dispatcher {
       for (const { name, tmuxSession } of this.store.listAgents()) {
         const agent = this.store.getAgent(name);
         if (!agent || agent.status !== "online") continue;
-        let status: PaneStatus = { working: false, blocked: false, composerBusy: false, blockedPrompt: null, blockedOptions: [], waitingFor: null, permission: null, goalActive: false, goalFor: null };
+        let status: PaneStatus = { working: false, blocked: false, composerBusy: false, composerText: "", composerWrapped: false, blockedPrompt: null, blockedOptions: [], waitingFor: null, permission: null, goalActive: false, goalFor: null };
         try {
           status = parsePaneStatus(await this.tmux.capturePane(tmuxSession, 30, true));
         } catch {
@@ -549,6 +608,7 @@ export class Dispatcher {
         const next: AgentActivity = status.working ? "working" : "idle";
         const blocked = status.blocked;
         const composerBusy = status.composerBusy;
+        const composerText = status.composerText;
         const blockedPrompt = status.blockedPrompt ?? "";
         const blockedOptions = status.blockedOptions;
         // Only write on a real change (any field), so a steady agent is free.
@@ -565,6 +625,7 @@ export class Dispatcher {
           (agent.waitingFor ?? "") === waitingFor &&
           !!agent.blocked === blocked &&
           !!agent.composerBusy === composerBusy &&
+          (agent.composerText ?? "") === composerText &&
           (agent.blockedPrompt ?? "") === blockedPrompt &&
           (agent.blockedOptions ?? []).join("|") === blockedOptions.join("|")
         ) {
@@ -574,6 +635,7 @@ export class Dispatcher {
           activity: next,
           blocked,
           composerBusy,
+          composerText,
           blockedPrompt,
           blockedOptions,
           waitingFor,
@@ -595,6 +657,70 @@ export class Dispatcher {
     const last = Date.parse(agent.lastNudgeAt);
     if (Number.isNaN(last)) return false;
     return this.now() - last < this.config.nudgeCooldownMs;
+  }
+
+  /**
+   * Borrows the composer line, delivers the nudge, puts the line back.
+   *
+   * Only ever reached after COMPOSER_HOLD_LIMIT_MS of the SAME text sitting
+   * untouched, and it re-reads the pane live before touching anything — if the
+   * text moved between the flush and this moment, the operator is writing and
+   * the rescue steps aside. Everything else is fail-closed too: a wrapped (or
+   * multi-line) composer is never borrowed, because only the prompt line can
+   * be read back and restoring half a sentence would be worse than waiting; a
+   * pane that will not clear is left exactly as it was; and the operator's
+   * text is typed back WITHOUT Enter — his words are his to send.
+   */
+  private borrowComposerAndNudge(agent: Agent, expected: string): void {
+    const { sendKeysHex, sendKeysLiteral, capturePane } = this.tmux;
+    if (!sendKeysHex || !sendKeysLiteral || !capturePane) return; // test mocks
+    if (this.rescuing.has(agent.name)) return;
+    this.rescuing.add(agent.name);
+    void (async () => {
+      try {
+        const live = parsePaneStatus(await capturePane(agent.tmuxSession, 30, true));
+        if (live.blocked || live.working) return; // not a moment to type
+        if (live.composerText !== expected || !live.composerBusy) return; // it moved
+        if (live.composerWrapped) {
+          this.log.warn(
+            `[dispatcher] cannot free ${agent.name}'s prompt automatically: the unsent text ` +
+              `spans more than the prompt line, and restoring half of it would lose the rest. ` +
+              `Send or clear it from the dashboard.`,
+          );
+          return;
+        }
+        // Erase it: backspaces are what these TUIs honour (Ctrl-U does not).
+        // A few extra are harmless — backspace stops at the start of the line.
+        await sendKeysHex(agent.tmuxSession, Buffer.alloc(expected.length + 4, 0x7f));
+        const after = parsePaneStatus(await capturePane(agent.tmuxSession, 30, true));
+        if (after.composerBusy) {
+          this.log.warn(
+            `[dispatcher] could not clear ${agent.name}'s prompt (still holding text); ` +
+              `leaving it untouched.`,
+          );
+          return;
+        }
+        this.log.info(
+          `[dispatcher] borrowed ${agent.name}'s prompt to deliver a nudge held for ` +
+            `${Math.round(COMPOSER_HOLD_LIMIT_MS / 1000)}s; its unsent line is restored after.`,
+        );
+        await this.performNudge(agent);
+      } catch (err) {
+        this.log.error(`[dispatcher] rescue failed for ${agent.name}:`, err);
+      } finally {
+        // ALWAYS give the line back, whatever happened above — including a
+        // throw between the erase and the nudge. Never with an Enter.
+        try {
+          const now = parsePaneStatus(await capturePane!(agent.tmuxSession, 30, true));
+          if (!now.composerBusy && expected) await sendKeysLiteral!(agent.tmuxSession, expected);
+        } catch (err) {
+          this.log.error(`[dispatcher] could not restore ${agent.name}'s prompt text:`, err);
+        }
+        this.composerHold.delete(agent.name);
+        this.heldByComposer.delete(agent.name);
+        this.rescuing.delete(agent.name);
+      }
+    })();
   }
 
   /** Fire-and-forget wrapper: the decision paths must never await tmux. */
@@ -637,7 +763,7 @@ export class Dispatcher {
     // this nudge's Enter as its answer. Fail-CLOSED — an unreadable pane is
     // treated as blocked, exactly like the pane guard.
     if (this.tmux.capturePane) {
-      let live: PaneStatus = { working: false, blocked: true, composerBusy: true, blockedPrompt: null, blockedOptions: [], waitingFor: null, permission: null, goalActive: false, goalFor: null };
+      let live: PaneStatus = { working: false, blocked: true, composerBusy: true, composerText: "", composerWrapped: true, blockedPrompt: null, blockedOptions: [], waitingFor: null, permission: null, goalActive: false, goalFor: null };
       try {
         live = parsePaneStatus(await this.tmux.capturePane(agent.tmuxSession, 30, true));
       } catch {
