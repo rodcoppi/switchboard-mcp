@@ -431,3 +431,30 @@ describe("buildAgentCommand + bootCommand", () => {
     expect(argv).not.toContain("sh");
   });
 });
+
+describe("buildAgentCommand + PATH", () => {
+  const base = { name: "moov", token: "t0k", agentType: "claude" as const };
+
+  it("a PATH override rides in the same env, before the agent's own vars", () => {
+    const argv = buildAgentCommand({ ...base, pathValue: "/usr/bin:/mnt/c/Windows/System32" });
+    expect(argv.slice(0, 3)).toEqual([
+      "env",
+      "PATH=/usr/bin:/mnt/c/Windows/System32",
+      "SWITCHBOARD_AGENT_NAME=moov",
+    ]);
+  });
+
+  it("no override → the argv is byte-for-byte what it always was", () => {
+    expect(buildAgentCommand(base)).toEqual([
+      "env",
+      "SWITCHBOARD_AGENT_NAME=moov",
+      "SWITCHBOARD_AGENT_TOKEN=t0k",
+      "claude",
+    ]);
+  });
+
+  it("with a boot command the PATH is quoted into the shell line like the rest", () => {
+    const argv = buildAgentCommand({ ...base, pathValue: "/a b", bootCommand: "true" });
+    expect(argv[2]).toContain(`'PATH=/a b'`);
+  });
+});

@@ -13,6 +13,7 @@
 // Everything here is env-in/exec-in, so tests drive it without a real WSL.
 
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 
 /**
  * The distro name inside a Windows UNC path for the WSL root, or undefined
@@ -75,4 +76,36 @@ export function hydrateWslDistroEnv(env: NodeJS.ProcessEnv = process.env): strin
 export function resetWslDistroCache(): void {
   resolved = false;
   cached = undefined;
+}
+
+/**
+ * The Windows directories an agent needs on its PATH to reach Windows at all:
+ * powershell.exe lives in the third one, and a PATH without it turns every
+ * interop call into "not found". Order matters only in that these go at the
+ * END — a Linux binary must always win over a Windows one with the same name.
+ */
+export const WINDOWS_INTEROP_PATHS = [
+  "/mnt/c/Windows/System32",
+  "/mnt/c/Windows",
+  "/mnt/c/Windows/System32/WindowsPowerShell/v1.0",
+];
+
+/**
+ * Guarantees those directories on a PATH, appending only the ones that are
+ * missing AND actually exist on this machine.
+ *
+ * The hub bakes its own environment into every agent it launches, so an
+ * incomplete PATH at the hub becomes an incomplete PATH in ten agents — and
+ * the failure surfaces far from the cause, as a Stop hook dying with
+ * "/bin/sh: 1: powershell.exe: not found" (22/08, after the hub was restarted
+ * by hand with a shortened PATH). Agents stop inheriting that mistake here.
+ */
+export function withWindowsInterop(
+  pathValue: string,
+  exists: (dir: string) => boolean = (dir) => existsSync(dir),
+): string {
+  const present = new Set(pathValue.split(":").filter((p) => p !== ""));
+  const missing = WINDOWS_INTEROP_PATHS.filter((dir) => !present.has(dir) && exists(dir));
+  if (missing.length === 0) return pathValue;
+  return pathValue === "" ? missing.join(":") : `${pathValue}:${missing.join(":")}`;
 }

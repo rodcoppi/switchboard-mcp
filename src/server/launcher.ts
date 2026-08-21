@@ -58,6 +58,7 @@ import {
   expandHome,
   kickoffText,
 } from "../cli/start.js";
+import { withWindowsInterop, wslDistroName } from "../shared/wsl.js";
 
 /**
  * Translates the path shapes a Windows-side operator realistically pastes
@@ -210,6 +211,18 @@ export interface TerminalOpener {
  */
 export function terminalAttachArgs(distro: string, session: string): string[] {
   return ["wsl.exe", "-d", distro, "--", "bash", "-lc", `exec tmux attach -t '=${session}'`];
+}
+
+/**
+ * The PATH an agent should run with: the hub's own, plus the Windows interop
+ * directories when they are missing (WSL only). undefined when there is
+ * nothing to add — the agent then simply inherits the hub's environment.
+ */
+function agentPath(): string | undefined {
+  if (!wslDistroName()) return undefined; // not WSL: nothing to guarantee
+  const current = process.env.PATH ?? "";
+  const withInterop = withWindowsInterop(current);
+  return withInterop === current ? undefined : withInterop;
 }
 
 /**
@@ -491,6 +504,12 @@ export function createLauncher(options: LauncherOptions): Launcher {
             // Operator-set project setup (REST only, never MCP) — preserved
             // by re-register like role/group, so a reopen keeps it.
             bootCommand: agent.bootCommand,
+            // The hub hands its own environment to every agent, so a hub
+            // started with a shortened PATH silently disables Windows interop
+            // in ten agents at once — and the failure surfaces far from its
+            // cause, as a Stop hook dying on "powershell.exe: not found"
+            // (22/08). Agents no longer inherit that mistake.
+            pathValue: agentPath(),
           }),
         );
       } catch (err) {
