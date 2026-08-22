@@ -265,3 +265,62 @@ export function parseConversation(lines: string[]): ChatItem[] {
   }
   return items;
 }
+
+
+// ---------------------------------------------------------------------------
+// How full the context is. Claude Code stamps a `usage` block on every
+// assistant message, and the LAST one describes the window as it stood at that
+// turn — which is exactly what carries into the next one.
+// ---------------------------------------------------------------------------
+
+export interface ContextUsage {
+  /** Tokens that will be re-sent on the next turn (prompt + cache + last output). */
+  used: number;
+  /** The model's context window — see the inference note in contextUsageFrom. */
+  window: number;
+  model: string | null;
+}
+
+/**
+ * Reads the most recent `usage` out of transcript lines, newest first.
+ *
+ * `used` sums the four parts that make up what the next request carries:
+ * fresh input, freshly cached input, cache reads, and the output just
+ * produced. Cache reads dominate in a long session and are the whole point —
+ * they are the conversation itself, not an optimisation detail.
+ *
+ * The WINDOW is inferred rather than read: the transcript records the model as
+ * "claude-opus-5" whether it runs with the 200k window or the 1M one, and the
+ * distinction is invisible there. A session already past 200k is provably on
+ * the large window; anything else is assumed standard. Wrong only in one
+ * direction (a 1M session under 200k reads as "nearly full" instead of "barely
+ * started"), and it corrects itself the moment it crosses.
+ */
+export function contextUsageFrom(lines: readonly string[]): ContextUsage | null {
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    if (!line || !line.includes('"usage"')) continue;
+    let rec: Record<string, unknown>;
+    try {
+      rec = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      continue; // a corrupt line is skipped, never fatal (store's rule)
+    }
+    const message = rec.message as Record<string, unknown> | undefined;
+    const usage = message?.usage as Record<string, unknown> | undefined;
+    if (!usage) continue;
+    const n = (key: string): number => {
+      const v = usage[key];
+      return typeof v === "number" && Number.isFinite(v) ? v : 0;
+    };
+    const used =
+      n("input_tokens") +
+      n("cache_creation_input_tokens") +
+      n("cache_read_input_tokens") +
+      n("output_tokens");
+    if (used <= 0) continue;
+    const model = typeof message?.model === "string" ? (message.model as string) : null;
+    return { used, window: used > 200_000 ? 1_000_000 : 200_000, model };
+  }
+  return null;
+}
