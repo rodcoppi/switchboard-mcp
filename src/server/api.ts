@@ -39,7 +39,7 @@ import { TerminalError } from "./terminal.js";
 import { PreviewError, rawMime, readPreview, resolveInScope } from "./filepreview.js";
 import { isOpenable, refusalFor, type FileOpener } from "./fileopen.js";
 import { MAX_STT_BYTES, SttError, type SttProxy } from "./stt.js";
-import { parseConversation, projectDirForCwd } from "./conversation.js";
+import { contextUsageFrom, parseConversation, projectDirForCwd } from "./conversation.js";
 import {
   codexUsageSnapshot,
   findCodexRolloutForCwd,
@@ -1882,6 +1882,9 @@ export function createApiRouter(options: ApiOptions): express.Router {
     let offset = 0;
     let carry = ""; // a trailing partial line held for the next read
     let sending = false;
+    // The last window reading seen on this stream: a pump that reads only tool
+    // lines has no fresh `usage`, and the gauge must not blink out because of it.
+    let lastContext: ReturnType<typeof contextUsageFrom> = null;
 
     // Reads from `offset` to EOF, parses only COMPLETE lines, forwards the new
     // chat items, and keeps any partial last line for next time. Serialized so
@@ -1905,17 +1908,23 @@ export function createApiRouter(options: ApiOptions): express.Router {
           const nl = text.lastIndexOf("\n");
           const complete = nl === -1 ? "" : text.slice(0, nl);
           carry = nl === -1 ? text : text.slice(nl + 1);
-          const parsed = parser(complete.split("\n"));
+          const rawLines = complete.split("\n");
+          const parsed = parser(rawLines);
+          // How full the window is, refreshed from the same bytes we just read
+          // (never a second pass over the file). Only claude stamps `usage`; a
+          // codex rollout yields null and the dashboard shows no gauge.
+          const context = isCodex ? null : contextUsageFrom(rawLines);
+          if (context) lastContext = context;
           // The initial dump is capped to the most recent turns: a long project
           // has thousands, and sending them all made the page render ~40k DOM
           // nodes and choke. Live appends are never capped (they are new).
           const INITIAL_LIMIT = 200;
           const items = initial && parsed.length > INITIAL_LIMIT ? parsed.slice(-INITIAL_LIMIT) : parsed;
           if (items.length > 0 || initial) {
-            res.write(`data: ${JSON.stringify({ items, initial })}\n\n`);
+            res.write(`data: ${JSON.stringify({ items, initial, context: lastContext })}\n\n`);
           }
         } else if (initial) {
-          res.write(`data: ${JSON.stringify({ items: [], initial: true })}\n\n`);
+          res.write(`data: ${JSON.stringify({ items: [], initial: true, context: lastContext })}\n\n`);
         }
       } catch (err) {
         res.write(`data: ${JSON.stringify({ error: (err as Error).message })}\n\n`);

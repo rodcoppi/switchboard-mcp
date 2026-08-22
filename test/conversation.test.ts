@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  contextUsageFrom,
   cleanUserText,
   parseConversation,
   projectDirForCwd,
@@ -167,5 +168,51 @@ describe("parseConversation", () => {
     ]);
     expect(items).toHaveLength(1);
     expect((items[0] as any).text).toBe("ok");
+  });
+});
+
+describe("contextUsageFrom — how full the window is", () => {
+  // Claude Code stamps `usage` on every assistant message; the LAST one
+  // describes what carries into the next turn. Cache reads dominate a long
+  // session and ARE the conversation, so they count.
+  const line = (usage: Record<string, unknown>, model = "claude-opus-5") =>
+    JSON.stringify({ type: "assistant", message: { model, usage } });
+
+  it("sums prompt + cache + output from the most recent stamp", () => {
+    const usage = contextUsageFrom([
+      line({ input_tokens: 5, cache_read_input_tokens: 100, output_tokens: 10 }),
+      line({
+        input_tokens: 2,
+        cache_creation_input_tokens: 891,
+        cache_read_input_tokens: 291_776,
+        output_tokens: 640,
+      }),
+    ]);
+    expect(usage).toEqual({ used: 293_309, window: 1_000_000, model: "claude-opus-5" });
+  });
+
+  it("a session under 200k is read as the standard window", () => {
+    expect(contextUsageFrom([line({ cache_read_input_tokens: 40_000, output_tokens: 500 })])).toEqual({
+      used: 40_500,
+      window: 200_000,
+      model: "claude-opus-5",
+    });
+  });
+
+  it("skips corrupt lines and lines without usage, and never throws", () => {
+    expect(
+      contextUsageFrom([
+        line({ cache_read_input_tokens: 10 }),
+        '{"broken": ',
+        JSON.stringify({ type: "user", message: { content: "hi" } }),
+      ]),
+    ).toEqual({ used: 10, window: 200_000, model: "claude-opus-5" });
+  });
+
+  it("no usage anywhere → null (the dashboard then shows no gauge)", () => {
+    expect(contextUsageFrom([])).toBeNull();
+    expect(contextUsageFrom(['{"type":"user"}'])).toBeNull();
+    // A zero-token stamp is not a reading either.
+    expect(contextUsageFrom([line({ input_tokens: 0, output_tokens: 0 })])).toBeNull();
   });
 });

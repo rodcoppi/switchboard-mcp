@@ -1494,6 +1494,15 @@
       background: var(--pill-color, var(--text-dim));
     }
     .status-pill.goal { --pill-color: var(--accent); }
+    /* The context gauge carries a bar because a percentage alone does not show
+       how fast it is filling — you read the sliver, not the number. */
+    .ctx-bar {
+      width: 46px; height: 4px;
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--text-faint) 40%, transparent);
+      overflow: hidden;
+    }
+    .ctx-fill { display: block; height: 100%; border-radius: 999px; }
     .screen-head .btn { margin-left: 0; }
     .screen-head .dirpicker-close { margin-left: 0; }
 
@@ -5640,7 +5649,7 @@
     // belongs to tmux, not to the dashboard.
     // =====================================================================
 
-    const screenState = { name: null, term: null, fit: null, sse: null, ro: null, mode: "chat", chatSse: null };
+    const screenState = { name: null, term: null, fit: null, sse: null, ro: null, mode: "chat", chatSse: null, model: null, context: null };
 
     // Groups folded away in the rail. Page-local on purpose: which projects you
     // have collapsed right now is a view, not something the hub should store.
@@ -5920,6 +5929,7 @@
     function mountChat(name) {
       setScreenHint("reading the conversation log", false);
       screenState.model = null; // re-derived from this agent's own log
+      screenState.context = null; // …and so is the context gauge
       const view = $("#screen-chat");
       view.textContent = "";
       view.appendChild(el("div", "chat-empty", "Loading the conversation…"));
@@ -5944,6 +5954,7 @@
           if (stale) stale.remove(); // rebuild, don't stack onto old turns
         }
         const atBottom = view.scrollHeight - view.scrollTop - view.clientHeight < 120;
+        if (parsed.context) screenState.context = parsed.context; // how full the window is
         for (const it of parsed.items || []) {
           items.push(it);
           if (it.kind === "assistant" && it.model) screenState.model = it.model; // track current model
@@ -6470,6 +6481,22 @@
       activity.textContent = stateLabel;
       activity.className = `screen-activity ${stateLabel}`;
     }
+    /** 293_776 → "294k"; small numbers keep their digits. */
+    function fmtTokens(n) {
+      return n >= 1000 ? `${Math.round(n / 1000)}k` : String(n);
+    }
+
+    /**
+     * The gauge earns its colour: neutral while there is room, amber once the
+     * window is mostly spent, red when a compaction is close. Nothing is ever
+     * "green because it rendered" — the owner's complaint about the usage bars.
+     */
+    function contextColor(pct) {
+      if (pct >= 85) return "var(--danger)";
+      if (pct >= 60) return "var(--unread-bg)";
+      return "var(--text-dim)";
+    }
+
     function renderScreenStatus() {
       renderScreenIdentity();
       const box = $("#chat-statusbar");
@@ -6496,6 +6523,27 @@
         const pill = el("span", "status-pill", PERM_LABEL[agent.permission] || agent.permission);
         pill.style.setProperty("--pill-color", PERM_COLOR[agent.permission] || "var(--text-dim)");
         pill.title = `Permission mode: ${PERM_LABEL[agent.permission] || agent.permission} — change it in the Terminal with Shift+Tab`;
+        inner.appendChild(pill);
+      }
+      // How full the window is — the one number you cannot get from the chat
+      // itself, and the one that decides whether the next long task fits. Read
+      // from the transcript's own usage stamp, not from the TUI (which only
+      // mentions it once it is already large).
+      const ctx = screenState.context;
+      if (ctx && ctx.used > 0) {
+        const pct = Math.min(100, Math.round((ctx.used / ctx.window) * 100));
+        const pill = el("span", "status-pill context", `${fmtTokens(ctx.used)} · ${pct}%`);
+        pill.style.setProperty("--pill-color", contextColor(pct));
+        const bar = el("span", "ctx-bar");
+        const fill = el("span", "ctx-fill");
+        fill.style.width = `${Math.max(2, pct)}%`;
+        fill.style.background = contextColor(pct);
+        bar.appendChild(fill);
+        pill.appendChild(bar);
+        pill.title =
+          `Context: ${ctx.used.toLocaleString()} of ${ctx.window.toLocaleString()} tokens (${pct}%). ` +
+          `Counts everything re-sent each turn — prompt, cached conversation and the last reply. ` +
+          `Claude Code compacts on its own near the top; /clear starts fresh.`;
         inner.appendChild(pill);
       }
       if (agent.goalActive) {
