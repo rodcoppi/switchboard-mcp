@@ -55,16 +55,47 @@ describe("wrapper local markdown links", () => {
 });
 
 describe("wrapper slash command routing", () => {
-  const isSlashCommand = embeddedFunction<(text: string) => boolean>("isSlashCommand");
+  // Only the CLI's OWN commands live on the terminal screen — their output
+  // never reaches the JSONL the chat mirrors, so the chat would show nothing.
+  // A skill is an ordinary turn and belongs in the chat; flipping the view to
+  // run one was throwing the operator out of where he was working (22/08).
+  // Closes over the page-level CLI_BUILTIN_COMMANDS const — rebuild the whole
+  // scope, the way the BARE_URL_RE block does.
+  const list = script.match(/const CLI_BUILTIN_COMMANDS = new Set\(\[[\s\S]*?\]\);/)?.[0];
+  if (!list) throw new Error("CLI_BUILTIN_COMMANDS not found in the page");
+  const fns: string[] = [];
+  source.forEachChild((node) => {
+    if (
+      ts.isFunctionDeclaration(node) &&
+      node.name &&
+      ["runsOnTerminalScreen", "slashCommandName"].includes(node.name.text)
+    ) {
+      fns.push(script.slice(node.getStart(source), node.getEnd()));
+    }
+  });
+  if (fns.length !== 2) throw new Error(`expected 2 functions, found ${fns.length}`);
+  const runsOnTerminalScreen = new Function(
+    `${list}\n${fns.join("\n")}\nreturn runsOnTerminalScreen;`,
+  )() as (text: string) => boolean;
 
-  it("switches real slash commands to the terminal", () => {
-    expect(isSlashCommand("/review")).toBe(true);
-    expect(isSlashCommand("/model opus")).toBe(true);
+  it("the CLI's own commands go to the terminal", () => {
+    expect(runsOnTerminalScreen("/model opus")).toBe(true);
+    expect(runsOnTerminalScreen("/clear")).toBe(true);
+    expect(runsOnTerminalScreen("/context")).toBe(true);
+    expect(runsOnTerminalScreen("/MCP")).toBe(true); // case does not matter
+  });
+
+  it("skills stay in the chat, where their answer lands", () => {
+    expect(runsOnTerminalScreen("/dash-redes")).toBe(false);
+    expect(runsOnTerminalScreen("/codex review")).toBe(false);
+    expect(runsOnTerminalScreen("/watch:watch https://x")).toBe(false); // plugin skill
+    expect(runsOnTerminalScreen("/pre-orcamento cliente x")).toBe(false);
   });
 
   it("keeps pasted absolute paths in chat", () => {
-    expect(isSlashCommand("/home/rodcoppi/Downloads/report.md")).toBe(false);
-    expect(isSlashCommand("/mnt/c/Users/User/Downloads/report.md")).toBe(false);
+    expect(runsOnTerminalScreen("/home/rodcoppi/Downloads/report.md")).toBe(false);
+    expect(runsOnTerminalScreen("/mnt/c/Users/User/Downloads/report.md")).toBe(false);
+    expect(runsOnTerminalScreen("olha /model isso")).toBe(false); // not at the start
   });
 });
 
