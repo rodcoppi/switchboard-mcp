@@ -5794,6 +5794,42 @@
       return /^\/[A-Za-z][\w-]*(?:\s|$)/.test(String(text || "").trimStart());
     }
 
+    /**
+     * The CLI's OWN commands — the ones whose whole output is a terminal
+     * screen: an autocomplete menu, a model picker, a settings panel, a page
+     * of text printed by the TUI. None of them reach the JSONL transcript, so
+     * the chat (a mirror of that log) would show nothing at all for them.
+     *
+     * A SKILL is the opposite: "/dash-redes", "/codex", "/watch:watch" enter
+     * the transcript as your message and the agent answers in the chat like
+     * any other turn. Flipping to the terminal for those was just throwing the
+     * operator out of the view he was working in (22/08).
+     *
+     * Unknown names stay in the chat: user skills and plugin commands vastly
+     * outnumber the builtins, and being wrong there costs a wasted glance,
+     * while being wrong the other way costs the answer itself.
+     */
+    const CLI_BUILTIN_COMMANDS = new Set([
+      "add-dir", "agents", "bashes", "bug", "clear", "compact", "config", "context", "cost",
+      "doctor", "exit", "export", "feedback", "help", "hooks", "ide", "init",
+      "install-github-app", "login", "logout", "mcp", "memory", "migrate-installer", "model",
+      "output-style", "permissions", "pr-comments", "privacy-settings", "release-notes",
+      "resume", "rewind", "sandbox", "status", "statusline", "terminal-setup", "todos",
+      "upgrade", "usage", "vim",
+    ]);
+
+    /** "/model opus" → "model"; not a slash command → null. */
+    function slashCommandName(text) {
+      const m = /^\/([A-Za-z][\w:-]*)/.exec(String(text || "").trimStart());
+      return m ? m[1].toLowerCase() : null;
+    }
+
+    /** Does this line belong to the terminal screen rather than the chat? */
+    function runsOnTerminalScreen(text) {
+      const name = slashCommandName(text);
+      return name !== null && CLI_BUILTIN_COMMANDS.has(name);
+    }
+
     async function sendChatMessage(name, text) {
       // A dialog owns the TUI: keystrokes never reach the input, and the
       // Enter that follows lands on the highlighted choice. Refuse rather
@@ -9732,13 +9768,12 @@
         for (const [tok, p] of attachments) raw = raw.split(tok).join(p);
         const text = raw.trim();
         if (!name || text === "") return;
-        // A slash command drives the CLI's own interactive UI (the autocomplete
-        // menu, the model picker, /clear…) — and that UI lives on the terminal
-        // SCREEN, which the chat casca (a mirror of the JSONL log) cannot show.
-        // So a "/…" is sent and we FLIP to the terminal, where its menu is: the
-        // command actually does something you can see and finish, instead of
-        // vanishing into a view that will never render it.
-        const isSlash = isSlashCommand(text);
+        // Only the CLI's OWN commands live on the terminal screen (their output
+        // never reaches the JSONL the chat mirrors), and only those flip the
+        // view. A skill — "/dash-redes", "/codex" — is an ordinary turn: it
+        // belongs in the chat, and being thrown into the terminal to run one
+        // was exactly the complaint.
+        const isSlash = runsOnTerminalScreen(text);
         chatInput.disabled = true;
         // Echo the message into the chat AT ONCE — the agent may be mid-turn and
         // won't log it (so won't mirror it back) until it finishes, and a chat
@@ -9752,7 +9787,7 @@
           attachments.clear();
           autogrow();
           if (isSlash) {
-            toast("Slash commands run in the terminal — switched you there.");
+            toast(`/${slashCommandName(text)} runs on the terminal screen — switched you there.`);
             setScreenMode("terminal");
           }
         } catch (err) {
