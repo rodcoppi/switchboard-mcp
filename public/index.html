@@ -1646,6 +1646,42 @@
       color: var(--text-dim);
       font: inherit;
     }
+    /* Attached pictures, shown BEFORE sending. A "[📎 name]" token says a file
+       is coming along; it does not say WHICH picture, and pasting the wrong
+       screenshot is only obvious once it is already in the agent's hands. */
+    .composer-thumbs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      padding: 2px 2px 8px;
+    }
+    .composer-thumbs[hidden] { display: none; }
+    .composer-thumb {
+      position: relative;
+      width: 56px; height: 56px;
+      border-radius: var(--radius-sm, 6px);
+      overflow: hidden;
+      border: 1px solid var(--border-soft);
+      background: var(--bg-elev);
+      flex: none;
+    }
+    .composer-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; cursor: zoom-in; }
+    .composer-thumb-drop {
+      position: absolute;
+      top: 2px; right: 2px;
+      width: 16px; height: 16px;
+      display: flex; align-items: center; justify-content: center;
+      border: none; border-radius: 50%;
+      background: rgba(0, 0, 0, 0.65);
+      color: var(--text);
+      font-size: 11px; line-height: 1;
+      cursor: pointer;
+      opacity: 0;
+      transition: opacity 120ms ease;
+    }
+    .composer-thumb:hover .composer-thumb-drop,
+    .composer-thumb-drop:focus-visible { opacity: 1; }
+    .composer-thumb-drop:hover { background: var(--danger); }
     .chat-composer-row {
       display: flex;
       gap: 4px;
@@ -3393,6 +3429,7 @@
               <span class="composer-route">dispatch to <span class="composer-target" id="composer-target">agent</span></span>
               <span class="composer-keys"><kbd>Enter</kbd> send · <kbd>Shift Enter</kbd> newline · <kbd>Esc</kbd> stop</span>
             </div>
+            <div class="composer-thumbs" id="composer-thumbs" hidden></div>
             <div class="chat-composer-row">
               <textarea id="chat-input" name="message" rows="1" autocomplete="off"
                 aria-label="Message this agent"
@@ -9254,6 +9291,57 @@
         return paths;
       }
 
+      /**
+       * The attached pictures, shown before sending.
+       *
+       * The composer carries "[📎 name]" tokens, which tell you a file is
+       * coming along but not WHICH picture — and a pasted screenshot is only
+       * recognisable once it is already in the agent's hands. So every
+       * attachment that IS an image gets a thumbnail here, read through the
+       * same scoped /api/files/raw route the chat uses.
+       *
+       * Driven by the TEXT, not by the Map: deleting a token by hand is how
+       * anyone removes an attachment, and the strip has to follow that.
+       */
+      const THUMBABLE = /\.(png|jpe?g|gif|webp|bmp|avif)$/i;
+      function renderComposerThumbs() {
+        const strip = $("#composer-thumbs");
+        if (!strip) return;
+        const text = chatInput.value;
+        strip.textContent = "";
+        for (const [token, filePath] of attachments) {
+          if (!text.includes(token) || !THUMBABLE.test(filePath)) continue;
+          const cell = el("div", "composer-thumb");
+          const img = el("img");
+          img.loading = "lazy";
+          img.alt = filePath.split("/").pop() || filePath;
+          img.title = filePath;
+          img.src = `/api/files/raw?path=${encodeURIComponent(filePath)}`;
+          // A file the hub will not serve (gone, out of scope) drops its cell
+          // rather than sitting there as a broken-image icon.
+          img.addEventListener("error", () => {
+            cell.remove();
+            if (!strip.childElementCount) strip.hidden = true;
+          });
+          img.addEventListener("click", () => openPreview(filePath));
+          const drop = el("button", "composer-thumb-drop", "×");
+          drop.type = "button";
+          drop.title = "Remove this attachment";
+          drop.setAttribute("aria-label", `Remove ${img.alt}`);
+          drop.addEventListener("click", () => {
+            // Take the token out of the text too — the strip mirrors the text,
+            // and a picture removed here must not still be sent.
+            chatInput.value = chatInput.value.split(token).join("").replace(/[ \t]{2,}/g, " ").trim();
+            attachments.delete(token);
+            chatInput.dispatchEvent(new Event("input"));
+            chatInput.focus();
+          });
+          cell.append(img, drop);
+          strip.appendChild(cell);
+        }
+        strip.hidden = strip.childElementCount === 0;
+      }
+
       function insertPathAttachments(paths) {
         if (!paths.length) return;
         let pos = chatInput.selectionStart ?? chatInput.value.length;
@@ -9551,6 +9639,7 @@
         return false;
       }
       chatInput.addEventListener("input", updateSlashMenu);
+      chatInput.addEventListener("input", renderComposerThumbs);
       chatInput.addEventListener("blur", () => closeSlashMenu());
       // ---- end slash-command autocomplete --------------------------------
 
@@ -9785,6 +9874,7 @@
           await sendChatMessage(name, text);
           chatInput.value = "";
           attachments.clear();
+          renderComposerThumbs();
           autogrow();
           if (isSlash) {
             toast(`/${slashCommandName(text)} runs on the terminal screen — switched you there.`);
