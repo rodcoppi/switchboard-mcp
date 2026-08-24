@@ -607,30 +607,42 @@ describe("the copy button ON a code block", () => {
   });
 });
 
-describe("usage bar colour", () => {
-  const usagePaceColor = embeddedFunctionWith<(p: number, e: number) => string>("usagePaceColor", ["usageProjected"]);
+describe("usage gauges: colour says HOW MUCH, pace says how fast", () => {
+  const gaugeColor = embeddedFunction<(p: number) => string>("gaugeColor");
+  const usagePaceMark = embeddedFunctionWith<
+    (p: number, e: number) => { glyph: string; color: string } | null
+  >("usagePaceMark", ["usageProjected"]);
   const shade = (c: string) => (c.includes("danger") ? "red" : c.includes("warn") ? "amber" : "green");
 
-  // The old rule coloured by pace alone (used vs. elapsed) and therefore sat
-  // on green essentially always — a colour that never changes carries no
-  // information. Colour now answers "will this run out before it resets?".
-  it("stays green when the pace lands comfortably under the limit", () => {
-    expect(shade(usagePaceColor(12, 18.9))).toBe("green"); // the reported case
-    expect(shade(usagePaceColor(5, 18.9))).toBe("green");
+  // The fill used to be painted by the projected PACE, so a weekly quota at
+  // 10% came out RED because the week had barely started — a nearly empty bar,
+  // screaming ("que que é esse vermelho embaixo", 23/08). Two facts were
+  // fighting over one channel. The fill now answers what the bar asks.
+  it("a barely-used quota is never alarming, however fast it started", () => {
+    expect(shade(gaugeColor(10))).toBe("green"); // the reported case
+    expect(shade(gaugeColor(36))).toBe("green");
+    expect(shade(gaugeColor(3))).toBe("green");
   });
 
-  it("goes red when the pace burns the quota before the reset", () => {
-    expect(shade(usagePaceColor(28, 6.7))).toBe("red");  // lands at ~418%
-    expect(shade(usagePaceColor(40, 10))).toBe("red");
+  it("colour climbs with what is SPENT, and nothing else", () => {
+    expect(shade(gaugeColor(59))).toBe("green");
+    expect(shade(gaugeColor(60))).toBe("amber");
+    expect(shade(gaugeColor(84))).toBe("amber");
+    expect(shade(gaugeColor(85))).toBe("red");
+    expect(shade(gaugeColor(100))).toBe("red");
   });
 
-  it("landing exactly at 100% is amber, not an emergency", () => {
-    expect(shade(usagePaceColor(50, 50))).toBe("amber");
+  it("pace gets its own mark — and stays silent when there is nothing to say", () => {
+    expect(usagePaceMark(10, 50)).toBeNull(); // 10% spent, half the window gone
+    expect(usagePaceMark(50, 50)?.glyph).toBe("↑"); // exactly on track to finish at reset
+    expect(shade(usagePaceMark(50, 50)!.color)).toBe("amber");
+    expect(shade(usagePaceMark(10, 8)!.color)).toBe("red"); // lands at ~125%
   });
 
-  it("a nearly spent quota is red however slow the pace", () => {
-    expect(shade(usagePaceColor(95, 99))).toBe("red");
-    expect(shade(usagePaceColor(80, 90))).toBe("amber");
+  it("the context pill shares the very same scale", () => {
+    const contextColor = embeddedFunctionWith<(p: number) => string>("contextColor", ["gaugeColor"]);
+    expect(contextColor(29)).toBe(gaugeColor(29));
+    expect(contextColor(90)).toBe(gaugeColor(90));
   });
 });
 

@@ -329,7 +329,17 @@
     }
     .usage-row-label { color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .usage-row-pct { color: var(--text); font-variant-numeric: tabular-nums; font-weight: 600; }
-    .usage-bar { height: 6px; border-radius: 999px; background: var(--bg-inset); overflow: hidden; }
+    .usage-bar { height: 6px; border-radius: 999px; background: var(--bg-inset); overflow: hidden; position: relative; }
+    /* Where an even pace would have you by now. The bar past it means ahead of
+       pace — geometry, not colour, so a nearly empty bar never looks alarming. */
+    .usage-bar-tick {
+      position: absolute;
+      top: -2px; bottom: -2px;
+      width: 1px;
+      background: var(--text-faint);
+      opacity: 0.75;
+    }
+    .usage-pace-mark { margin-left: 4px; font-family: var(--mono); font-size: var(--fs-eyebrow); }
     .usage-bar-fill { height: 100%; border-radius: 999px; transition: width 0.4s var(--ease), background 0.3s var(--ease); }
     .usage-row-reset { font-size: var(--fs-eyebrow); color: var(--text-faint); font-family: var(--mono); }
     .usage-token-note { margin-top: 7px; font-family: var(--mono); font-size: var(--fs-eyebrow); color: var(--text-faint); }
@@ -3851,14 +3861,33 @@
      * always, so the colour carried no information — and nobody could guess
      * "green means you are under your time-proportional share".
      */
-    function usagePaceColor(percent, expected) {
-      // Thresholds carry slack on purpose: landing exactly at 100% means the
-      // quota lasts precisely as long as the window, which is fine, not an
-      // emergency. Red is for "runs out BEFORE the reset" (or nearly gone).
-      const projected = usageProjected(percent, expected);
-      if (percent >= 90 || projected >= 115) return "var(--danger)";
-      if (percent >= 75 || projected >= 95) return "var(--warn)";
+    /**
+     * ONE scale for every gauge on this page (usage rows, context pill): the
+     * colour answers the question the BAR asks — how much is gone.
+     *
+     * It used to answer a different one. The fill was painted by the projected
+     * PACE, so a weekly quota at 10% came out red because the week had barely
+     * started: a nearly empty bar, screaming (owner, 23/08: "que que é esse
+     * vermelho embaixo"). Two facts, one channel, and the loud one was not the
+     * one being drawn. Pace now has its own marks (see usagePaceMark and the
+     * tick on the bar) and the fill just tells you how full it is.
+     */
+    function gaugeColor(percent) {
+      if (percent >= 85) return "var(--danger)";
+      if (percent >= 60) return "var(--warn)";
       return "var(--online)";
+    }
+
+    /**
+     * The pace signal, as its own small mark next to the number: "↑" when this
+     * window is running hot enough to end early. Null when the pace is fine —
+     * an absent mark is quieter than a green one.
+     */
+    function usagePaceMark(percent, expected) {
+      const projected = usageProjected(percent, expected);
+      if (projected >= 115) return { glyph: "↑", color: "var(--danger)" };
+      if (projected >= 100) return { glyph: "↑", color: "var(--warn)" };
+      return null;
     }
     /** Where this window LANDS at reset if the current pace holds (%). */
     function usageProjected(percent, expected) {
@@ -3986,12 +4015,27 @@
         el("span", "usage-row-label", item.label),
         el("span", "usage-row-pct", `${Math.round(item.percent)}%`),
       );
+      // The pace mark rides WITH the number, not on the bar.
+      if (item.paceMark) {
+        const mark = el("span", "usage-pace-mark", item.paceMark.glyph);
+        mark.style.color = item.paceMark.color;
+        head.appendChild(mark);
+      }
       const bar = el("div", "usage-bar");
       if (item.hint) row.title = item.hint;
       const fill = el("div", "usage-bar-fill");
       fill.style.width = `${Math.min(100, Math.max(0, item.percent))}%`;
       fill.style.background = item.color;
       bar.appendChild(fill);
+      // …and pace also gets a TICK: where the fill would be if you were
+      // spending evenly across the window. Bar past the tick = ahead of pace,
+      // and you read that from the geometry instead of from a colour.
+      if (typeof item.expected === "number") {
+        const tick = el("span", "usage-bar-tick");
+        tick.style.left = `${Math.min(100, Math.max(0, item.expected))}%`;
+        tick.title = `Even pace would be here (${Math.round(item.expected)}% of the window elapsed)`;
+        bar.appendChild(tick);
+      }
       row.append(head, bar, el("div", "usage-row-reset", `resets ${usageResetText(item.resetsAt)}`));
       container.appendChild(row);
     }
@@ -4031,7 +4075,9 @@
           const exp = win ? usageExpected(l.resetsAt, win.windowMs, win.chunkMs, now) : null;
           appendUsageRow(section, {
             label: usageLabel(l), percent: l.percent, resetsAt: l.resetsAt,
-            color: exp === null ? "var(--accent)" : usagePaceColor(l.percent, exp),
+            color: gaugeColor(l.percent),
+            expected: exp === null ? null : exp,
+            paceMark: exp === null ? null : usagePaceMark(l.percent, exp),
             hint: exp === null ? null : usagePaceHint(l.percent, exp),
           });
         }
@@ -4055,11 +4101,13 @@
         const limits = Array.isArray(usageCodex.limits) ? usageCodex.limits : [];
         for (const l of limits) {
           const win = usageWindowFromMinutes(l.windowMinutes);
+          const exp = win ? usageExpected(l.resetsAt, win.windowMs, win.chunkMs, now) : null;
           appendUsageRow(section, {
             label: usageWindowLabel(l.windowMinutes), percent: l.usedPercent, resetsAt: l.resetsAt,
-            color: win
-              ? usagePaceColor(l.usedPercent, usageExpected(l.resetsAt, win.windowMs, win.chunkMs, now))
-              : "var(--selected)",
+            color: gaugeColor(l.usedPercent),
+            expected: exp,
+            paceMark: exp === null ? null : usagePaceMark(l.usedPercent, exp),
+            hint: exp === null ? null : usagePaceHint(l.usedPercent, exp),
           });
         }
         if (!limits.length) section.appendChild(el("div", "usage-engine-state", "Waiting for a Codex limit event"));
@@ -6565,9 +6613,7 @@
      * "green because it rendered" — the owner's complaint about the usage bars.
      */
     function contextColor(pct) {
-      if (pct >= 85) return "var(--danger)";
-      if (pct >= 60) return "var(--unread-bg)";
-      return "var(--text-dim)";
+      return gaugeColor(pct);
     }
 
     function renderScreenStatus() {
