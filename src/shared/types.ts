@@ -199,6 +199,7 @@ export type OnMessage = (message: Message, recipient: Agent) => Delivery;
 // ---------------------------------------------------------------------------
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
+export type SttEngineChoice = "auto" | "local" | "cloud";
 
 export interface Config {
   port: number; // default 4577
@@ -210,6 +211,13 @@ export interface Config {
   kickoffDelayMs: number; // default 8000
   agentPollIntervalMs: number; // default 10000
   logLevel: LogLevel; // default "info"
+  /**
+   * Which dictation backend transcribes: "auto" (local model when installed,
+   * cloud otherwise), "local" (never leaves the machine) or "cloud" (accurate
+   * for pt-BR; the bundled local model is a 0.6B int8 and it shows). A taste
+   * call between privacy and accuracy — it belongs to whoever is speaking.
+   */
+  sttEngine: SttEngineChoice; // default "auto"
 }
 
 // ---------------------------------------------------------------------------

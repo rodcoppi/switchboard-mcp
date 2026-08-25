@@ -25,6 +25,7 @@ export const DEFAULTS: Config = {
   kickoffDelayMs: 8000,
   agentPollIntervalMs: 10000,
   logLevel: "info",
+  sttEngine: "auto",
 };
 
 const LOG_LEVELS: readonly LogLevel[] = ["debug", "info", "warn", "error"];
@@ -93,7 +94,15 @@ export function loadConfig(baseDir: string = defaultBaseDir()): Config {
   for (const key of Object.keys(DEFAULTS) as (keyof Config)[]) {
     if (!(key in raw)) continue;
     const value = raw[key];
-    if (key === "logLevel") {
+    if (key === "sttEngine") {
+      if (value === "auto" || value === "local" || value === "cloud") {
+        config.sttEngine = value;
+      } else {
+        console.warn(
+          `[switchboard] config.json: invalid value for "sttEngine" (${JSON.stringify(value)}) — using default "${DEFAULTS.sttEngine}".`,
+        );
+      }
+    } else if (key === "logLevel") {
       if (typeof value === "string" && (LOG_LEVELS as string[]).includes(value)) {
         config.logLevel = value as LogLevel;
       } else {

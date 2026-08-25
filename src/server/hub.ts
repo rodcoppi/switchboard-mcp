@@ -202,7 +202,7 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
     stt = options.stt;
   } else {
     localStt = createLocalStt({ log });
-    stt = createSttEngine({ local: localStt, groq: createSttProxy({ log }) });
+    stt = createSttEngine({ local: localStt, groq: createSttProxy({ log }), engine: config.sttEngine });
   }
 
   const version = readVersion();

@@ -1401,7 +1401,15 @@ export function createApiRouter(options: ApiOptions): express.Router {
         return;
       }
       try {
-        const text = await stt.transcribe(req.body, req.headers["content-type"] ?? "audio/webm");
+        // The browser's own locale rides along: this machine's LANG can be
+        // "C.UTF-8" (it is, here) while its owner dictates in Portuguese, and
+        // an unnamed language is what made Whisper mangle whole takes.
+        const rawLang = typeof req.query.lang === "string" ? req.query.lang : undefined;
+        const text = await stt.transcribe(
+          req.body,
+          req.headers["content-type"] ?? "audio/webm",
+          rawLang,
+        );
         log.info(`[stt] transcribed ${req.body.length} bytes -> ${text.length} chars.`);
         res.json({ ok: true, text });
       } catch (err) {

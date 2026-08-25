@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  sttLanguage,
   MAX_STT_BYTES,
   SttError,
   createSttProxy,
@@ -141,5 +142,39 @@ describe("createSttProxy", () => {
       .catch((e: unknown) => e);
     expect(err).toBeInstanceOf(SttError);
     expect((err as Error).message).toMatch(/could not reach/i);
+  });
+});
+
+describe("sttLanguage — naming the language instead of guessing it", () => {
+  // Autodetect was the default, on the theory that the operator moves between
+  // pt-BR and English. But Whisper detects from the FIRST seconds, so a false
+  // start or a bit of room noise picks the wrong one and the whole take comes
+  // back mangled — sometimes translated rather than transcribed (23/08).
+  it("an explicit code wins over everything", () => {
+    expect(sttLanguage({ LANG: "en_US.UTF-8" }, "pt")).toBe("pt");
+    expect(sttLanguage({}, " pt ")).toBe("pt");
+  });
+
+  it("an explicit EMPTY string is a deliberate 'autodetect again'", () => {
+    expect(sttLanguage({ LANG: "pt_BR.UTF-8" }, "")).toBeNull();
+  });
+
+  it("falls back to the system locale, most specific variable first", () => {
+    expect(sttLanguage({ LANG: "pt_BR.UTF-8" })).toBe("pt");
+    expect(sttLanguage({ LANG: "en_US.UTF-8", LC_ALL: "pt_BR.UTF-8" })).toBe("pt");
+    expect(sttLanguage({ LANG: "fr-CA" })).toBe("fr");
+  });
+
+  it("LANG=C means 'no locale', not Catalan", () => {
+    // This machine's own value, which is why the browser's locale is sent too.
+    expect(sttLanguage({ LANG: "C.UTF-8" })).toBeNull();
+    expect(sttLanguage({ LANG: "C" })).toBeNull();
+    expect(sttLanguage({})).toBeNull();
+    expect(sttLanguage({ LANG: "" })).toBeNull();
+  });
+
+  it("takes the browser's locale as the caller's hint", () => {
+    // The dashboard sends navigator.language sliced to two letters.
+    expect(sttLanguage({ LANG: "C.UTF-8" }, "pt")).toBe("pt");
   });
 });
