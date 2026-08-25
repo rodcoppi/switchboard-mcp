@@ -9952,6 +9952,61 @@
       } else {
         let rec = null; // { recorder, stream, chunks, base } while recording
         let transcribing = false;
+
+        /**
+         * One request shape for both passes. The browser's own locale rides
+         * along: THIS machine's LANG is "C.UTF-8" while its owner dictates in
+         * Portuguese, and an unnamed language is what let Whisper detect wrong
+         * from a false start and mangle the whole take.
+         */
+        const postAudio = (blob) =>
+          fetch(`/api/stt?lang=${encodeURIComponent((navigator.language || "").slice(0, 2))}`, {
+            method: "POST",
+            headers: { "content-type": blob.type || "audio/webm" },
+            body: blob,
+          });
+
+        /**
+         * The words appearing WHILE you speak.
+         *
+         * Whisper has no streaming API, so this re-transcribes the recording
+         * from the START every few seconds and replaces the draft with the
+         * result. Sending the whole take each time (rather than appending
+         * per-chunk transcriptions) is deliberate: the model sees the full
+         * sentence and fixes its own earlier guesses as context arrives, and
+         * no word is ever cut in half at a chunk boundary.
+         *
+         * Never more than one in flight, and never on top of the final pass.
+         */
+        const LIVE_EVERY_MS = 3500;
+        const LIVE_MAX_MS = 90_000; // past this, only the final pass runs
+        async function livePass() {
+          if (!rec || rec.inFlight || transcribing) return;
+          if (Date.now() - rec.startedAt > LIVE_MAX_MS) return;
+          const blob = new Blob(rec.chunks, { type: rec.recorder.mimeType || "audio/webm" });
+          if (blob.size < 8000) return; // too little audio to say anything yet
+          rec.inFlight = true;
+          try {
+            const res = await postAudio(blob);
+            const data = await res.json().catch(() => ({}));
+            if (!rec) return; // recording ended while this was in the air
+            if (res.ok && data.ok && data.text) writeDictation(rec.base, data.text);
+          } catch {
+            /* a dropped live pass is invisible: the final one still runs */
+          } finally {
+            if (rec) rec.inFlight = false;
+          }
+        }
+
+        /** Puts `text` where dictation started, keeping the caret after it. */
+        function writeDictation(base, text) {
+          const seamL = base.before && !/\s$/.test(base.before) ? " " : "";
+          const seamR = base.after && !/^\s/.test(base.after) ? " " : "";
+          chatInput.value = base.before + seamL + text + seamR + base.after;
+          const caret = (base.before + seamL + text).length;
+          chatInput.setSelectionRange(caret, caret);
+          autogrow();
+        }
         const micReset = () => {
           rec = null;
           micBtn.classList.remove("rec");
@@ -10050,8 +10105,12 @@
             recorder,
             stream,
             chunks: [],
+            startedAt: Date.now(), // the live passes stop after LIVE_MAX_MS
+            inFlight: false, // one live transcription at a time
+            liveTimer: null,
             base: { before: chatInput.value.slice(0, pos), after: chatInput.value.slice(pos) },
             stopLevel: () => {
+              if (rec && rec.liveTimer) clearInterval(rec.liveTimer);
               if (levelTimer) clearInterval(levelTimer);
               if (waveRaf) cancelAnimationFrame(waveRaf);
               waveEl.hidden = true;
@@ -10090,11 +10149,7 @@
             micBtn.disabled = true;
             micBtn.textContent = "…";
             try {
-              const res = await fetch("/api/stt", {
-                method: "POST",
-                headers: { "content-type": blob.type || "audio/webm" },
-                body: blob,
-              });
+              const res = await postAudio(blob);
               const data = await res.json().catch(() => ({}));
               if (!res.ok || !data.ok) {
                 toast(data.error || `Dictation failed (HTTP ${res.status}).`, "warn", 8000);
@@ -10104,15 +10159,10 @@
                 toast("Dictation: no speech heard.", "warn");
                 return;
               }
-              // Insert at the caret captured when recording STARTED, with a
-              // space seam only where one is actually needed.
-              const seamL = base.before && !/\s$/.test(base.before) ? " " : "";
-              const seamR = base.after && !/^\s/.test(base.after) ? " " : "";
-              chatInput.value = base.before + seamL + data.text + seamR + base.after;
-              const caret = (base.before + seamL + data.text).length;
-              chatInput.setSelectionRange(caret, caret);
+              // Replaces whatever the live passes drafted: this one saw the
+              // whole recording, they only saw a prefix of it.
+              writeDictation(base, data.text);
               chatInput.focus();
-              autogrow();
             } catch (err) {
               toast(`Dictation failed: ${err && err.message ? err.message : err}`, "warn");
             } finally {
@@ -10120,7 +10170,12 @@
               micReset();
             }
           };
-          recorder.start();
+          // A timeslice makes ondataavailable fire while recording instead of
+          // only at stop — that is what gives the live passes something to
+          // send. The blob is still assembled from all chunks at the end, so
+          // the final transcription is unchanged.
+          recorder.start(1500);
+          rec.liveTimer = setInterval(livePass, LIVE_EVERY_MS);
           micBtn.classList.add("rec");
           micBtn.textContent = "⏺";
           chatInput.focus();
