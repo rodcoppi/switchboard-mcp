@@ -849,6 +849,7 @@
         box-shadow: 0 0 14px rgba(232, 183, 63, 0.22);
       }
     }
+    .agent-menu-item.confirming { color: var(--warn); }
     .remove-btn.confirming {
       border-color: var(--danger);
       color: var(--danger);
@@ -4908,7 +4909,7 @@
         "colour-reset-btn": "⭕", "mute-toggle": "🔇", "rename-btn": "✏️", "remove-btn": "🗑",
         "autostart-btn": "⏻", "bootcmd-btn": "🛠", "cliargs-btn": "⚙",
         "display-btn": "🏷", "leader-btn": "👑", "stop-btn": "⏹", "desc-btn": "📄",
-        "folder-btn": "📂",
+        "folder-btn": "📂", "fresh-btn": "✨",
       };
       function menuItem(cls, label, title, onClick) {
         const item = el("button", `agent-menu-item ${cls}`);
@@ -4950,6 +4951,35 @@
           ),
         );
       }
+      // Start over: same agent, blank conversation. Confirms first — see
+      // reopenAgent's note on what stops being one click away.
+      menu.appendChild(
+        menuItem(
+          "fresh-btn",
+          "new conversation",
+          `Relaunch ${agent.name} with a BLANK conversation (the current one stays on disk, ` +
+            `reachable with /resume in the terminal)`,
+          (item) => {
+            if (item.dataset.confirming !== "1") {
+              item.dataset.confirming = "1";
+              item.classList.add("confirming");
+              const label = item.querySelector("span:last-child");
+              if (label) label.textContent = "start blank?";
+              setTimeout(() => {
+                if (!item.isConnected || item.dataset.confirming !== "1") return;
+                item.dataset.confirming = "0";
+                item.classList.remove("confirming");
+                if (label) label.textContent = "new conversation";
+              }, 4000);
+              return;
+            }
+            closeMenus();
+            const card = item.closest(".agent-card");
+            const btn = card ? card.querySelector(".reopen-btn") : null;
+            reopenAgent(agent, btn || item, true);
+          },
+        ),
+      );
       // Opens the Groups panel rather than editing here: a group is a container
       // holding several agents, so it is managed where you can see all of them
       // at once. (This used to turn the NAME cell into a group field, which put
@@ -5303,7 +5333,18 @@
       }
     }
 
-    async function reopenAgent(agent, btn) {
+    /**
+     * Relaunches an agent. `fresh` opens a BLANK conversation instead of
+     * resuming the last one — the same agent, same folder, same group, but the
+     * CLI starts with nothing behind it. Two reasons that is worth a button:
+     * a conversation can grow too full to be useful (see the context gauge),
+     * and sometimes the last one simply ended.
+     *
+     * What it costs: the previous conversation stops being the one a plain
+     * reopen resumes — it is still on disk, reachable from the terminal with
+     * /resume, but not one click away any more. Hence the confirm step.
+     */
+    async function reopenAgent(agent, btn, fresh = false) {
       if (state.reopening.has(agent.name)) return;
       state.reopening.add(agent.name);
       // Immediate feedback on the clicked node; every re-render from here on
@@ -5318,7 +5359,7 @@
           body: JSON.stringify({
             dir: agent.cwd,
             name: agent.name,
-            continue: true,
+            continue: !fresh,
             // openTerminal:false — reopening puts the agent back on the rail, it
             // does NOT ask for a Windows window. A window is only ever what you
             // click "window" for. (Same rule as launching; reopen used to pop one
@@ -5335,9 +5376,11 @@
           toast(`Reopen failed: ${body.error || `HTTP ${res.status}`}`, "warn");
           return;
         }
-        const conv = body.fallback
-          ? "with a FRESH conversation (no resumable one found)"
-          : "continuing its conversation";
+        const conv = fresh
+          ? "with a blank conversation"
+          : body.fallback
+            ? "with a FRESH conversation (no resumable one found)"
+            : "continuing its conversation";
         toast(`Agent "${agent.name}" reopened ${conv}.`, "ok");
       } catch (err) {
         toast(`Reopen failed: ${err && err.message ? err.message : err}`, "warn");
