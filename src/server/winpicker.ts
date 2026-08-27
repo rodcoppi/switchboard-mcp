@@ -20,6 +20,7 @@ import fs from "node:fs";
 import os from "node:os";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { assertInterop } from "../shared/wsl.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -180,6 +181,8 @@ export function pickFileScript(startIn: string, fileName: string): string {
 
 export interface PickFolderDeps {
   exec?: (file: string, args: string[]) => Promise<{ stdout: string }>;
+  /** Interop probe; injectable so tests do not depend on the host's binfmt. */
+  interop?: () => void;
   /** WSL distro name (default: the env var WSL sets). */
   distro?: string;
   /** How long to wait for a human to browse before giving up. */
@@ -226,6 +229,7 @@ export async function pickWindowsFolder(
       true,
     );
   }
+  (deps.interop ?? assertInterop)(); // the dialog IS a PowerShell process
   const exec =
     deps.exec ??
     (async (file: string, args: string[]) => {
@@ -301,6 +305,7 @@ export async function pickWindowsFile(
       true,
     );
   }
+  assertInterop(); // the dialog is a PowerShell process; without interop there is none
   const exec =
     deps.exec ??
     (async (file: string, args: string[]) => {

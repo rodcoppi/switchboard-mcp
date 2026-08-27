@@ -26,6 +26,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { assertInterop, interopStatus } from "../shared/wsl.js";
 
 /**
  * Extensions the hub will hand to the Windows shell. Inert content only: things
@@ -89,6 +90,8 @@ export interface FileOpener {
 export function createWindowsFileOpener(deps: {
   exec: ExecCapture;
   distro?: string;
+  /** Interop probe; injectable so tests do not depend on the host's binfmt. */
+  interop?: () => void;
 }): FileOpener | null {
   const distro = deps.distro ?? process.env.WSL_DISTRO_NAME;
   if (!distro) return null;
@@ -152,16 +155,33 @@ export function createWindowsFileOpener(deps: {
     } catch (err) {
       // explorer.exe exits NON-ZERO even when it opened the file — a
       // long-standing Windows quirk — so its exit code says nothing. Only a
-      // spawn failure is real, and it has one known cause: a hub booted from
-      // a bare environment has no /mnt/c/... on PATH (the same report that
-      // shaped the terminal opener). Its location is fixed on every install.
-      if ((err as NodeJS.ErrnoException).code !== "ENOENT") return;
-      await deps.exec("/mnt/c/Windows/explorer.exe", [arg], opts);
+      // spawn failure is real, and it has two known causes.
+      const code = (err as NodeJS.ErrnoException).code;
+      // (1) A hub booted from a bare environment has no /mnt/c/... on PATH.
+      //     Explorer's location is fixed on every install, so try it there.
+      if (code === "ENOENT") {
+        await deps.exec("/mnt/c/Windows/explorer.exe", [arg], opts);
+        return;
+      }
+      // (2) The distro cannot run .exe files AT ALL — no WSLInterop in
+      //     binfmt_misc, which is how an imported distro often comes up. The
+      //     old code returned quietly here, so the hub logged "opened project
+      //     folder" and answered ok while nothing whatsoever had happened
+      //     (27/08, after moving PCs). Say what is wrong and how to fix it.
+      if (code === "ENOEXEC" || /exec format error/i.test(String((err as Error).message))) {
+        const status = interopStatus();
+        throw new Error(
+          status.reason ??
+            "This WSL distro cannot run Windows programs (Exec format error from explorer.exe).",
+        );
+      }
+      return; // any other non-zero exit is Explorer's usual noise
     }
   }
 
   return {
     async open(realPath: string): Promise<void> {
+      (deps.interop ?? assertInterop)(); // one clear sentence beats an "Exec format error"
       const win = await toWindowsPath(realPath);
       await runExplorer(win);
       // Only a FOLDER gets raised: a file handed to its default app owns its

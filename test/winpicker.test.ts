@@ -66,7 +66,7 @@ describe("pickWindowsFolder", () => {
 
   it("translates the chosen Windows path into a WSL one", async () => {
     const calls: Array<{ file: string; args: string[] }> = [];
-    const picked = await pickWindowsFolder(undefined, {
+    const picked = await pickWindowsFolder(undefined, { interop: () => {},
       distro,
       shell: "pwsh.exe",
       exec: async (file, args) => {
@@ -85,7 +85,7 @@ describe("pickWindowsFolder", () => {
   });
 
   it("a cancelled dialog is null, not an error", async () => {
-    const picked = await pickWindowsFolder(undefined, {
+    const picked = await pickWindowsFolder(undefined, { interop: () => {},
       distro,
       exec: async () => ({ stdout: `${PICK_CANCELLED}\r\n` }),
     });
@@ -94,7 +94,7 @@ describe("pickWindowsFolder", () => {
 
   it("opens on the operator's own home inside the distro, not on C:", async () => {
     let script = "";
-    await pickWindowsFolder(undefined, {
+    await pickWindowsFolder(undefined, { interop: () => {},
       distro,
       homeDir: "/home/rod",
       shell: "pwsh.exe",
@@ -113,7 +113,7 @@ describe("pickWindowsFolder", () => {
 
   it("translates the WSL path the form holds into the Windows one SelectedPath needs", async () => {
     let script = "";
-    await pickWindowsFolder("/home/rod/projects/ai panorama", {
+    await pickWindowsFolder("/home/rod/projects/ai panorama", { interop: () => {},
       distro,
       shell: "pwsh.exe",
       exec: async (file, args) => {
@@ -130,7 +130,7 @@ describe("pickWindowsFolder", () => {
 
   it("a Windows path from the form is passed through untouched", async () => {
     let script = "";
-    await pickWindowsFolder("C:\\projects", {
+    await pickWindowsFolder("C:\\projects", { interop: () => {},
       distro,
       shell: "pwsh.exe",
       exec: async (file, args) => {
@@ -145,14 +145,14 @@ describe("pickWindowsFolder", () => {
   });
 
   it("outside WSL it asks for the fallback instead of failing", async () => {
-    await expect(pickWindowsFolder(undefined, { distro: "" })).rejects.toMatchObject({
+    await expect(pickWindowsFolder(undefined, { interop: () => {}, distro: "" })).rejects.toMatchObject({
       unsupported: true,
     });
   });
 
   it("a missing powershell.exe asks for the fallback too", async () => {
     const err = Object.assign(new Error("spawn powershell.exe ENOENT"), { code: "ENOENT" });
-    const promise = pickWindowsFolder(undefined, {
+    const promise = pickWindowsFolder(undefined, { interop: () => {},
       distro,
       exec: async () => {
         throw err;

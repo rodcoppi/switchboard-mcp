@@ -58,7 +58,7 @@ import {
   expandHome,
   kickoffText,
 } from "../cli/start.js";
-import { withWindowsInterop, wslDistroName } from "../shared/wsl.js";
+import { assertInterop, withWindowsInterop, wslDistroName } from "../shared/wsl.js";
 
 /**
  * Translates the path shapes a Windows-side operator realistically pastes
@@ -232,11 +232,14 @@ function agentPath(): string | undefined {
 export function createWindowsTerminalOpener(deps: {
   exec: TerminalExec;
   distro?: string;
+  /** Interop probe; injectable so tests do not depend on the host's binfmt. */
+  interop?: () => void;
 }): TerminalOpener | null {
   const distro = deps.distro ?? process.env.WSL_DISTRO_NAME;
   if (!distro) return null;
   return {
     async open(session: string): Promise<void> {
+      (deps.interop ?? assertInterop)(); // no interop, no Windows window
       const attach = terminalAttachArgs(distro, session);
       // cwd /mnt/c: Windows executables warn (and cmd.exe falls back) when
       // started from a \\wsl$ UNC working directory.

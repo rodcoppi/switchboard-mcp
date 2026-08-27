@@ -71,7 +71,7 @@ describe("createWindowsFileOpener", () => {
     const saved = process.env.WSL_DISTRO_NAME;
     delete process.env.WSL_DISTRO_NAME;
     try {
-      expect(createWindowsFileOpener({ exec: exec("") })).toBeNull();
+      expect(createWindowsFileOpener({ interop: () => {}, exec: exec("") })).toBeNull();
     } finally {
       if (saved !== undefined) process.env.WSL_DISTRO_NAME = saved;
     }
@@ -79,7 +79,7 @@ describe("createWindowsFileOpener", () => {
 
   it("translates the path with wslpath, then hands it to explorer", async () => {
     calls.length = 0;
-    const opener = createWindowsFileOpener({ exec: exec("\\\\wsl$\\Ubuntu\\home\\r\\a.mp4\n"), distro: "Ubuntu" });
+    const opener = createWindowsFileOpener({ interop: () => {}, exec: exec("\\\\wsl$\\Ubuntu\\home\\r\\a.mp4\n"), distro: "Ubuntu" });
     await opener!.open("/home/r/a.mp4");
     expect(calls[0]).toEqual({ file: "wslpath", args: ["-w", "/home/r/a.mp4"] });
     expect(calls[1].file).toBe("explorer.exe");
@@ -87,13 +87,13 @@ describe("createWindowsFileOpener", () => {
   });
 
   it("throws when wslpath yields nothing rather than opening a blank path", async () => {
-    const opener = createWindowsFileOpener({ exec: exec("  \n"), distro: "Ubuntu" });
+    const opener = createWindowsFileOpener({ interop: () => {}, exec: exec("  \n"), distro: "Ubuntu" });
     await expect(opener!.open("/home/r/a.mp4")).rejects.toThrow(/no Windows path/i);
   });
 
   it("ignores explorer's exit code — it is non-zero even on success", async () => {
     const boom = Object.assign(new Error("Command failed"), { code: 1 });
-    const opener = createWindowsFileOpener({
+    const opener = createWindowsFileOpener({ interop: () => {},
       exec: exec("C:\\a.mp4", (f) => (f === "explorer.exe" ? boom : null)),
       distro: "Ubuntu",
     });
@@ -103,7 +103,7 @@ describe("createWindowsFileOpener", () => {
   it("falls back to the absolute explorer when PATH has no /mnt/c (real report)", async () => {
     calls.length = 0;
     const enoent = Object.assign(new Error("spawn explorer.exe ENOENT"), { code: "ENOENT" });
-    const opener = createWindowsFileOpener({
+    const opener = createWindowsFileOpener({ interop: () => {},
       exec: exec("C:\\a.mp4", (f) => (f === "explorer.exe" ? enoent : null)),
       distro: "Ubuntu",
     });
@@ -124,7 +124,7 @@ describe("createWindowsFileOpener.reveal", () => {
 
   it("hands explorer ONE `/select,<win>` token — Explorer's own comma syntax", async () => {
     calls.length = 0;
-    const opener = createWindowsFileOpener({ exec: exec("\\\\wsl$\\Ubuntu\\home\\r\\shot.png\n"), distro: "Ubuntu" });
+    const opener = createWindowsFileOpener({ interop: () => {}, exec: exec("\\\\wsl$\\Ubuntu\\home\\r\\shot.png\n"), distro: "Ubuntu" });
     await opener!.reveal("/home/r/shot.png");
     expect(calls[0]).toEqual({ file: "wslpath", args: ["-w", "/home/r/shot.png"] });
     expect(calls[1].file).toBe("explorer.exe");
@@ -134,7 +134,7 @@ describe("createWindowsFileOpener.reveal", () => {
   it("falls back to the absolute explorer path when PATH lacks /mnt/c", async () => {
     calls.length = 0;
     const enoent = Object.assign(new Error("spawn explorer.exe ENOENT"), { code: "ENOENT" });
-    const opener = createWindowsFileOpener({
+    const opener = createWindowsFileOpener({ interop: () => {},
       exec: exec("C:\\shot.png", (f) => (f === "explorer.exe" ? enoent : null)),
       distro: "Ubuntu",
     });
@@ -153,7 +153,7 @@ describe("bringing the window to the front", () => {
 
   it("raises a revealed folder — Explorer opens it BEHIND the browser otherwise", async () => {
     calls.length = 0;
-    const opener = createWindowsFileOpener({ exec, distro: "Ubuntu" });
+    const opener = createWindowsFileOpener({ interop: () => {}, exec, distro: "Ubuntu" });
     await opener!.reveal("/home/r/proj/file.txt");
     const ps = calls.find((c) => c.file === "powershell.exe");
     expect(ps).toBeDefined();
