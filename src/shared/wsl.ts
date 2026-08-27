@@ -13,7 +13,7 @@
 // Everything here is env-in/exec-in, so tests drive it without a real WSL.
 
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
 /**
  * The distro name inside a Windows UNC path for the WSL root, or undefined
@@ -108,4 +108,71 @@ export function withWindowsInterop(
   const missing = WINDOWS_INTEROP_PATHS.filter((dir) => !present.has(dir) && exists(dir));
   if (missing.length === 0) return pathValue;
   return pathValue === "" ? missing.join(":") : `${pathValue}:${missing.join(":")}`;
+}
+
+
+/** Where the kernel records that Windows executables can be run from here. */
+export const WSL_INTEROP_BINFMT = "/proc/sys/fs/binfmt_misc/WSLInterop";
+
+export interface InteropStatus {
+  ok: boolean;
+  /** Operator-facing explanation + fix, present only when ok is false. */
+  reason?: string;
+}
+
+/**
+ * Can this distro run Windows executables at all?
+ *
+ * Everything on the Windows side — open folder, open in a terminal, the native
+ * file dialogs, the desktop shortcut — is a `.exe` launched from Linux, and
+ * that only works while the kernel has WSLInterop registered in binfmt_misc.
+ * A distro brought over with `wsl --import` (a new machine, a migrated setup)
+ * frequently comes up WITHOUT it, and then every one of those features fails
+ * with "Exec format error" — which surfaced here as buttons that reported
+ * success and did nothing (27/08, after moving PCs).
+ *
+ * Cheap enough to call per request: one stat and one small read.
+ */
+export function interopStatus(
+  read: (file: string) => string | null = (file) => {
+    try {
+      return readFileSync(file, "utf8");
+    } catch {
+      return null;
+    }
+  },
+): InteropStatus {
+  const raw = read(WSL_INTEROP_BINFMT);
+  if (raw === null) {
+    return {
+      ok: false,
+      reason:
+        "This WSL distro cannot run Windows programs: the kernel has no WSLInterop entry " +
+        "(common right after `wsl --import`). Add to /etc/wsl.conf:\n\n" +
+        "  [interop]\n  enabled=true\n  appendWindowsPath=true\n\n" +
+        "then restart the distro from Windows: wsl --terminate <distro>. " +
+        "To fix it without restarting (needs root):\n\n" +
+        "  echo ':WSLInterop:M::MZ::/init:PF' | sudo tee /proc/sys/fs/binfmt_misc/register",
+    };
+  }
+  if (/^\s*disabled\s*$/im.test(raw)) {
+    return {
+      ok: false,
+      reason:
+        "Windows interop is registered but DISABLED in this distro. Enable it with:\n\n" +
+        "  echo 1 | sudo tee /proc/sys/fs/binfmt_misc/WSLInterop",
+    };
+  }
+  return { ok: true };
+}
+
+/**
+ * Throws with the operator-facing explanation when this distro cannot run
+ * Windows programs. Every Windows-side entry point calls it FIRST, so the
+ * failure is one clear sentence at the top instead of an "Exec format error"
+ * from whatever .exe happened to be tried.
+ */
+export function assertInterop(): void {
+  const status = interopStatus();
+  if (!status.ok) throw new Error(status.reason ?? "Windows interop is unavailable in this distro.");
 }
