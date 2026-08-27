@@ -771,7 +771,7 @@ describe("switchboardTraffic", () => {
     `const SB_SEND_TOOL = "mcp__switchboard__send_message";
      const SB_CHECK_TOOL = "mcp__switchboard__check_messages";
      const displayOf = (n) => String(n);
-     const fmtTime = () => "11:08 AM";
+     const fmtStamp = () => "11:08 AM";
      ${srcs.join("\n")}
      return switchboardTraffic;`,
   )() as (it: Record<string, unknown>) => null | {
@@ -840,5 +840,39 @@ describe("switchboardTraffic", () => {
   it("every other tool keeps its chip", () => {
     expect(traffic({ name: "Bash", input: { command: "ls" }, result: "a\nb" })).toBeNull();
     expect(traffic({ name: "mcp__switchboard__list_agents", result: '{"ok":true}' })).toBeNull();
+  });
+});
+
+describe("message stamps carry the day once they are not today", () => {
+  // Every stamp was time-only, which reads fine for the last hour and becomes
+  // a riddle for anything older: a thread spanning days showed three "11:21"s
+  // with no way to tell them apart (owner, 27/08).
+  const fmtStamp = embeddedFunctionWith<(iso: string, now?: number) => string>("fmtStamp", [
+    "fmtTime",
+    "startOfDay",
+  ]);
+  const now = new Date("2026-08-27T15:00:00").getTime();
+
+  it("today shows the time alone — that is most of what you ever read", () => {
+    expect(fmtStamp("2026-08-27T11:21:00", now)).not.toMatch(/\d\d\/\d\d/);
+    expect(fmtStamp("2026-08-27T11:21:00", now)).toMatch(/11.21/);
+  });
+
+  it("any earlier day puts the date in front of it", () => {
+    const y = fmtStamp("2026-08-26T11:21:00", now);
+    expect(y).toMatch(/\d\d\/\d\d/);
+    expect(y).toMatch(/11.21/);
+    expect(fmtStamp("2026-07-11T21:27:00", now)).toMatch(/\d\d\/\d\d/);
+  });
+
+  it("another year says so, without spelling out the century", () => {
+    const old = fmtStamp("2025-12-31T23:59:00", now);
+    expect(old).toMatch(/25/); // two-digit year
+    expect(old).not.toMatch(/2025/);
+  });
+
+  it("a garbage timestamp is returned as-is, never as 'Invalid Date'", () => {
+    expect(fmtStamp("not a date", now)).toBe("not a date");
+    expect(fmtStamp("", now)).toBe("");
   });
 });

@@ -3555,6 +3555,31 @@
       });
     }
 
+    /**
+     * A message's stamp. The time alone while it is today; the day in front of
+     * it once it is not — "14:08" against "21/08 14:08".
+     *
+     * Every stamp in here was time-only, which reads fine for the last hour
+     * and becomes a riddle for anything older: a thread that spans days showed
+     * three "11:21"s and no way to tell which day any of them belonged to
+     * (owner, 27/08). Today stays bare on purpose — that is most of what you
+     * ever look at, and a date on every line is noise you learn to skip.
+     */
+    function fmtStamp(iso, now = Date.now()) {
+      const d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return String(iso);
+      const time = fmtTime(iso);
+      const today = startOfDay(new Date(now));
+      if (startOfDay(d) === today) return time;
+      const sameYear = d.getFullYear() === new Date(now).getFullYear();
+      const day = d.toLocaleDateString(undefined, {
+        day: "2-digit",
+        month: "2-digit",
+        ...(sameYear ? {} : { year: "2-digit" }),
+      });
+      return `${day} ${time}`;
+    }
+
     // Every agent gets one stable colour, hashed from its name so it survives
     // restarts and never depends on arrival order. Muted on purpose: these sit
     // beside the amber without competing with it for "this is actionable".
@@ -6804,7 +6829,7 @@
       const meta = el("div", "chat-meta");
       meta.appendChild(el("span", "chat-role", "switchboard"));
       if (it.ts) {
-        const t = el("span", "chat-time", fmtTime(it.ts));
+        const t = el("span", "chat-time", fmtStamp(it.ts));
         t.title = fmtFull(it.ts);
         meta.appendChild(t);
       }
@@ -6840,7 +6865,7 @@
             for (const m of found) {
               const q = el("div", "nudge-quote");
               q.append(
-                el("div", "nudge-quote-head", `${displayOf(m.from)} · ${fmtTime(m.createdAt)}`),
+                el("div", "nudge-quote-head", `${displayOf(m.from)} · ${fmtStamp(m.createdAt)}`),
                 el("div", "nudge-quote-body", m.body),
               );
               quotes.appendChild(q);
@@ -6891,7 +6916,7 @@
       const meta = el("div", "chat-meta");
       meta.appendChild(el("span", "chat-role", isUser ? "you" : shown));
       if (it.ts) {
-        const t = el("span", "chat-time", fmtTime(it.ts));
+        const t = el("span", "chat-time", fmtStamp(it.ts));
         t.title = fmtFull(it.ts);
         meta.appendChild(t);
       }
@@ -7423,7 +7448,7 @@
           quotes: msgs.map((m) => ({
             head:
               displayOf(String(m.from || "?")) +
-              (m.created_at ? ` · ${fmtTime(m.created_at)}` : ""),
+              (m.created_at ? ` · ${fmtStamp(m.created_at)}` : ""),
             body: String(m.body || ""),
           })),
         };
@@ -7438,7 +7463,7 @@
       const meta = el("div", "chat-meta");
       meta.appendChild(el("span", "chat-role", "switchboard"));
       if (it.ts) {
-        const t = el("span", "chat-time", fmtTime(it.ts));
+        const t = el("span", "chat-time", fmtStamp(it.ts));
         t.title = fmtFull(it.ts);
         meta.appendChild(t);
       }
@@ -8397,7 +8422,7 @@
 
     function buildFoot(createdAt, flag) {
       const foot = el("div", "msg-foot");
-      const time = el("span", "msg-time", fmtTime(createdAt));
+      const time = el("span", "msg-time", fmtStamp(createdAt));
       time.title = fmtFull(createdAt);
       foot.append(time, flag);
       return foot;
@@ -8598,7 +8623,7 @@
             const q = el("div", "nudge-quote");
             const text = hit.text.length > 700 ? hit.text.slice(0, 700) + " …" : hit.text;
             q.append(
-              el("div", "nudge-quote-head", `${displayOf(m.to)} · ${fmtTime(hit.ts)}`),
+              el("div", "nudge-quote-head", `${displayOf(m.to)} · ${fmtStamp(hit.ts)}`),
               el("div", "nudge-quote-body", text),
             );
             quotes.appendChild(q);
