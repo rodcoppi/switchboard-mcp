@@ -108,6 +108,14 @@ export interface Agent {
    */
   blockedPrompt?: string;
   blockedOptions?: string[];
+  /**
+   * Background agents this one is running right now, read off the CLI's own
+   * panel. Ephemeral like activity. The transcript records a subagent only when
+   * it FINISHES, so while it works the pane is the one place it exists — and
+   * "waiting for 2 background agents" without saying which is the frustrating
+   * half of that.
+   */
+  subagents?: Array<{ type: string; task: string; elapsed: string; tokens: string | null }>;
   permission?: AgentPermission; // permission/plan mode from the TUI footer (ephemeral)
   goalActive?: boolean; // a /goal is active in the session (ephemeral)
   goalFor?: string; // how long the goal has run, e.g. "21m" (ephemeral)

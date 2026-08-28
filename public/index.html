@@ -2162,6 +2162,21 @@
     /* The stall panel is the dialog card in a warmer key: nothing is asking a
        question here, something is STUCK and the operator has to unstick it. */
     .chat-stall { border-color: rgba(232, 183, 63, 0.45); }
+    /* Running background agents: a quiet list, not an alert — nothing here
+       needs the operator, it is just work he cannot see from the chat. */
+    .chat-subagents { border-color: var(--border); }
+    .chat-subagents .chat-ask-eyebrow { color: var(--text-dim); }
+    .subagent-row {
+      display: flex;
+      align-items: baseline;
+      gap: 9px;
+      padding: 3px 0;
+      font-family: var(--mono);
+      font-size: var(--fs-xs);
+    }
+    .subagent-type { flex: none; color: var(--text-dim); }
+    .subagent-task { flex: 1 1 auto; min-width: 0; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .subagent-meta { flex: none; color: var(--text-faint); font-variant-numeric: tabular-nums; }
     .chat-stall .chat-ask-eyebrow { color: var(--unread-bg); }
     .msg-reaction { margin-top: 0; margin-left: 10px; }
     .chat-copy-btn.quote { font-size: 13px; line-height: 1; }
@@ -7121,6 +7136,54 @@
       }
     }
 
+    /**
+     * The background agents this one has running, listed while they run.
+     *
+     * A subagent reaches the transcript only when it FINISHES, so for the
+     * minutes it works the chat had nothing at all — at best a "waiting for 2
+     * background agents" line that named neither. The CLI's own panel does
+     * name them, and the hub already reads that pane every couple of seconds.
+     */
+    function updateChatSubagents() {
+      const view = $("#screen-chat");
+      if (!view) return;
+      const old = view.querySelector(".chat-subagents");
+      const agent = screenState.name ? state.agents.get(screenState.name) : null;
+      const subs = (agent && agent.subagents) || [];
+      if (!subs.length || screenState.mode !== "chat") {
+        old?.remove();
+        return;
+      }
+      // Signature keeps the elapsed times updating without rebuilding the box
+      // on every poll — a list that flickers is worse than no list.
+      const signature = subs.map((s) => `${s.type}|${s.task}|${s.elapsed}|${s.tokens}`).join("~");
+      if (old && old.dataset.signature === signature) return;
+      const box = old || el("div", "chat-ask chat-subagents");
+      box.dataset.signature = signature;
+      box.textContent = "";
+      box.appendChild(
+        el(
+          "div",
+          "chat-ask-eyebrow",
+          `⚙ ${subs.length} background agent${subs.length > 1 ? "s" : ""} running`,
+        ),
+      );
+      for (const sub of subs) {
+        const row = el("div", "subagent-row");
+        row.append(
+          el("span", "subagent-type", sub.type),
+          el("span", "subagent-task", sub.task),
+          el("span", "subagent-meta", sub.tokens ? `${sub.elapsed} · ↓ ${sub.tokens}` : sub.elapsed),
+        );
+        box.appendChild(row);
+      }
+      if (!old) {
+        const atBottom = view.scrollHeight - view.scrollTop - view.clientHeight < 160;
+        view.appendChild(box);
+        if (atBottom) view.scrollTop = view.scrollHeight;
+      }
+    }
+
     function updateChatAsk() {
       const view = $("#screen-chat");
       if (!view) return;
@@ -7173,6 +7236,7 @@
     function updateStopButton() {
       updateChatAsk();
       updateChatStall();
+      updateChatSubagents();
       const btn = $("#chat-stop");
       if (!btn) return;
       const agent = screenState.name ? state.agents.get(screenState.name) : null;
