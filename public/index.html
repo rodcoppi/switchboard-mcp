@@ -550,26 +550,56 @@
        lamp and the unseen-reply pip — with one thing you read at a glance.
        The engine mark comes back as a corner badge: you still need to know
        which agent is Claude and which is Codex. */
-    @keyframes bl-wobble { 0%,100% { transform: rotate(-2deg) scale(1,1) skewX(0deg); } 33% { transform: rotate(1.5deg) scale(1.025,.985) skewX(1.5deg); } 66% { transform: rotate(2deg) scale(.985,1.02) skewX(-1.5deg); } }
+    /* Four stops, not three: with 0/33/66/100 the last third had to travel from
+       +2deg back to -2deg while the other two moved barely a degree, and an
+       ease-in-out over that stretch reads as a lurch. */
+    @keyframes bl-wobble { 0%,100% { transform: rotate(-2deg) scale(1,1) skewX(0deg); } 25% { transform: rotate(.5deg) scale(1.02,.99) skewX(1.2deg); } 50% { transform: rotate(2deg) scale(.99,1.015) skewX(0deg); } 75% { transform: rotate(.5deg) scale(1.01,.995) skewX(-1.2deg); } }
     @keyframes bl-churn { 0%,100% { transform: rotate(-3deg) scale(1,1) skewX(2deg); } 50% { transform: rotate(3deg) scale(1.05,.95) skewX(-2deg); } }
     @keyframes bl-breathe { 0%,100% { transform: scale(1); } 50% { transform: scale(1.05); } }
     @keyframes bl-pump { 0%,100% { transform: scale(1,1); } 40% { transform: scale(1.07,.93); } 72% { transform: scale(.96,1.04); } }
-    @keyframes bl-hop { 0%,70%,100% { transform: translateY(0) scale(1,1); } 78% { transform: translateY(-7px) scale(.94,1.07); } 88% { transform: translateY(0) scale(1.05,.95); } }
-    @keyframes bl-jitter { 0%,100% { transform: translate(0,0) rotate(0); } 25% { transform: translate(1.6px,-1.1px) rotate(1.6deg); } 75% { transform: translate(-1.6px,1.1px) rotate(-1.6deg); } }
+    /* PIXELS SCALE. The study is authored against a 150px body, so a literal
+       "-7px" hop is 5% there and 32% on a 22px rail portrait — which read as a
+       jump, not a hop (owner, 27/08: "dá um pulo pra cima"). Every translation
+       below is expressed against --blk, the face's own scale factor. */
+    @keyframes bl-hop { 0%,70%,100% { transform: translateY(0) scale(1,1); } 78% { transform: translateY(calc(-7px * var(--blk,1))) scale(.94,1.07); } 88% { transform: translateY(0) scale(1.05,.95); } }
+    @keyframes bl-jitter { 0%,100% { transform: translate(0,0) rotate(0); } 25% { transform: translate(calc(1.6px * var(--blk,1)),calc(-1.1px * var(--blk,1))) rotate(1.6deg); } 75% { transform: translate(calc(-1.6px * var(--blk,1)),calc(1.1px * var(--blk,1))) rotate(-1.6deg); } }
     @keyframes bl-boot { 0%,100% { transform: scale(.82); opacity:.6 } 50% { transform: scale(1.05); opacity:1 } }
     @keyframes bl-squat { 0%,100% { transform: scale(1,1) skewX(-1.5deg); } 50% { transform: scale(1.04,.96) skewX(1.5deg); } }
     @keyframes bl-sway { 0%,100% { transform: rotate(-5deg); } 50% { transform: rotate(5deg); } }
     @keyframes bl-blink { 0%,90%,100% { transform: scaleY(1); } 94%,96% { transform: scaleY(.06); } }
-    @keyframes bl-shift { 0%,100% { transform: translateX(-2.5px); } 50% { transform: translateX(2.5px); } }
-    @keyframes bl-float { 0%,100% { translate: 0 -3px; } 50% { translate: 0 4px; } }
-    @keyframes bl-nod { 0%,62%,100% { translate: 0 0; } 72% { translate: 0 7px; } 80% { translate: 0 0; } 88% { translate: 0 4px; } }
-    @keyframes bl-dart { 0%,26% { translate: -7px 0; } 34%,60% { translate: 7px 0; } 68%,100% { translate: -7px 0; } }
+    @keyframes bl-shift { 0%,100% { transform: translateX(calc(-2.5px * var(--blk,1))); } 50% { transform: translateX(calc(2.5px * var(--blk,1))); } }
+    @keyframes bl-float { 0%,100% { translate: 0 calc(-3px * var(--blk,1)); } 50% { translate: 0 calc(4px * var(--blk,1)); } }
+    @keyframes bl-nod { 0%,62%,100% { translate: 0 0; } 72% { translate: 0 calc(7px * var(--blk,1)); } 80% { translate: 0 0; } 88% { translate: 0 calc(4px * var(--blk,1)); } }
+    @keyframes bl-dart { 0%,26% { translate: calc(-7px * var(--blk,1)) 0; } 34%,60% { translate: calc(7px * var(--blk,1)) 0; } 68%,100% { translate: calc(-7px * var(--blk,1)) 0; } }
     @keyframes bl-scan { 0%,100% { scale: 1 1; } 50% { scale: 1 .45; } }
     @keyframes bl-wave { 0%,100% { scale: 1 .8; } 50% { scale: 1 1.9; } }
     @keyframes bl-pulse { 0%,100% { opacity:1; } 50% { opacity:.4; } }
     @keyframes bl-zzz { 0% { transform: translate(0,0) scale(.55); opacity:0 } 25% { opacity:.9 } 100% { transform: translate(calc(26px * var(--zk,1)), calc(-42px * var(--zk,1))) scale(1.15); opacity:0 } }
     @keyframes bl-ring { 0% { transform: scale(.86); opacity:.55 } 100% { transform: scale(1.6); opacity:0 } }
+    /* The idle gaze: a slow wander so a resting face is never a dead one. Four
+       stops around a loop, 0% === 100%, ease-in-out — the eyes arrive at the
+       seam with zero velocity, so it repeats without a tell. Overridden the
+       moment the pointer moves (the tracker writes the pupils directly). */
+    @keyframes bl-gaze {
+      0%, 100% { translate: calc(-1px * var(--blg,1)) calc(-.6px * var(--blg,1)); }
+      25% { translate: calc(1px * var(--blg,1)) calc(-.9px * var(--blg,1)); }
+      50% { translate: calc(1.2px * var(--blg,1)) calc(.8px * var(--blg,1)); }
+      75% { translate: calc(-1.1px * var(--blg,1)) calc(.7px * var(--blg,1)); }
+    }
+    /* Variant loops. Same energy as the originals, different path — so twenty
+       agents in the same state do not breathe in unison. Each one closes on
+       itself: 0% and 100% identical, and ease-in-out lands at the seam with
+       zero velocity, which is what makes a repeat invisible. */
+    @keyframes bl-roll { 0%,100% { transform: rotate(-1.6deg) skewX(1deg) scale(1,1); } 33% { transform: rotate(1.8deg) skewX(-.8deg) scale(1.015,.99); } 66% { transform: rotate(.4deg) skewX(1.4deg) scale(.99,1.012); } }
+    @keyframes bl-swell { 0%,100% { transform: scale(1,1); } 30% { transform: scale(1.035,.968); } 65% { transform: scale(.975,1.03); } }
+    @keyframes bl-lilt { 0%,100% { transform: rotate(-2.4deg) translateY(0) scale(1,1); } 50% { transform: rotate(2.4deg) translateY(calc(-1.5px * var(--blk,1))) scale(1.01,.995); } }
+    @keyframes bl-drift { 0%,100% { translate: calc(-2px * var(--blk,1)) calc(1.5px * var(--blk,1)); } 33% { translate: calc(2.5px * var(--blk,1)) calc(-2px * var(--blk,1)); } 66% { translate: calc(1px * var(--blk,1)) calc(2.5px * var(--blk,1)); } }
+    @keyframes bl-throb { 0%,100% { transform: scale(1,1) rotate(-1deg); } 45% { transform: scale(1.06,.94) rotate(1.5deg); } 78% { transform: scale(.97,1.03) rotate(-.5deg); } }
     .blob-face { position: relative; display: grid; place-items: center; flex: none; }
+    .blob-gaze { display: grid; place-items: center; }
+    /* Off the moment the cursor is known: two things moving the same eyes is
+       how you get jitter. */
+    .blob-face.tracking .blob-gaze { animation: none !important; }
     .blob-lean { position: absolute; inset: 0; display: grid; place-items: center; transition: transform .55s cubic-bezier(.2,.9,.2,1); }
     .blob-pupils { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; transition: transform .32s cubic-bezier(.2,.9,.2,1); }
     /* The engine mark, demoted to a corner badge — small, but never guessed at. */
@@ -4271,31 +4301,94 @@
     // is deliberately unused — "finished and unopened" is exactly `reply`.
     const BLOB_SPEC = {
       idle:      { color: "var(--online)", w: 1, h: 1,
-                   anim: "bl-wobble 7s ease-in-out infinite, bl-float 5.2s ease-in-out infinite",
+                   anim: ["bl-wobble 7s ease-in-out infinite, bl-float 7s ease-in-out infinite", "bl-roll 8.5s ease-in-out infinite, bl-drift 11s ease-in-out infinite", "bl-breathe 5.6s ease-in-out infinite, bl-sway 9s ease-in-out infinite"],
                    eye: { w: 13, h: 40 }, gap: 24, eyeAnim: "bl-blink 5.4s ease-in-out infinite" },
-      working:   { color: "var(--text)", w: 1.02, h: .96, anim: "bl-churn 1.15s ease-in-out infinite",
+      working:   { color: "var(--text)", w: 1.02, h: .96, anim: ["bl-churn 1.15s ease-in-out infinite", "bl-throb 1.05s ease-in-out infinite", "bl-swell .95s ease-in-out infinite, bl-roll 2.4s ease-in-out infinite"],
                    eye: { w: 11, h: 30, altDelay: .28 }, gap: 22,
                    innerAnim: "bl-shift 1.1s ease-in-out infinite", eyeAnim: "bl-scan .56s ease-in-out infinite" },
       speaking:  { color: "var(--text)", w: 1.02, h: 1.02, radius: "52% 48% 48% 52% / 50% 50% 50% 50%",
-                   anim: "bl-pump .62s ease-in-out infinite", eye: { w: 12, h: 26, altDelay: .31 }, gap: 24,
+                   anim: ["bl-pump .62s ease-in-out infinite", "bl-swell .58s ease-in-out infinite", "bl-throb .66s ease-in-out infinite"], eye: { w: 12, h: 26, altDelay: .31 }, gap: 24,
                    eyeAnim: "bl-wave .62s ease-in-out infinite" },
-      thinking:  { color: "#a78bfa", w: 1.12, h: .84, anim: "bl-squat 4.5s ease-in-out infinite",
+      thinking:  { color: "#a78bfa", w: 1.12, h: .84, anim: ["bl-squat 4.5s ease-in-out infinite", "bl-roll 5.2s ease-in-out infinite", "bl-swell 4.8s ease-in-out infinite, bl-drift 9s ease-in-out infinite"],
                    eye: { w: 12, h: 28, rot: 16 }, gap: 22, bx: 6, by: -9 },
       asking:    { color: "var(--warn)", w: .92, h: 1.1, radius: "50% 50% 46% 54% / 56% 56% 44% 44%",
-                   anim: "bl-nod 2.4s cubic-bezier(.3,1.5,.4,1) infinite", eye: { w: 13, h: 48 }, gap: 24,
+                   anim: ["bl-nod 2.4s cubic-bezier(.3,1.5,.4,1) infinite", "bl-nod 2.9s cubic-bezier(.3,1.5,.4,1) infinite, bl-lilt 3.4s ease-in-out infinite", "bl-nod 2.1s cubic-bezier(.3,1.5,.4,1) infinite, bl-swell 2.6s ease-in-out infinite"], eye: { w: 13, h: 48 }, gap: 24,
                    ring: true, prop: "?" },
       waiting:   { color: "var(--link)", w: 1, h: 1, radius: "54% 46% 52% 48% / 48% 52% 48% 52%",
-                   anim: "bl-sway 4.4s ease-in-out infinite", eye: { w: 12, h: 32, rot: -12, mirror: false },
+                   anim: ["bl-sway 4.4s ease-in-out infinite", "bl-lilt 5.1s ease-in-out infinite", "bl-roll 4.8s ease-in-out infinite, bl-drift 7.5s ease-in-out infinite"], eye: { w: 12, h: 32, rot: -12, mirror: false },
                    gap: 22, innerAnim: "bl-dart 5.6s cubic-bezier(.6,0,.2,1) infinite" },
       reply:     { color: "var(--unread-bg)", w: 1, h: 1, radius: "50% 50% 52% 48% / 48% 52% 50% 50%",
-                   anim: "bl-hop 2.2s ease-in-out infinite", eye: { w: 40, chev: "up", thick: 9 }, gap: 16 },
+                   anim: ["bl-hop 2.2s ease-in-out infinite", "bl-hop 2.7s ease-in-out infinite, bl-roll 3.6s ease-in-out infinite", "bl-hop 1.9s ease-in-out infinite, bl-swell 2.4s ease-in-out infinite"], eye: { w: 40, chev: "up", thick: 9 }, gap: 16 },
       error:     { color: "var(--danger)", w: .86, h: .9, radius: "46% 54% 56% 44% / 44% 56% 44% 56%",
-                   anim: "bl-jitter .28s steps(2) infinite", eye: { w: 11, h: 26, rot: -26 }, gap: 18 },
-      launching: { color: "var(--text-dim)", w: 1, h: 1, anim: "bl-boot 1.4s ease-in-out infinite",
+                   anim: ["bl-jitter .28s steps(2) infinite", "bl-jitter .22s steps(2) infinite", "bl-jitter .34s steps(2) infinite, bl-throb 1.1s ease-in-out infinite"], eye: { w: 11, h: 26, rot: -26 }, gap: 18 },
+      launching: { color: "var(--text-dim)", w: 1, h: 1, anim: ["bl-boot 1.4s ease-in-out infinite", "bl-boot 1.7s ease-in-out infinite, bl-roll 3.2s ease-in-out infinite", "bl-boot 1.2s ease-in-out infinite"],
                    eye: { w: 12, h: 26 }, gap: 22, eyeAnim: "bl-boot 1.4s ease-in-out infinite", ghost: true },
       offline:   { color: "#3f3f46", w: 1, h: .78, radius: "50%", eye: { w: 34, h: 5 }, gap: 20,
                    dim: true, zzz: true },
     };
+    /**
+     * Silhouettes, from the study's own `bodyShape` list. The EXPRESSION is the
+     * state; the SHAPE is the agent — that is how one face carries both without
+     * either fighting the other. `dy` nudges the eyes toward the shape's visual
+     * centre of mass (a triangle reads wrong with eyes dead centre).
+     */
+    const BLOB_SHAPES = {
+      blob:     { dy: 0 },
+      circle:   { radius: "50%", dy: 0 },
+      squircle: { radius: "32%", dy: 0 },
+      capsule:  { radius: "999px", dy: 0 },
+      hexagon:  { clip: "polygon(25% 3%, 75% 3%, 100% 50%, 75% 97%, 25% 97%, 0% 50%)", dy: 0 },
+      triangle: { clip: "polygon(50% 2%, 98% 98%, 2% 98%)", dy: 0.14 },
+      diamond:  { clip: "polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)", dy: 0 },
+      shield:   { clip: "polygon(50% 0%, 100% 16%, 100% 62%, 50% 100%, 0% 62%, 0% 16%)", dy: -0.02 },
+      chip:     { clip: "polygon(18% 0%, 82% 0%, 100% 18%, 100% 82%, 82% 100%, 18% 100%, 0% 82%, 0% 18%)", dy: 0 },
+      teardrop: { radius: "50% 50% 50% 6%", dy: 0 },
+    };
+    const BLOB_SHAPE_NAMES = Object.keys(BLOB_SHAPES);
+    const BLOB_SHAPE_KEY = "sb.blobShape";
+
+    /** Operator-chosen shapes, by agent. A view preference, like the colours. */
+    const blobShapes = (() => {
+      try {
+        return new Map(Object.entries(JSON.parse(localStorage.getItem(BLOB_SHAPE_KEY) || "{}")));
+      } catch {
+        return new Map();
+      }
+    })();
+    function persistBlobShapes() {
+      try {
+        localStorage.setItem(BLOB_SHAPE_KEY, JSON.stringify(Object.fromEntries(blobShapes)));
+      } catch { /* private mode */ }
+    }
+    /**
+     * An agent's silhouette: whatever you picked, else one derived from the
+     * name — stable across restarts and independent of arrival order, exactly
+     * like the group colours.
+     */
+    function blobShapeOf(name) {
+      const chosen = blobShapes.get(name);
+      if (chosen && BLOB_SHAPES[chosen]) return chosen;
+      return BLOB_SHAPE_NAMES[blobHash(name) % BLOB_SHAPE_NAMES.length];
+    }
+
+    /** Stable string hash — the same seed every render, on every restart. */
+    function blobHash(str) {
+      let h = 0;
+      for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) >>> 0;
+      return h;
+    }
+
+    /**
+     * WHICH of a state's loops this agent uses. Seeded from name+state, never
+     * random: the rail repaints on every SSE event, and a fresh draw each time
+     * would restart the animation mid-cycle — a twitch on every message, on
+     * every card. Seeded, twenty agents in the same state still breathe out of
+     * step with each other, and each one keeps its own rhythm all day.
+     */
+    function blobVariantOf(name, stateKey) {
+      return blobHash(`${name}:${stateKey}`);
+    }
+
     const BLOB_LABEL = {
       idle: "up and waiting", working: "working", speaking: "writing", thinking: "thinking",
       asking: "waiting for you in the terminal", waiting: "waiting on background agents",
@@ -4365,11 +4458,23 @@
      * a 150px body, so everything scales by k — including the eye gap, which is
      * what keeps a 22px rail portrait from turning into one wide smudge.
      */
-    function blobFace(stateKey, size) {
+    function blobFace(stateKey, size, shapeName, variant = 0) {
       const sp = BLOB_SPEC[stateKey] || BLOB_SPEC.idle;
+      const anims = Array.isArray(sp.anim) ? sp.anim : sp.anim ? [sp.anim] : [];
+      const anim = anims.length ? anims[variant % anims.length] : null;
+      const sh = BLOB_SHAPES[shapeName] || BLOB_SHAPES.blob;
       const k = size / 150;
+      // Strokes thicken as the face shrinks. Scaled literally, a 13-unit eye is
+      // 1.9px on a 22px portrait — a hairline that reads as "no eyes" rather
+      // than as an expression (owner, 27/08: "traços muito finos"). At 150px
+      // nothing changes; below that the boost grows to ~1.8x.
+      const eyeK = k * (size >= 110 ? 1 : 1 + ((110 - size) / 110) * 0.9);
       const face = el("div", "blob-face");
       face.style.cssText += `width:${size}px;height:${size}px;`;
+      // --blk scales every pixel translation in the keyframes; --blg is the
+      // idle gaze amplitude, which keeps a floor so small faces still wander.
+      face.style.setProperty("--blk", k.toFixed(3));
+      face.style.setProperty("--blg", Math.max(0.85, 2.4 * k).toFixed(2));
       if (sp.ring) {
         const ring = el("div");
         ring.style.cssText =
@@ -4381,24 +4486,34 @@
       const body = el("div");
       const w = size * (sp.w || 1);
       const h = size * (sp.h || 1);
-      const radius = sp.radius || "52% 48% 46% 54% / 50% 54% 46% 50%";
+      // A clipped silhouette owns the outline, so its radius goes to zero.
+      const radius = sh.clip ? "0" : sh.radius || sp.radius || "52% 48% 46% 54% / 50% 54% 46% 50%";
       const fill = sp.ghost
         ? `background:color-mix(in srgb, ${sp.color} 40%, transparent);border:${Math.max(1, size / 70).toFixed(1)}px dashed ${sp.color}`
         : `background:${sp.color}`;
       body.style.cssText =
-        `position:relative;width:${w.toFixed(1)}px;height:${h.toFixed(1)}px;border-radius:${radius};${fill};` +
-        `transition:width .45s cubic-bezier(.34,1.3,.5,1),height .45s cubic-bezier(.34,1.3,.5,1),border-radius .45s ease,background .35s ease;` +
-        (sp.anim ? `animation:${sp.anim};` : "") + (sp.dim ? "opacity:.85;" : "");
+        `position:relative;width:${w.toFixed(1)}px;height:${h.toFixed(1)}px;border-radius:${radius};` +
+        (sh.clip ? `clip-path:${sh.clip};` : "") + `${fill};` +
+        `transition:width .45s cubic-bezier(.34,1.3,.5,1),height .45s cubic-bezier(.34,1.3,.5,1),border-radius .45s ease,background .35s ease,clip-path .45s ease;` +
+        (anim ? `animation:${anim};` : "") + (sp.dim ? "opacity:.85;" : "");
       const pupils = el("div", "blob-pupils");
+      // The gaze layer sits between tracking and the eye row: the tracker owns
+      // the pupils' transform, the wander owns this one, and neither overwrites
+      // the other.
+      const gaze = el("div", "blob-gaze");
+      gaze.style.animation = `bl-gaze ${(6.5 + (variant % 5) * 0.9).toFixed(1)}s ease-in-out infinite`;
       const inner = el("div");
       inner.style.cssText =
         `display:flex;align-items:center;gap:${Math.max(1, (sp.gap || 26) * k).toFixed(1)}px;` +
         (sp.innerAnim ? `animation:${sp.innerAnim};` : "");
-      inner.append(blobEye(sp, k, "l"), blobEye(sp, k, "r"));
-      pupils.appendChild(inner);
-      if (sp.bx || sp.by) {
-        pupils.style.transform = `translate(${((sp.bx || 0) * k).toFixed(2)}px, ${((sp.by || 0) * k).toFixed(2)}px)`;
-      }
+      inner.append(blobEye(sp, eyeK, "l"), blobEye(sp, eyeK, "r"));
+      gaze.appendChild(inner);
+      pupils.appendChild(gaze);
+      const baseX = (sp.bx || 0) * k;
+      const baseY = (sp.by || 0) * k + sh.dy * size;
+      pupils.dataset.bx = String(baseX);
+      pupils.dataset.by = String(baseY);
+      if (baseX || baseY) pupils.style.transform = `translate(${baseX.toFixed(2)}px, ${baseY.toFixed(2)}px)`;
       body.appendChild(pupils);
       lean.appendChild(body);
       face.appendChild(lean);
@@ -4414,8 +4529,71 @@
       }
       const zzz = blobZzz(sp, k);
       if (zzz) face.appendChild(zzz);
+      blobFaces.add(face);
       return face;
     }
+
+    /**
+     * Every live face, so the pointer tracker can reach them. A WeakSet is not
+     * enough (it cannot be iterated) and a plain Set would pin removed cards in
+     * memory, so entries are dropped when they leave the document.
+     */
+    const blobFaces = new Set();
+
+    /**
+     * The eyes follow the pointer, and the whole body leans a little after
+     * them. One rAF per pointer burst, not one per mousemove — with twenty
+     * faces on the rail, measuring on every event is how a dashboard starts
+     * dropping frames. Rects are read once per frame and only for faces that
+     * are actually on screen.
+     */
+    const blobGaze = { x: null, y: null, queued: false };
+    function applyBlobGaze() {
+      blobGaze.queued = false;
+      const vw = window.innerWidth, vh = window.innerHeight;
+      for (const face of blobFaces) {
+        if (!face.isConnected) { blobFaces.delete(face); continue; }
+        const pupils = face.querySelector(".blob-pupils");
+        const lean = face.querySelector(".blob-lean");
+        if (!pupils) continue;
+        const bx = parseFloat(pupils.dataset.bx || "0") || 0;
+        const by = parseFloat(pupils.dataset.by || "0") || 0;
+        if (blobGaze.x === null) {
+          face.classList.remove("tracking");
+          pupils.style.transform = bx || by ? `translate(${bx}px, ${by}px)` : "";
+          if (lean) lean.style.transform = "";
+          continue;
+        }
+        const r = face.getBoundingClientRect();
+        if (r.bottom < -80 || r.top > vh + 80 || r.right < -80 || r.left > vw + 80) continue;
+        const dx = blobGaze.x - (r.left + r.width / 2);
+        const dy = blobGaze.y - (r.top + r.height / 2);
+        const d = Math.hypot(dx, dy) || 1;
+        // Reach: the further the pointer, the less the eyes commit — a face on
+        // the far side of the screen glances, it does not stare.
+        const reach = Math.min(1, d / 420);
+        const max = Math.max(1.2, r.width * 0.1) * reach;
+        const tx = (dx / d) * max, ty = (dy / d) * max;
+        face.classList.add("tracking");
+        pupils.style.transform = `translate(${(bx + tx).toFixed(2)}px, ${(by + ty).toFixed(2)}px)`;
+        if (lean) lean.style.transform = `translate(${(tx * 0.35).toFixed(2)}px, ${(ty * 0.35).toFixed(2)}px)`;
+      }
+    }
+    function queueBlobGaze() {
+      if (blobGaze.queued) return;
+      blobGaze.queued = true;
+      requestAnimationFrame(applyBlobGaze);
+    }
+    document.addEventListener(
+      "mousemove",
+      (ev) => { blobGaze.x = ev.clientX; blobGaze.y = ev.clientY; queueBlobGaze(); },
+      { passive: true },
+    );
+    // Pointer gone (left the window, touch device): the faces go back to
+    // wandering on their own rather than freezing mid-glance.
+    document.addEventListener("mouseleave", () => { blobGaze.x = null; blobGaze.y = null; queueBlobGaze(); });
+    window.addEventListener("blur", () => { blobGaze.x = null; blobGaze.y = null; queueBlobGaze(); });
+    window.addEventListener("scroll", queueBlobGaze, { passive: true });
 
     function agentTypeOf(agent) {
       return agent && agent.agentType === "codex" ? "codex" : "claude";
@@ -5043,7 +5221,9 @@
       const blobState = blobStateOf(agent);
       const portrait = el("span", "agent-portrait blob");
       portrait.title = `${AGENT_TYPE_TITLES[type]} · ${BLOB_LABEL[blobState] || blobState}`;
-      portrait.appendChild(blobFace(blobState, 22));
+      portrait.appendChild(
+        blobFace(blobState, 22, blobShapeOf(agent.name), blobVariantOf(agent.name, blobState)),
+      );
       const badge = el("span", "blob-engine");
       badge.appendChild(agentLogo(type));
       portrait.appendChild(badge);
@@ -5144,7 +5324,7 @@
         "colour-reset-btn": "⭕", "mute-toggle": "🔇", "rename-btn": "✏️", "remove-btn": "🗑",
         "autostart-btn": "⏻", "bootcmd-btn": "🛠", "cliargs-btn": "⚙",
         "display-btn": "🏷", "leader-btn": "👑", "stop-btn": "⏹", "desc-btn": "📄",
-        "folder-btn": "📂", "fresh-btn": "✨",
+        "folder-btn": "📂", "fresh-btn": "✨", "shape-btn": "⬡",
       };
       function menuItem(cls, label, title, onClick) {
         const item = el("button", `agent-menu-item ${cls}`);
@@ -5186,6 +5366,26 @@
           ),
         );
       }
+      // The agent's silhouette. Cycles through the shapes on click: with ten of
+      // them, a submenu would be a lot of chrome for a choice you make once and
+      // recognise by eye anyway.
+      menu.appendChild(
+        menuItem(
+          "shape-btn",
+          `shape · ${blobShapeOf(agent.name)}`,
+          "Change this agent's silhouette — the face's EXPRESSION stays the state, " +
+            "the shape is how you tell agents apart at a glance",
+          (item) => {
+            const cur = blobShapeOf(agent.name);
+            const next = BLOB_SHAPE_NAMES[(BLOB_SHAPE_NAMES.indexOf(cur) + 1) % BLOB_SHAPE_NAMES.length];
+            blobShapes.set(agent.name, next);
+            persistBlobShapes();
+            const label = item.querySelector("span:last-child");
+            if (label) label.textContent = `shape · ${next}`;
+            renderAgents(); // the rail repaints with the new silhouette
+          },
+        ),
+      );
       // Start over: same agent, blank conversation. Confirms first — see
       // reopenAgent's note on what stops being one click away.
       menu.appendChild(

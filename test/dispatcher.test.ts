@@ -1137,7 +1137,7 @@ describe("speaking vs thinking: the counter has to MOVE", () => {
   // The CLI draws the same spinner whether it is writing text or running a
   // tool, so no single frame tells them apart. The output-token counter does —
   // but only when compared with the previous sweep.
-  const spinner = (t) => `\u00b7 Transfiguring\u2026 (30m \u00b7 \u2193 ${t} tokens)`;
+  const spinner = (t: string) => `\u00b7 Transfiguring\u2026 (30m \u00b7 \u2193 ${t} tokens)`;
   const footer = "  \u23f5\u23f5 bypass permissions on (shift+tab to cycle) \u00b7 esc to interrupt";
 
   it("parseTokenCount reads the units the CLI actually prints", async () => {
