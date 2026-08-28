@@ -595,8 +595,8 @@
     @keyframes bl-lilt { 0%,100% { transform: rotate(-2.4deg) translateY(0) scale(1,1); } 50% { transform: rotate(2.4deg) translateY(calc(-1.5px * var(--blk,1))) scale(1.01,.995); } }
     @keyframes bl-drift { 0%,100% { translate: calc(-2px * var(--blk,1)) calc(1.5px * var(--blk,1)); } 33% { translate: calc(2.5px * var(--blk,1)) calc(-2px * var(--blk,1)); } 66% { translate: calc(1px * var(--blk,1)) calc(2.5px * var(--blk,1)); } }
     @keyframes bl-throb { 0%,100% { transform: scale(1,1) rotate(-1deg); } 45% { transform: scale(1.06,.94) rotate(1.5deg); } 78% { transform: scale(.97,1.03) rotate(-.5deg); } }
-    .blob-face { position: relative; display: grid; place-items: center; flex: none; perspective: 260px; }
-    .blob-quirk { display: grid; place-items: center; transform-style: preserve-3d; }
+    .blob-face { position: relative; display: grid; place-items: center; flex: none; }
+    .blob-quirk { display: grid; place-items: center; }
     @keyframes bl-quirk-hop {
       0%, 100% { transform: translateY(0) scale(1,1); }
       18% { transform: translateY(0) scale(1.08,.92); }
@@ -604,8 +604,45 @@
       72% { transform: translateY(0) scale(1.06,.94); }
       88% { transform: translateY(0) scale(.98,1.02); }
     }
-    @keyframes bl-quirk-spiny { 0% { transform: rotateY(0deg); } 100% { transform: rotateY(360deg); } }
-    @keyframes bl-quirk-spinx { 0% { transform: rotateX(0deg); } 100% { transform: rotateX(360deg); } }
+    /* TURNING AROUND, and the eyes are what turn.
+       rotateY() on the wrapper span a flat card: the whole face went edge-on
+       and vanished, which is not a creature turning — it is a sheet of paper
+       (owner, 28/08: "ele é uma elipse e não um círculo chapado"). A blob is a
+       VOLUME, and what says where it faces is where its eyes sit on it. So the
+       eyes travel the surface: out to the rim, foreshortened to a sliver as
+       they reach it, gone while they are round the back, and in again from the
+       other side. Linear on purpose — a real rotation has constant angular
+       speed, and easing it reads as a wobble.
+       The body keeps its silhouette (a rotating ellipsoid barely changes
+       outline) and only breathes a little across the axis, which is the cue
+       that there is depth there at all. */
+    @keyframes bl-spin-y {
+      0%     { transform: translateX(0) scaleX(1); opacity: 1; }
+      12.5%  { transform: translateX(calc(.71 * var(--blr,10px))) scaleX(.71); opacity: 1; }
+      24.9%  { transform: translateX(var(--blr,10px)) scaleX(.06); opacity: 1; }
+      25.1%  { transform: translateX(var(--blr,10px)) scaleX(.06); opacity: 0; }
+      50%    { transform: translateX(0) scaleX(1); opacity: 0; }
+      74.9%  { transform: translateX(calc(-1 * var(--blr,10px))) scaleX(.06); opacity: 0; }
+      75.1%  { transform: translateX(calc(-1 * var(--blr,10px))) scaleX(.06); opacity: 1; }
+      87.5%  { transform: translateX(calc(-.71 * var(--blr,10px))) scaleX(.71); opacity: 1; }
+      100%   { transform: translateX(0) scaleX(1); opacity: 1; }
+    }
+    @keyframes bl-spin-x {
+      0%     { transform: translateY(0) scaleY(1); opacity: 1; }
+      12.5%  { transform: translateY(calc(-.71 * var(--blr,10px))) scaleY(.71); opacity: 1; }
+      24.9%  { transform: translateY(calc(-1 * var(--blr,10px))) scaleY(.06); opacity: 1; }
+      25.1%  { transform: translateY(calc(-1 * var(--blr,10px))) scaleY(.06); opacity: 0; }
+      50%    { transform: translateY(0) scaleY(1); opacity: 0; }
+      74.9%  { transform: translateY(var(--blr,10px)) scaleY(.06); opacity: 0; }
+      75.1%  { transform: translateY(var(--blr,10px)) scaleY(.06); opacity: 1; }
+      87.5%  { transform: translateY(calc(.71 * var(--blr,10px))) scaleY(.71); opacity: 1; }
+      100%   { transform: translateY(0) scaleY(1); opacity: 1; }
+    }
+    /* The body's share of the turn: a shallow squeeze across the spin axis,
+       twice per revolution — enough to read as volume, not as a wobble. */
+    @keyframes bl-body-spin-y { 0%,50%,100% { transform: scaleX(1); } 25%,75% { transform: scaleX(.93); } }
+    @keyframes bl-body-spin-x { 0%,50%,100% { transform: scaleY(1); } 25%,75% { transform: scaleY(.93); } }
+    .blob-spin { display: grid; place-items: center; }
     .blob-gaze { display: grid; place-items: center; }
     /* Off the moment the cursor is known: two things moving the same eyes is
        how you get jitter. */
@@ -4547,11 +4584,13 @@
       // The gaze layer sits between tracking and the eye row: the tracker owns
       // the pupils' transform, the wander owns this one, and neither overwrites
       // the other.
+      const spin = el("div", "blob-spin");
       const gaze = el("div", "blob-gaze");
       const inner = el("div", "blob-eyes");
       inner.append(el("div"), el("div"));
       gaze.appendChild(inner);
-      pupils.appendChild(gaze);
+      spin.appendChild(gaze);
+      pupils.appendChild(spin);
       skin.append(body, pupils);
       quirk.appendChild(skin);
       lean.appendChild(quirk);
@@ -4584,6 +4623,9 @@
 
       face.style.setProperty("--blk", k.toFixed(3));
       face.style.setProperty("--blg", Math.max(0.85, 2.4 * k).toFixed(2));
+      // How far an eye rides before it reaches the rim — a third of the face,
+      // which is where a sphere's surface turns away from you.
+      face.style.setProperty("--blr", `${(size * 0.34).toFixed(2)}px`);
 
       const ring = face.querySelector(".blob-ring");
       if (sp.ring) {
@@ -4782,9 +4824,12 @@
      * lean instead of fighting them for the transform.
      */
     const BLOB_QUIRKS = [
-      { anim: "bl-quirk-hop", dur: 900 },
-      { anim: "bl-quirk-spiny", dur: 1400 },
-      { anim: "bl-quirk-spinx", dur: 1400 },
+      { body: "bl-quirk-hop", dur: 900, ease: "cubic-bezier(.34,1.15,.4,1)" },
+      // A turn is two animations in step: the eyes travel the surface, the body
+      // squeezes across the axis. Linear — angular speed is constant in a real
+      // rotation, and easing it reads as a wobble instead of a spin.
+      { body: "bl-body-spin-y", eyes: "bl-spin-y", dur: 1500, ease: "linear" },
+      { body: "bl-body-spin-x", eyes: "bl-spin-x", dur: 1500, ease: "linear" },
     ];
     let lastQuirked = null;
     function playBlobQuirk() {
@@ -4796,19 +4841,29 @@
         if (node.dataset.blobState !== "idle") continue;
         if (name === lastQuirked) continue;
         const layer = node.querySelector(".blob-quirk");
-        if (layer && !layer.style.animationName) candidates.push([name, layer]);
+        const spin = node.querySelector(".blob-spin");
+        if (layer && !layer.style.animationName) candidates.push([name, layer, spin]);
       }
       if (!candidates.length) return;
-      const [name, layer] = candidates[Math.floor(Math.random() * candidates.length)];
+      const [name, layer, spin] = candidates[Math.floor(Math.random() * candidates.length)];
       const q = BLOB_QUIRKS[Math.floor(Math.random() * BLOB_QUIRKS.length)];
       lastQuirked = name;
-      layer.style.animation = `${q.anim} ${(q.dur / 1000).toFixed(2)}s cubic-bezier(.34,1.15,.4,1)`;
+      const secs = (q.dur / 1000).toFixed(2);
+      layer.style.animation = `${q.body} ${secs}s ${q.ease}`;
       layer.addEventListener("animationend", () => { layer.style.animation = ""; }, { once: true });
+      if (q.eyes && spin) {
+        spin.style.animation = `${q.eyes} ${secs}s ${q.ease}`;
+        spin.addEventListener("animationend", () => { spin.style.animation = ""; }, { once: true });
+      }
     }
-    // Sparse on purpose: one gesture every 14–34s across the whole rail, so it
-    // reads as "something moved over there", not as decoration.
+    // Cadence, and this is the number that decides whether the feature exists
+    // at all: at one gesture every 14–34s across a rail of ten idle agents,
+    // any GIVEN face moved about once every four minutes — the effect was
+    // real, ran, and was invisible. Every 5–13s, a face you happen to be
+    // looking at moves within a minute, and the rail still spends most of its
+    // time still.
     (function scheduleQuirk() {
-      setTimeout(() => { playBlobQuirk(); scheduleQuirk(); }, 14000 + Math.random() * 20000);
+      setTimeout(() => { playBlobQuirk(); scheduleQuirk(); }, 5000 + Math.random() * 8000);
     })();
 
     function agentTypeOf(agent) {
@@ -5598,7 +5653,16 @@
             persistBlobShapes();
             const label = item.querySelector("span:last-child");
             if (label) label.textContent = `shape · ${next}`;
-            renderAgents(); // the rail repaints with the new silhouette
+            // NOT renderAgents(): it refuses to run while a menu is open (a
+            // rebuild would close the menu in your face), so calling it here
+            // did nothing at all — you clicked and the shape never changed.
+            // Repaint just this face, which is the only thing that changed,
+            // and the menu stays open so you can keep cycling.
+            const entry = blobNodes.get(agent.name);
+            if (entry) {
+              const st = entry.node.dataset.blobState || "idle";
+              paintBlobFace(entry.node, st, entry.size, next, blobVariantOf(agent.name, st));
+            }
           },
         ),
       );
