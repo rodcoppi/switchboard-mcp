@@ -15,6 +15,15 @@ export type AgentStatus = "online" | "offline";
 export type AgentActivity = "working" | "idle";
 
 /**
+ * WHAT a working agent is doing right now: producing text, or running a tool /
+ * reasoning. No single frame says which — the CLI draws the same spinner for
+ * both — so it comes from the output-token counter MOVING between two polls.
+ * Ephemeral like activity, and null whenever the frame gives no counter to
+ * compare (never guessed).
+ */
+export type AgentPhase = "speaking" | "thinking";
+
+/**
  * The CLI's current permission mode, read from the TUI footer
  * ("⏵⏵ bypass permissions on (shift+tab to cycle)"). "plan" is Claude Code's
  * plan mode. null when the footer could not be read. Ephemeral, like activity.
@@ -60,6 +69,8 @@ export interface Agent {
    */
   autostart?: boolean;
   activity?: AgentActivity; // idle vs working, derived from the live pane (ephemeral)
+  /** speaking vs thinking while working — see AgentPhase (ephemeral). */
+  phase?: AgentPhase;
   /**
    * The TUI's "Waiting for N background agents to finish" line, verbatim,
    * while it shows — the turn LOOKS over ("esc to interrupt" is gone) but the
