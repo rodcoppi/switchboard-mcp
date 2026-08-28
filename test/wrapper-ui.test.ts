@@ -942,8 +942,8 @@ describe("blob faces: shape is the agent, expression is the state", () => {
       // Drop every calc() that scales off one of the face variables; whatever
       // pixels are left are literal ones.
       const scrubbed = body
-        .replace(/calc\([^()]*var\(--bl[kg][^()]*\)[^()]*\)/g, "")
-        .replace(/var\(--bl[kg][^()]*\)/g, "");
+        .replace(/calc\([^()]*var\(--bl[kgr][^()]*\)[^()]*\)/g, "")
+        .replace(/var\(--bl[kgr][^()]*\)/g, "");
       expect(scrubbed, `${name} translates by a literal pixel`).not.toMatch(/[\d.]px/);
     }
   });
@@ -993,7 +993,9 @@ describe("faces survive the rail's rebuild", () => {
     animateSynced(b, "bl-zzz 3.4s ease-out infinite", [1.1]);
     const da = parseFloat(a.style.animationDelay);
     const db = parseFloat(b.style.animationDelay);
-    expect(db - da).toBeCloseTo(1.1, 2); // same phase shift the study had
+    // Each call reads its own performance.now(), so under load the two clocks
+    // differ by a few milliseconds — assert the SHIFT, not the clock.
+    expect(db - da).toBeCloseTo(1.1, 1); // same phase shift the study had
   });
 
   it("the eyes are never inside the clipped shape", () => {
@@ -1038,10 +1040,14 @@ describe("the sign of life", () => {
     expect(src).toContain("!layer.style.animationName");
   });
 
-  it("is sparse: one gesture every 14–34s across the whole rail", () => {
+  it("fires often enough to be seen, rarely enough to stay quiet", () => {
+    // At 14–34s across ten idle agents, a given face moved once every four
+    // minutes: real, running, invisible.
     const sched = script.match(/function scheduleQuirk[\s\S]*?\n    \}\)\(\);/)?.[0] ?? "";
-    expect(sched).toContain("14000");
-    expect(sched).toMatch(/Math\.random\(\) \* 20000/);
+    const base = Number(/setTimeout\([\s\S]*?, (\d+) \+/.exec(sched)?.[1]);
+    const spread = Number(/Math\.random\(\) \* (\d+)/.exec(sched)?.[1]);
+    expect(base).toBeGreaterThanOrEqual(4000);
+    expect(base + spread).toBeLessThanOrEqual(15000);
   });
 
   it("rides its own layer, so it never fights the state loop for the transform", () => {
@@ -1078,5 +1084,150 @@ describe("repainting a face must not kill its animations", () => {
     // 0.42 of the original scale put a 17px "Z" on a 22px portrait — taller
     // than the face, and sitting on the agent's name.
     expect(src).toContain("Math.max(k, 0.22)");
+  });
+});
+
+
+describe("the sign of life actually fires", () => {
+  // Structure tests passed while the owner still saw nothing, so this one runs
+  // the function against a fake DOM and checks that an animation lands.
+  function runQuirk(nodes: Array<{ name: string; state: string }>, hidden = false) {
+    const src = script.match(/const BLOB_QUIRKS = \[[\s\S]*?\n    \}\)\(\);/)?.[0];
+    if (!src) throw new Error("the quirk block was not found in the page");
+    const layers = new Map<string, { style: Record<string, string>; addEventListener: () => void }>();
+    const spins = new Map<string, { style: Record<string, string>; addEventListener: () => void }>();
+    const entries = nodes.map(({ name, state }) => {
+      const layer = { style: {} as Record<string, string>, addEventListener: () => {} };
+      const spin = { style: {} as Record<string, string>, addEventListener: () => {} };
+      layers.set(name, layer);
+      spins.set(name, spin);
+      return [
+        name,
+        {
+          node: {
+            isConnected: true,
+            dataset: { blobState: state },
+            querySelector: (sel: string) => (sel === ".blob-spin" ? spin : layer),
+          },
+        },
+      ];
+    });
+    const fn = new Function(
+      "entries",
+      "hidden",
+      `const document = { hidden };
+       const blobNodes = new Map(entries);
+       const setTimeout = () => 0;   // the scheduler must not actually loop here
+       ${src}
+       playBlobQuirk();
+       return null;`,
+    );
+    fn(entries, hidden);
+    return { layers, spins };
+  }
+
+  it("animates exactly one idle face", () => {
+    const { layers } = runQuirk([
+      { name: "a", state: "idle" },
+      { name: "b", state: "idle" },
+      { name: "c", state: "idle" },
+    ]);
+    const animated = [...layers.values()].filter((l) => l.style.animation);
+    expect(animated).toHaveLength(1);
+    expect(animated[0].style.animation).toMatch(/bl-(quirk-hop|body-spin-[xy])/);
+  });
+
+  it("leaves working, asking and offline faces alone", () => {
+    const { layers } = runQuirk([
+      { name: "a", state: "working" },
+      { name: "b", state: "offline" },
+      { name: "c", state: "asking" },
+    ]);
+    expect([...layers.values()].filter((l) => l.style.animation)).toHaveLength(0);
+  });
+
+  it("does nothing while the tab is hidden", () => {
+    const { layers } = runQuirk([{ name: "a", state: "idle" }], true);
+    expect([...layers.values()].filter((l) => l.style.animation)).toHaveLength(0);
+  });
+
+  it("all three gestures are reachable", () => {
+    const seen = new Set<string>();
+    for (let i = 0; i < 60; i++) {
+      const { layers } = runQuirk([{ name: `a${i}`, state: "idle" }]);
+      const anim = [...layers.values()][0].style.animation || "";
+      const m = /bl-(?:quirk-hop|body-spin-([xy]))/.exec(anim);
+      if (m) seen.add(m[1] || "hop");
+    }
+    expect([...seen].sort()).toEqual(["hop", "x", "y"]); // all three, over 60 draws
+  });
+});
+
+
+describe("a turn reads as a volume, not as a flipping card", () => {
+  // rotateY() on the wrapper spun a flat sheet: the whole face went edge-on and
+  // vanished. A blob is a VOLUME, and what says where it faces is where its
+  // eyes sit on it — so the eyes travel the surface and the body keeps its
+  // outline (owner, 28/08: "ele é uma elipse e não um círculo chapado").
+  const spinY = styles.match(/@keyframes bl-spin-y\s*\{((?:[^{}]|\{[^{}]*\})*)\}/)?.[1] ?? "";
+
+  it("the eyes ride out to the rim and foreshorten to a sliver", () => {
+    expect(spinY).toMatch(/translateX\(var\(--blr/);      // all the way out
+    expect(spinY).toMatch(/scaleX\(\.06\)/);              // edge-on
+    expect(spinY).toMatch(/scaleX\(\.71\)/);              // halfway, in perspective
+  });
+
+  it("they disappear while they are round the back, and return from the far side", () => {
+    expect(spinY).toMatch(/opacity: 0/);
+    // Hidden across the middle of the cycle, visible at both ends.
+    expect(spinY).toMatch(/0%\s*\{[^}]*opacity: 1/);
+    expect(spinY).toMatch(/100%\s*\{[^}]*opacity: 1/);
+    expect(spinY).toMatch(/50%\s*\{[^}]*opacity: 0/);
+  });
+
+  it("nothing rotates a flat card any more", () => {
+    expect(styles).not.toMatch(/rotateY\(360deg\)/);
+    expect(styles).not.toMatch(/rotateX\(360deg\)/);
+  });
+
+  it("the body only breathes across the axis — it keeps its silhouette", () => {
+    const bodyY = styles.match(/@keyframes bl-body-spin-y\s*\{((?:[^{}]|\{[^{}]*\})*)\}/)?.[1] ?? "";
+    expect(bodyY).toMatch(/scaleX\(\.93\)/);
+    expect(bodyY).not.toMatch(/rotate/);
+  });
+
+  it("a spin is linear: constant angular speed, or it reads as a wobble", () => {
+    const quirks = script.match(/const BLOB_QUIRKS = \[[\s\S]*?\];/)?.[0] ?? "";
+    expect(quirks).toMatch(/bl-spin-y[\s\S]*?ease: "linear"/);
+    expect(quirks).toMatch(/bl-spin-x[\s\S]*?ease: "linear"/);
+  });
+});
+
+describe("the shape switcher actually switches", () => {
+  // It called renderAgents(), which REFUSES to run while a menu is open (a
+  // rebuild would close the menu in your face) — so the click stored the new
+  // shape and nothing on screen ever changed (owner, 28/08).
+  const src = (() => {
+    const at = script.indexOf('"shape-btn",');
+    if (at === -1) throw new Error("the shape menu item was not found in the page");
+    return script.slice(at, script.indexOf("// Start over: same agent", at));
+  })();
+
+  it("repaints the face directly instead of asking for a rail rebuild", () => {
+    // Comments stripped: the code explains WHY it does not call renderAgents,
+    // and that sentence would otherwise fail the check it is documenting.
+    const code = src.replace(/^\s*\/\/.*$/gm, "");
+    expect(code).toContain("paintBlobFace(");
+    expect(code).not.toMatch(/renderAgents\(\)/);
+  });
+
+  it("keeps the menu open, so shapes can be cycled one click after another", () => {
+    expect(src).not.toContain("closeMenus()");
+    expect(src).toContain("shape · ${next}"); // the label follows along
+  });
+
+  it("stores the choice so it survives a reload", () => {
+    expect(src).toContain("blobShapes.set(agent.name, next)");
+    expect(src).toContain("persistBlobShapes()");
   });
 });
