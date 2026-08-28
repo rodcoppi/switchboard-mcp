@@ -6715,7 +6715,7 @@
     }
 
     function mountTerminal(name) {
-      setScreenHint("live — type here to drive it", false);
+      setScreenHint("live — type here to drive it · wheel pages the conversation (shift+wheel = raw)", false);
       const term = new Terminal({
         convertEol: false,
         cursorBlink: true,
@@ -6752,6 +6752,35 @@
       // base64 and reach tmux as those same bytes.
       term.onData((data) => sendScreenInput(name, data));
 
+      // THE WHEEL SCROLLS THE CONVERSATION.
+      //
+      // The pane has no scrollback of its own (alternate screen), so the only
+      // thing that CAN scroll is the CLI's own buffer — and while the app has
+      // mouse reporting on, xterm forwards the wheel to it as mouse events and
+      // the app decides what they mean. That used to be "scroll the
+      // transcript"; a Claude Code build then started spending them on its
+      // background-agents panel, and the wheel stopped scrolling anything the
+      // operator was looking for (28/08). Rather than depend on that reading,
+      // the wheel now sends PageUp/PageDown — the keys verified to page the
+      // transcript — and SHIFT+wheel passes the raw event through for whatever
+      // the TUI wants to do with it.
+      const termEl = $("#screen-term");
+      let lastWheel = 0;
+      termEl.addEventListener(
+        "wheel",
+        (ev) => {
+          if (ev.shiftKey) return; // hand it to the app untouched
+          ev.preventDefault();
+          // One page per notch is already a lot, and a trackpad emits a stream
+          // of small deltas — rate-limit to something a human can follow.
+          const now = performance.now();
+          if (now - lastWheel < 90) return;
+          lastWheel = now;
+          sendScreenInput(name, ev.deltaY < 0 ? "\x1b[5~" : "\x1b[6~");
+        },
+        { passive: false },
+      );
+
       // Panel resizes → refit locally, then tell the server. ResizeObserver
       // instead of window "resize": the panel changes when the rail toggles,
       // not only when the window does.
@@ -6780,7 +6809,7 @@
           if (term.cols !== parsed.cols || term.rows !== parsed.rows) {
             term.resize(parsed.cols, parsed.rows);
           }
-          setScreenHint("live — type here to drive it", false);
+          setScreenHint("live — type here to drive it · wheel pages the conversation (shift+wheel = raw)", false);
           return;
         }
         // atob → bytes → xterm. The stream is raw terminal output, so it is

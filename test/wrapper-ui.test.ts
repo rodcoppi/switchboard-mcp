@@ -1231,3 +1231,32 @@ describe("the shape switcher actually switches", () => {
     expect(src).toContain("persistBlobShapes()");
   });
 });
+
+describe("the terminal's wheel", () => {
+  // The pane has no scrollback (alternate screen), so only the CLI's own
+  // buffer can scroll. While the app has mouse reporting on, xterm forwards
+  // the wheel to it and the app decides what it means — which stopped being
+  // "scroll the transcript" when a build started spending those events on its
+  // background-agents panel (owner, 28/08: "roda entre os subagentes").
+  const src = script.match(/termEl\.addEventListener\([\s\S]*?\{ passive: false \},\s*\);/)?.[0] ?? "";
+
+  it("sends PageUp / PageDown, the keys that page the transcript", () => {
+    expect(src).toContain("\\x1b[5~"); // PageUp, scrolling back
+    expect(src).toContain("\\x1b[6~"); // PageDown
+    expect(src).toContain("ev.deltaY < 0");
+  });
+
+  it("shift+wheel still hands the raw event to the app", () => {
+    expect(src).toMatch(/if \(ev\.shiftKey\) return;/);
+  });
+
+  it("cannot be swallowed by the passive default", () => {
+    // preventDefault only works on a non-passive listener.
+    expect(src).toContain("{ passive: false }");
+    expect(src).toContain("ev.preventDefault()");
+  });
+
+  it("rate-limits, so a trackpad does not page ten screens at once", () => {
+    expect(src).toMatch(/now - lastWheel < \d+/);
+  });
+});
