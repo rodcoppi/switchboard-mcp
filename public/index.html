@@ -4361,14 +4361,16 @@
       } catch { /* private mode */ }
     }
     /**
-     * An agent's silhouette: whatever you picked, else one derived from the
-     * name — stable across restarts and independent of arrival order, exactly
-     * like the group colours.
+     * An agent's silhouette: whatever you picked for it, else the blob every
+     * face starts as.
+     *
+     * It briefly defaulted to a shape hashed off the name, which nobody asked
+     * for — a rail where every agent looks different by accident is noise, not
+     * information. A shape means something only when someone chose it.
      */
     function blobShapeOf(name) {
       const chosen = blobShapes.get(name);
-      if (chosen && BLOB_SHAPES[chosen]) return chosen;
-      return BLOB_SHAPE_NAMES[blobHash(name) % BLOB_SHAPE_NAMES.length];
+      return chosen && BLOB_SHAPES[chosen] ? chosen : "blob";
     }
 
     /** Stable string hash — the same seed every render, on every restart. */
