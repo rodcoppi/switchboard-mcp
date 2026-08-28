@@ -82,6 +82,18 @@ export interface DispatcherTmux {
   sendKeysHex?(session: string, bytes: Buffer): Promise<void>;
 }
 
+/** One row of the CLI's background-agents panel. */
+export interface SubagentLine {
+  /** The agent type it was spawned as ("general-purpose", "Explore"…). */
+  type: string;
+  /** What it is doing, in the CLI's own words. */
+  task: string;
+  /** How long it has been at it ("5m 8s"). */
+  elapsed: string;
+  /** Output tokens so far, verbatim ("244.5k") — null when the row omits it. */
+  tokens: string | null;
+}
+
 export interface PaneStatus {
   working: boolean;
   /**
@@ -134,6 +146,13 @@ export interface PaneStatus {
    * "running a tool / thinking", which no single frame reveals.
    */
   outputTokens: number | null;
+  /**
+   * The background agents this one has running, read off the CLI's own panel.
+   * The transcript says nothing about them until they FINISH, so the pane is
+   * the only place a running subagent exists — and "waiting for 2 background
+   * agents" without naming them is the frustrating half of that fact.
+   */
+  subagents: SubagentLine[];
   permission: AgentPermission | null;
   goalActive: boolean;
   goalFor: string | null; // "21m" from "/goal active (21m)", or null
@@ -195,6 +214,29 @@ export function parseTokenCount(pane: string): number | null {
   if (!Number.isFinite(n)) return null;
   const unit = (m[2] || "").toLowerCase();
   return Math.round(n * (unit === "m" ? 1_000_000 : unit === "k" ? 1_000 : 1));
+}
+
+/**
+ * The background-agents panel, as the CLI draws it:
+ *
+ *     ● main
+ *   ❯ ◯ general-purpose  Running test-dedup.js with new rule   5m 8s · ↓ 244.5k tokens
+ *     ◯ general-purpose  Counting sales per store               5m 3s · ↓ 123.4k tokens
+ *
+ * Only the ◯ rows are subagents; ● is the main turn. Columns are separated by
+ * runs of spaces, which is what lets the task text keep its own single spaces.
+ * Exported for direct unit testing.
+ */
+export function parseSubagents(pane: string): SubagentLine[] {
+  const out: SubagentLine[] = [];
+  for (const raw of pane.split("\n")) {
+    const line = stripAnsi(raw);
+    const m = /^\s*[❯>]?\s*[◯○]\s+(\S+)\s{2,}(\S.*?)\s{2,}(\d+(?:m\s*\d+)?s)(?:\s*·\s*↓\s*([\d.]+[km]?)\s*tokens)?\s*$/i.exec(line);
+    if (!m) continue;
+    out.push({ type: m[1], task: m[2].trim(), elapsed: m[3].replace(/\s+/g, " "), tokens: m[4] ?? null });
+    if (out.length >= 8) break; // a panel this long is already unreadable
+  }
+  return out;
 }
 
 /**
@@ -285,6 +327,7 @@ export function parsePaneStatus(pane: string): PaneStatus {
     }
   }
   const outputTokens = parseTokenCount(pane);
+  const subagents = parseSubagents(pane);
   const waitMatch = pane.match(/Waiting for \d+ background (?:agents?|tasks?) to finish/i);
   const waitingFor = waitMatch ? waitMatch[0] : null;
   const goalMatch = pane.match(/\/goal active(?:\s*\(([^)]+)\))?/i);
@@ -302,7 +345,7 @@ export function parsePaneStatus(pane: string): PaneStatus {
           ? "plan"
           : "default";
   }
-  return { working, blocked, composerBusy, composerText, composerWrapped, outputTokens, blockedPrompt, blockedOptions, waitingFor, permission, goalActive, goalFor };
+  return { working, blocked, composerBusy, composerText, composerWrapped, outputTokens, subagents, blockedPrompt, blockedOptions, waitingFor, permission, goalActive, goalFor };
 }
 
 /** Back-compat shim: whether the CLI is mid-turn. */
@@ -633,7 +676,7 @@ export class Dispatcher {
       for (const { name, tmuxSession } of this.store.listAgents()) {
         const agent = this.store.getAgent(name);
         if (!agent || agent.status !== "online") continue;
-        let status: PaneStatus = { working: false, blocked: false, composerBusy: false, composerText: "", composerWrapped: false, outputTokens: null, blockedPrompt: null, blockedOptions: [], waitingFor: null, permission: null, goalActive: false, goalFor: null };
+        let status: PaneStatus = { working: false, blocked: false, composerBusy: false, composerText: "", composerWrapped: false, outputTokens: null, subagents: [], blockedPrompt: null, blockedOptions: [], waitingFor: null, permission: null, goalActive: false, goalFor: null };
         try {
           status = parsePaneStatus(await this.tmux.capturePane(tmuxSession, 30, true));
         } catch {
@@ -643,6 +686,7 @@ export class Dispatcher {
         const blocked = status.blocked;
         const composerBusy = status.composerBusy;
         const composerText = status.composerText;
+        const subagents = status.subagents;
         // Writing or thinking? The frame looks identical either way — the CLI
         // spins the same way for both — so the answer is whether the output
         // counter MOVED since the last sweep. No counter, no claim.
@@ -673,7 +717,8 @@ export class Dispatcher {
           (agent.phase ?? undefined) === phase &&
           (agent.composerText ?? "") === composerText &&
           (agent.blockedPrompt ?? "") === blockedPrompt &&
-          (agent.blockedOptions ?? []).join("|") === blockedOptions.join("|")
+          (agent.blockedOptions ?? []).join("|") === blockedOptions.join("|") &&
+          JSON.stringify(agent.subagents ?? []) === JSON.stringify(subagents)
         ) {
           continue;
         }
@@ -685,6 +730,7 @@ export class Dispatcher {
           composerText,
           blockedPrompt,
           blockedOptions,
+          subagents,
           waitingFor,
           permission,
           goalActive: status.goalActive,
@@ -826,7 +872,7 @@ export class Dispatcher {
     // this nudge's Enter as its answer. Fail-CLOSED — an unreadable pane is
     // treated as blocked, exactly like the pane guard.
     if (this.tmux.capturePane) {
-      let live: PaneStatus = { working: false, blocked: true, composerBusy: true, composerText: "", composerWrapped: true, outputTokens: null, blockedPrompt: null, blockedOptions: [], waitingFor: null, permission: null, goalActive: false, goalFor: null };
+      let live: PaneStatus = { working: false, blocked: true, composerBusy: true, composerText: "", composerWrapped: true, outputTokens: null, subagents: [], blockedPrompt: null, blockedOptions: [], waitingFor: null, permission: null, goalActive: false, goalFor: null };
       try {
         live = parsePaneStatus(await this.tmux.capturePane(agent.tmuxSession, 30, true));
       } catch {

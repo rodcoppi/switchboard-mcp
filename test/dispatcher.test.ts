@@ -606,6 +606,7 @@ describe("parsePaneStatus", () => {
       composerText: "",
       composerWrapped: true, // the footer sits right under the prompt line
       outputTokens: 108_000, // the frame's own spinner line
+      subagents: [],
       blockedPrompt: null,
       blockedOptions: [],
       waitingFor: null,
@@ -625,6 +626,7 @@ describe("parsePaneStatus", () => {
       composerText: "",
       composerWrapped: true, // the footer sits right under the prompt line
       outputTokens: null,
+      subagents: [],
       blockedPrompt: null,
       blockedOptions: [],
       waitingFor: null,
@@ -643,6 +645,7 @@ describe("parsePaneStatus", () => {
       composerText: "",
       composerWrapped: false, // no prompt line at all in this frame
       outputTokens: null,
+      subagents: [],
       blockedPrompt: null,
       blockedOptions: [],
       waitingFor: null,
@@ -1185,5 +1188,52 @@ describe("speaking vs thinking: the counter has to MOVE", () => {
     await dispatcher.refreshActivityOnce();
     expect(store.getAgent("alpha")!.activity).toBe("idle");
     expect(store.getAgent("alpha")!.phase ?? null).toBeNull();
+  });
+});
+
+
+describe("background agents, while they are running", () => {
+  // A subagent reaches the transcript only when it FINISHES. For the minutes
+  // it works, the CLI's own panel is the only place it exists — and "waiting
+  // for 2 background agents" without naming them is the frustrating half.
+  const panel = [
+    "\u23fa Waiting for 2 background agents to finish",
+    "",
+    "  \u25cf main",
+    "\u276f \u25ef general-purpose  Running test-dedup.js with new rule                    5m 8s \u00b7 \u2193 244.5k tokens",
+    "  \u25ef general-purpose  Counting sales per store for estimate                5m 3s \u00b7 \u2193 123.4k tokens",
+    "",
+  ].join("\n");
+
+  it("reads the type, the task, the clock and the tokens", async () => {
+    const { parseSubagents } = await import("../src/server/dispatcher.js");
+    expect(parseSubagents(panel)).toEqual([
+      { type: "general-purpose", task: "Running test-dedup.js with new rule", elapsed: "5m 8s", tokens: "244.5k" },
+      { type: "general-purpose", task: "Counting sales per store for estimate", elapsed: "5m 3s", tokens: "123.4k" },
+    ]);
+  });
+
+  it("the main turn is not a subagent", async () => {
+    const { parseSubagents } = await import("../src/server/dispatcher.js");
+    // \u25cf main must never show up as a row of its own.
+    expect(parseSubagents(panel).some((s) => s.task === "main" || s.type === "main")).toBe(false);
+  });
+
+  it("a task keeps its own single spaces (columns are split on RUNS of them)", async () => {
+    const { parseSubagents } = await import("../src/server/dispatcher.js");
+    const one = parseSubagents(
+      "  \u25ef Explore  Find every call site of buildAgentCommand   12s\n",
+    );
+    expect(one).toEqual([
+      { type: "Explore", task: "Find every call site of buildAgentCommand", elapsed: "12s", tokens: null },
+    ]);
+  });
+
+  it("an ordinary frame has none, and reading survives the SGR codes", async () => {
+    const { parseSubagents, parsePaneStatus } = await import("../src/server/dispatcher.js");
+    expect(parseSubagents("\u276f \n  \u23f5\u23f5 bypass permissions on")).toEqual([]);
+    expect(parsePaneStatus("\u276f ").subagents).toEqual([]);
+    const dimmed = "  \u001b[2m\u25ef general-purpose  Doing a thing   4s\u001b[0m";
+    expect(parseSubagents(dimmed)).toHaveLength(1);
   });
 });
