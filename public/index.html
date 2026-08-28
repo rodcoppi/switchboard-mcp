@@ -4412,6 +4412,50 @@
       return "idle";
     }
 
+    /**
+     * Splits a CSS list on TOP-LEVEL commas only — "bl-nod 2.4s
+     * cubic-bezier(.3,1.5,.4,1) infinite" is one entry, not four.
+     */
+    function splitTopLevel(css) {
+      const out = [];
+      let depth = 0, start = 0;
+      for (let i = 0; i < css.length; i++) {
+        const c = css[i];
+        if (c === "(") depth++;
+        else if (c === ")") depth--;
+        else if (c === "," && depth === 0) { out.push(css.slice(start, i)); start = i + 1; }
+      }
+      out.push(css.slice(start));
+      return out.map((p) => p.trim()).filter(Boolean);
+    }
+
+    /**
+     * Starts an animation ALREADY IN PROGRESS, at the phase it would be in if
+     * it had been running since the page loaded.
+     *
+     * The rail rebuilds itself completely on every activity poll — roughly
+     * every 2.5s — so each face is a brand new element and its animation
+     * restarted from 0%. That is what read as a jump: not a bad keyframe, a
+     * loop that never got to finish (owner, 27/08: "tem animação pulando
+     * ainda"). A negative delay of (now mod duration) picks the cycle back up
+     * where it was, so the rebuild becomes invisible. Original per-animation
+     * delays (the z's stagger) are preserved on top.
+     */
+    function animateSynced(node, css, baseDelays) {
+      if (!css) return;
+      const parts = splitTopLevel(css);
+      const now = performance.now() / 1000;
+      const delays = parts.map((part, i) => {
+        const m = /(?:^|\s)([\d.]+)m?s(?:\s|$)/.exec(part);
+        const dur = m ? parseFloat(m[1]) : 0;
+        const base = (baseDelays && baseDelays[i]) || 0;
+        if (!(dur > 0)) return `${base}s`;
+        return `${(base - (now % dur)).toFixed(2)}s`;
+      });
+      node.style.animation = parts.join(", ");
+      node.style.animationDelay = delays.join(", ");
+    }
+
     /** The sleep breath, scaled off the body but never below a readable floor. */
     function blobZzz(sp, k) {
       if (!sp.zzz) return null;
@@ -4422,7 +4466,8 @@
         const z1 = el("span", null, i === 1 ? "Z" : "z");
         z1.style.cssText =
           `position:absolute;font-size:${(px * z).toFixed(1)}px;font-weight:700;line-height:1;color:#9a9aa4;` +
-          `white-space:nowrap;animation:bl-zzz 3.4s ease-out ${delay}s infinite;--zk:${z.toFixed(2)}`;
+          `white-space:nowrap;--zk:${z.toFixed(2)}`;
+        animateSynced(z1, "bl-zzz 3.4s ease-out infinite", [delay]);
         wrap.appendChild(z1);
       });
       return wrap;
@@ -4434,8 +4479,7 @@
       const eye = el("div");
       const w = Math.max(1, e.w * k);
       const h = Math.max(1, (e.h || 0) * k);
-      const delay = side === "r" && e.altDelay ? `animation-delay:${e.altDelay}s;` : "";
-      const anim = sp.eyeAnim ? `animation:${sp.eyeAnim};${delay}` : "";
+      const altDelay = side === "r" && e.altDelay ? e.altDelay : 0;
       if (e.chev) {
         // A hard "^": two straight arms meeting at a point, no curve.
         const armLen = (e.w * k) / 1.414;
@@ -4443,7 +4487,8 @@
         eye.style.cssText =
           `width:${armLen.toFixed(1)}px;height:${armLen.toFixed(1)}px;` +
           `border-top:${thick.toFixed(1)}px solid var(--bg);border-left:${thick.toFixed(1)}px solid var(--bg);` +
-          `box-sizing:border-box;transform:rotate(45deg);${anim}`;
+          `box-sizing:border-box;transform:rotate(45deg);`;
+        if (sp.eyeAnim) animateSynced(eye, sp.eyeAnim, [altDelay]);
         return eye;
       }
       const rot = e.rot ? (side === "r" ? (e.mirror === false ? e.rot : -e.rot) : e.rot) : 0;
@@ -4451,7 +4496,8 @@
       eye.style.cssText =
         `width:${w.toFixed(1)}px;height:${h.toFixed(1)}px;border-radius:${cap.toFixed(1)}px;` +
         `background:var(--bg);${rot ? `transform:rotate(${rot}deg);` : ""}` +
-        `transition:width .35s cubic-bezier(.34,1.3,.5,1),height .35s cubic-bezier(.34,1.3,.5,1),transform .35s ease;${anim}`;
+        `transition:width .35s cubic-bezier(.34,1.3,.5,1),height .35s cubic-bezier(.34,1.3,.5,1),transform .35s ease;`;
+      if (sp.eyeAnim) animateSynced(eye, sp.eyeAnim, [altDelay]);
       return eye;
     }
 
@@ -4481,33 +4527,44 @@
         const ring = el("div");
         ring.style.cssText =
           `position:absolute;width:${size}px;height:${size}px;border-radius:50%;` +
-          `border:${Math.max(1, 2 * k * 3).toFixed(1)}px solid ${sp.color};animation:bl-ring 1.5s ease-out infinite`;
+          `border:${Math.max(1, 2 * k * 3).toFixed(1)}px solid ${sp.color};`;
+        animateSynced(ring, "bl-ring 1.5s ease-out infinite");
         face.appendChild(ring);
       }
       const lean = el("div", "blob-lean");
-      const body = el("div");
+      // THE SHAPE IS A LAYER OF ITS OWN, and the eyes are its sibling — never
+      // its child. A hexagon or a triangle is drawn with clip-path, and
+      // clip-path cuts EVERYTHING inside: with the eyes in there, the corners
+      // of the silhouette sliced them off (owner, 27/08: "eles não deveriam
+      // cortar os olhos nunca"). Both layers live inside the animated wrapper,
+      // so the eyes still deform with the body exactly as before.
+      const skin = el("div");
       const w = size * (sp.w || 1);
       const h = size * (sp.h || 1);
+      skin.style.cssText =
+        `position:relative;width:${w.toFixed(1)}px;height:${h.toFixed(1)}px;` +
+        `transition:width .45s cubic-bezier(.34,1.3,.5,1),height .45s cubic-bezier(.34,1.3,.5,1);`;
+      if (anim) animateSynced(skin, anim);
+      const body = el("div");
       // A clipped silhouette owns the outline, so its radius goes to zero.
       const radius = sh.clip ? "0" : sh.radius || sp.radius || "52% 48% 46% 54% / 50% 54% 46% 50%";
       const fill = sp.ghost
         ? `background:color-mix(in srgb, ${sp.color} 40%, transparent);border:${Math.max(1, size / 70).toFixed(1)}px dashed ${sp.color}`
         : `background:${sp.color}`;
       body.style.cssText =
-        `position:relative;width:${w.toFixed(1)}px;height:${h.toFixed(1)}px;border-radius:${radius};` +
+        `position:absolute;inset:0;border-radius:${radius};` +
         (sh.clip ? `clip-path:${sh.clip};` : "") + `${fill};` +
-        `transition:width .45s cubic-bezier(.34,1.3,.5,1),height .45s cubic-bezier(.34,1.3,.5,1),border-radius .45s ease,background .35s ease,clip-path .45s ease;` +
-        (anim ? `animation:${anim};` : "") + (sp.dim ? "opacity:.85;" : "");
+        `transition:border-radius .45s ease,background .35s ease,clip-path .45s ease;` +
+        (sp.dim ? "opacity:.85;" : "");
       const pupils = el("div", "blob-pupils");
       // The gaze layer sits between tracking and the eye row: the tracker owns
       // the pupils' transform, the wander owns this one, and neither overwrites
       // the other.
       const gaze = el("div", "blob-gaze");
-      gaze.style.animation = `bl-gaze ${(6.5 + (variant % 5) * 0.9).toFixed(1)}s ease-in-out infinite`;
+      animateSynced(gaze, `bl-gaze ${(6.5 + (variant % 5) * 0.9).toFixed(1)}s ease-in-out infinite`);
       const inner = el("div");
-      inner.style.cssText =
-        `display:flex;align-items:center;gap:${Math.max(1, (sp.gap || 26) * k).toFixed(1)}px;` +
-        (sp.innerAnim ? `animation:${sp.innerAnim};` : "");
+      inner.style.cssText = `display:flex;align-items:center;gap:${Math.max(1, (sp.gap || 26) * k).toFixed(1)}px;`;
+      if (sp.innerAnim) animateSynced(inner, sp.innerAnim);
       inner.append(blobEye(sp, eyeK, "l"), blobEye(sp, eyeK, "r"));
       gaze.appendChild(inner);
       pupils.appendChild(gaze);
@@ -4516,8 +4573,8 @@
       pupils.dataset.bx = String(baseX);
       pupils.dataset.by = String(baseY);
       if (baseX || baseY) pupils.style.transform = `translate(${baseX.toFixed(2)}px, ${baseY.toFixed(2)}px)`;
-      body.appendChild(pupils);
-      lean.appendChild(body);
+      skin.append(body, pupils);
+      lean.appendChild(skin);
       face.appendChild(lean);
       if (sp.prop) {
         const prop = el("div", null, sp.prop);
@@ -4526,7 +4583,8 @@
           `position:absolute;top:${(-d * 0.15).toFixed(1)}px;right:${(-d * 0.15).toFixed(1)}px;` +
           `min-width:${d.toFixed(1)}px;height:${d.toFixed(1)}px;display:flex;align-items:center;justify-content:center;` +
           `border-radius:999px;background:${sp.color};color:var(--bg);font-size:${(d * 0.62).toFixed(1)}px;` +
-          `font-weight:700;animation:bl-pulse 1.6s ease-in-out infinite`;
+          `font-weight:700;`;
+        animateSynced(prop, "bl-pulse 1.6s ease-in-out infinite");
         face.appendChild(prop);
       }
       const zzz = blobZzz(sp, k);

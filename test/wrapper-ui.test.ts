@@ -948,3 +948,59 @@ describe("blob faces: shape is the agent, expression is the state", () => {
     }
   });
 });
+
+describe("faces survive the rail's rebuild", () => {
+  // The rail wipes and rebuilds itself on every activity poll (~2.5s), so each
+  // face is a brand new element whose animation would restart at 0%. That is
+  // what read as a jump — not a bad keyframe, a loop that never finished.
+  const splitTopLevel = embeddedFunction<(css: string) => string[]>("splitTopLevel");
+
+  it("splits an animation list without breaking cubic-bezier apart", () => {
+    expect(splitTopLevel("bl-nod 2.4s cubic-bezier(.3,1.5,.4,1) infinite")).toEqual([
+      "bl-nod 2.4s cubic-bezier(.3,1.5,.4,1) infinite",
+    ]);
+    expect(
+      splitTopLevel("bl-wobble 7s ease-in-out infinite, bl-float 7s ease-in-out infinite"),
+    ).toHaveLength(2);
+    expect(
+      splitTopLevel("bl-nod 2.9s cubic-bezier(.3,1.5,.4,1) infinite, bl-lilt 3.4s ease-in-out infinite"),
+    ).toHaveLength(2);
+  });
+
+  it("animateSynced starts each loop mid-cycle, one delay per animation", () => {
+    const animateSynced = embeddedFunctionWith<
+      (node: { style: Record<string, string> }, css: string, base?: number[]) => void
+    >("animateSynced", ["splitTopLevel"]);
+    const node = { style: {} as Record<string, string> };
+    animateSynced(node, "bl-wobble 7s ease-in-out infinite, bl-float 7s ease-in-out infinite");
+    expect(node.style.animation).toContain("bl-wobble");
+    const delays = node.style.animationDelay.split(",").map((d) => parseFloat(d));
+    expect(delays).toHaveLength(2);
+    // Negative and inside the cycle: it resumes, never jumps ahead.
+    for (const d of delays) {
+      expect(d).toBeLessThanOrEqual(0);
+      expect(d).toBeGreaterThan(-7.001);
+    }
+  });
+
+  it("keeps a stagger that the design put there on purpose (the z's)", () => {
+    const animateSynced = embeddedFunctionWith<
+      (node: { style: Record<string, string> }, css: string, base?: number[]) => void
+    >("animateSynced", ["splitTopLevel"]);
+    const a = { style: {} as Record<string, string> };
+    const b = { style: {} as Record<string, string> };
+    animateSynced(a, "bl-zzz 3.4s ease-out infinite", [0]);
+    animateSynced(b, "bl-zzz 3.4s ease-out infinite", [1.1]);
+    const da = parseFloat(a.style.animationDelay);
+    const db = parseFloat(b.style.animationDelay);
+    expect(db - da).toBeCloseTo(1.1, 2); // same phase shift the study had
+  });
+
+  it("the eyes are never inside the clipped shape", () => {
+    // clip-path cuts everything inside it, so a hexagon or a triangle would
+    // slice its own eyes off at the corners.
+    const src = script.match(/function blobFace[\s\S]*?\n    }/)?.[0] ?? "";
+    expect(src).toContain("skin.append(body, pupils)"); // siblings, not nested
+    expect(src).not.toMatch(/body\.appendChild\(pupils\)/);
+  });
+});
