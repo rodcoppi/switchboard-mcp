@@ -4575,7 +4575,7 @@
         ring.style.cssText =
           `position:absolute;width:${size}px;height:${size}px;border-radius:50%;` +
           `border:${Math.max(1, 2 * k * 3).toFixed(1)}px solid ${sp.color};`;
-        if (!same) animateSynced(ring, "bl-ring 1.5s ease-out infinite");
+        animateSynced(ring, "bl-ring 1.5s ease-out infinite"); // cssText wiped it
       } else {
         ring.style.cssText = "display:none";
         ring.style.animation = "";
@@ -4636,7 +4636,7 @@
           `position:absolute;top:${(-d * 0.15).toFixed(1)}px;right:${(-d * 0.15).toFixed(1)}px;` +
           `min-width:${d.toFixed(1)}px;height:${d.toFixed(1)}px;display:flex;align-items:center;justify-content:center;` +
           `border-radius:999px;background:${sp.color};color:var(--bg);font-size:${(d * 0.62).toFixed(1)}px;font-weight:700;`;
-        if (!same) animateSynced(prop, "bl-pulse 1.6s ease-in-out infinite");
+        animateSynced(prop, "bl-pulse 1.6s ease-in-out infinite"); // cssText wiped it
       } else {
         prop.style.cssText = "display:none";
         prop.style.animation = "";
@@ -4644,7 +4644,12 @@
 
       const zzz = face.querySelector(".blob-zzz");
       if (sp.zzz) {
-        const z = Math.max(k, 0.42);
+        // The floor was 0.42 of the study's 150px scale — which on a 22px rail
+        // portrait made the "Z" 17px tall: bigger than the face, and sitting on
+        // the agent's name. Still floored (a z that scales linearly to 3px is
+        // not a z any more), just against something proportional: the tallest
+        // one lands at about 40% of the face.
+        const z = Math.max(k, 0.22);
         zzz.style.cssText =
           `position:absolute;top:${(14 * k).toFixed(1)}px;right:${(10 * k).toFixed(1)}px;` +
           `width:0;height:0;pointer-events:none`;
@@ -4653,7 +4658,12 @@
           node.style.cssText =
             `position:absolute;font-size:${(px * z).toFixed(1)}px;font-weight:700;line-height:1;` +
             `color:#9a9aa4;white-space:nowrap;--zk:${z.toFixed(2)}`;
-          if (!same) animateSynced(node, "bl-zzz 3.4s ease-out infinite", [delay]);
+          // ALWAYS, not just on a state change: cssText above wipes every
+          // inline property, animation included. Repainting the same state
+          // (which is what an offline agent does forever) therefore killed the
+          // z's on the first poll and never brought them back — they sat there
+          // frozen mid-breath (owner, 28/08).
+          animateSynced(node, "bl-zzz 3.4s ease-out infinite", [delay]);
         });
       } else {
         zzz.style.cssText = "display:none";
