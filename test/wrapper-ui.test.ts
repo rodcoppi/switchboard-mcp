@@ -9,6 +9,8 @@ import { describe, expect, it } from "vitest";
 const html = fs.readFileSync(path.join(process.cwd(), "public", "index.html"), "utf8");
 const script = html.match(/<script>([\s\S]*?)<\/script>/)?.[1] ?? "";
 const source = ts.createSourceFile("dashboard.js", script, ts.ScriptTarget.ESNext, true, ts.ScriptKind.JS);
+/** The page's CSS — the keyframes live here, not in the script block. */
+const styles = (html.match(/<style>[\s\S]*?<\/style>/g) || []).join("\n");
 
 function embeddedFunction<T extends (...args: any[]) => any>(name: string): T {
   let found: ts.FunctionDeclaration | undefined;
@@ -874,5 +876,75 @@ describe("message stamps carry the day once they are not today", () => {
   it("a garbage timestamp is returned as-is, never as 'Invalid Date'", () => {
     expect(fmtStamp("not a date", now)).toBe("not a date");
     expect(fmtStamp("", now)).toBe("");
+  });
+});
+
+describe("blob faces: shape is the agent, expression is the state", () => {
+  const blobHash = embeddedFunction<(s: string) => number>("blobHash");
+  const blobVariantOf = embeddedFunctionWith<(n: string, s: string) => number>("blobVariantOf", [
+    "blobHash",
+  ]);
+
+  // The rail repaints on every SSE event. A variant drawn at random each time
+  // would restart the animation mid-cycle — a twitch on every card, on every
+  // message — so the choice has to be a seed, not a roll.
+  it("the same agent and state always land on the same variant", () => {
+    expect(blobVariantOf("roteirista", "idle")).toBe(blobVariantOf("roteirista", "idle"));
+    expect(blobVariantOf("roteirista", "working")).toBe(blobVariantOf("roteirista", "working"));
+  });
+
+  it("different agents in the SAME state do not move in unison", () => {
+    const names = ["roteirista", "secretario", "vide-editor", "ai-panorama", "rodcoppi", "media-gen"];
+    const picks = new Set(names.map((n) => blobVariantOf(n, "idle") % 3));
+    expect(picks.size).toBeGreaterThan(1); // the whole point of the variants
+  });
+
+  it("one agent varies its rhythm from state to state", () => {
+    const states = ["idle", "working", "speaking", "thinking", "asking", "waiting", "reply"];
+    const picks = new Set(states.map((s) => blobVariantOf("roteirista", s) % 3));
+    expect(picks.size).toBeGreaterThan(1);
+  });
+
+  it("the hash is stable across restarts (no Math.random, no Date)", () => {
+    expect(blobHash("alpha")).toBe(blobHash("alpha"));
+    expect(blobHash("alpha")).not.toBe(blobHash("beta"));
+    const src = script.match(/function blobHash[\s\S]*?\n    }/)?.[0] ?? "";
+    expect(src).not.toContain("Math.random");
+    expect(src).not.toContain("Date");
+  });
+
+  it("every state's loops close on themselves (0% === 100%)", () => {
+    // A loop whose ends differ shows a jump once per cycle — which is exactly
+    // what the pixel-literal keyframes did on a 22px face.
+    const frames = [...styles.matchAll(/@keyframes (bl-[\w-]+)\s*\{((?:[^{}]|\{[^{}]*\})*)\}/g)];
+    expect(frames.length).toBeGreaterThan(15);
+    for (const [, name, body] of frames) {
+      if (["bl-zzz", "bl-ring"].includes(name)) continue; // one-shot cues, not loops
+      const stops = new Map<string, string>();
+      for (const [, sel, decl] of body.matchAll(/([\d.%,\s]+)\{([^}]*)\}/g)) {
+        for (const one of sel.split(",")) {
+          const sk = one.trim();
+          if (sk) stops.set(sk, decl.trim());
+        }
+      }
+      expect(stops.get("0%"), `${name} has no 0% stop`).toBeDefined();
+      expect(stops.get("100%"), `${name} has no 100% stop`).toBeDefined();
+      expect(stops.get("100%"), `${name} does not return to where it started`).toBe(stops.get("0%"));
+    }
+  });
+
+  it("no keyframe moves by a raw pixel any more — everything scales with --blk", () => {
+    // The study is authored at 150px; a literal "-7px" is 5% there and 32% on a
+    // 22px rail portrait, which is what read as a jump.
+    const frames = [...styles.matchAll(/@keyframes (bl-[\w-]+)\s*\{((?:[^{}]|\{[^{}]*\})*)\}/g)];
+    for (const [, name, body] of frames) {
+      if (name === "bl-zzz") continue; // scales off --zk, its own factor
+      // Drop every calc() that scales off one of the face variables; whatever
+      // pixels are left are literal ones.
+      const scrubbed = body
+        .replace(/calc\([^()]*var\(--bl[kg][^()]*\)[^()]*\)/g, "")
+        .replace(/var\(--bl[kg][^()]*\)/g, "");
+      expect(scrubbed, `${name} translates by a literal pixel`).not.toMatch(/[\d.]px/);
+    }
   });
 });
