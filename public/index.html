@@ -542,6 +542,48 @@
        actions cluster stays full-strength: reopen/⋯ are live controls. */
     .agent-card.offline > *:not(.agent-actions) { opacity: 0.66; }
 
+    /* ---- Blob faces -------------------------------------------------------
+       One solid shape, no mouth: the body deforms and two strokes carry the
+       whole expression. Ported from the owner's Claude Design study ("Blob
+       Faces"), keyframes and geometry intact. It replaces three separate
+       signals that used to sit on the card — the engine mark, the presence
+       lamp and the unseen-reply pip — with one thing you read at a glance.
+       The engine mark comes back as a corner badge: you still need to know
+       which agent is Claude and which is Codex. */
+    @keyframes bl-wobble { 0%,100% { transform: rotate(-2deg) scale(1,1) skewX(0deg); } 33% { transform: rotate(1.5deg) scale(1.025,.985) skewX(1.5deg); } 66% { transform: rotate(2deg) scale(.985,1.02) skewX(-1.5deg); } }
+    @keyframes bl-churn { 0%,100% { transform: rotate(-3deg) scale(1,1) skewX(2deg); } 50% { transform: rotate(3deg) scale(1.05,.95) skewX(-2deg); } }
+    @keyframes bl-breathe { 0%,100% { transform: scale(1); } 50% { transform: scale(1.05); } }
+    @keyframes bl-pump { 0%,100% { transform: scale(1,1); } 40% { transform: scale(1.07,.93); } 72% { transform: scale(.96,1.04); } }
+    @keyframes bl-hop { 0%,70%,100% { transform: translateY(0) scale(1,1); } 78% { transform: translateY(-7px) scale(.94,1.07); } 88% { transform: translateY(0) scale(1.05,.95); } }
+    @keyframes bl-jitter { 0%,100% { transform: translate(0,0) rotate(0); } 25% { transform: translate(1.6px,-1.1px) rotate(1.6deg); } 75% { transform: translate(-1.6px,1.1px) rotate(-1.6deg); } }
+    @keyframes bl-boot { 0%,100% { transform: scale(.82); opacity:.6 } 50% { transform: scale(1.05); opacity:1 } }
+    @keyframes bl-squat { 0%,100% { transform: scale(1,1) skewX(-1.5deg); } 50% { transform: scale(1.04,.96) skewX(1.5deg); } }
+    @keyframes bl-sway { 0%,100% { transform: rotate(-5deg); } 50% { transform: rotate(5deg); } }
+    @keyframes bl-blink { 0%,90%,100% { transform: scaleY(1); } 94%,96% { transform: scaleY(.06); } }
+    @keyframes bl-shift { 0%,100% { transform: translateX(-2.5px); } 50% { transform: translateX(2.5px); } }
+    @keyframes bl-float { 0%,100% { translate: 0 -3px; } 50% { translate: 0 4px; } }
+    @keyframes bl-nod { 0%,62%,100% { translate: 0 0; } 72% { translate: 0 7px; } 80% { translate: 0 0; } 88% { translate: 0 4px; } }
+    @keyframes bl-dart { 0%,26% { translate: -7px 0; } 34%,60% { translate: 7px 0; } 68%,100% { translate: -7px 0; } }
+    @keyframes bl-scan { 0%,100% { scale: 1 1; } 50% { scale: 1 .45; } }
+    @keyframes bl-wave { 0%,100% { scale: 1 .8; } 50% { scale: 1 1.9; } }
+    @keyframes bl-pulse { 0%,100% { opacity:1; } 50% { opacity:.4; } }
+    @keyframes bl-zzz { 0% { transform: translate(0,0) scale(.55); opacity:0 } 25% { opacity:.9 } 100% { transform: translate(calc(26px * var(--zk,1)), calc(-42px * var(--zk,1))) scale(1.15); opacity:0 } }
+    @keyframes bl-ring { 0% { transform: scale(.86); opacity:.55 } 100% { transform: scale(1.6); opacity:0 } }
+    .blob-face { position: relative; display: grid; place-items: center; flex: none; }
+    .blob-lean { position: absolute; inset: 0; display: grid; place-items: center; transition: transform .55s cubic-bezier(.2,.9,.2,1); }
+    .blob-pupils { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; transition: transform .32s cubic-bezier(.2,.9,.2,1); }
+    /* The engine mark, demoted to a corner badge — small, but never guessed at. */
+    .blob-engine {
+      position: absolute;
+      right: -4px; bottom: -4px;
+      width: 12px; height: 12px;
+      display: grid; place-items: center;
+      border-radius: 4px;
+      background: var(--bg-elev);
+      border: 1px solid var(--border-soft);
+    }
+    .blob-engine .agent-logo { width: 8px; height: 8px; opacity: 0.9; }
+
     /* Engine portrait + presence lamp. The real Claude/Codex mark says what
        this agent is; the tiny corner light says whether it is reachable. */
     .agent-portrait {
@@ -559,6 +601,14 @@
       transition: border-color 0.14s var(--ease), color 0.14s var(--ease), transform 0.14s var(--ease), box-shadow 0.14s var(--ease);
     }
     .agent-portrait .agent-logo { width: 13px; height: 13px; opacity: 0.86; }
+    /* Carrying a face, the frame would be a box around a box: drop it. */
+    .agent-portrait.blob {
+      border: 0;
+      background: none;
+      box-shadow: none;
+      overflow: visible;
+      width: 22px; height: 22px;
+    }
     .status-dot {
       position: absolute;
       right: -3px;
@@ -4210,6 +4260,163 @@
       return svg;
     }
 
+    // ---- Blob faces -------------------------------------------------------
+    // Ported from the owner's Claude Design study. A state is a silhouette
+    // (scale + radius + body animation) and an eye geometry — there is no
+    // mouth, so the strokes and the deformation carry everything.
+    //
+    // The eleven states there map onto what this hub actually knows. Three had
+    // no source of truth until now: `speaking` and `thinking` come from the
+    // output-token counter moving between polls (see AgentPhase), and `done`
+    // is deliberately unused — "finished and unopened" is exactly `reply`.
+    const BLOB_SPEC = {
+      idle:      { color: "var(--online)", w: 1, h: 1,
+                   anim: "bl-wobble 7s ease-in-out infinite, bl-float 5.2s ease-in-out infinite",
+                   eye: { w: 13, h: 40 }, gap: 24, eyeAnim: "bl-blink 5.4s ease-in-out infinite" },
+      working:   { color: "var(--text)", w: 1.02, h: .96, anim: "bl-churn 1.15s ease-in-out infinite",
+                   eye: { w: 11, h: 30, altDelay: .28 }, gap: 22,
+                   innerAnim: "bl-shift 1.1s ease-in-out infinite", eyeAnim: "bl-scan .56s ease-in-out infinite" },
+      speaking:  { color: "var(--text)", w: 1.02, h: 1.02, radius: "52% 48% 48% 52% / 50% 50% 50% 50%",
+                   anim: "bl-pump .62s ease-in-out infinite", eye: { w: 12, h: 26, altDelay: .31 }, gap: 24,
+                   eyeAnim: "bl-wave .62s ease-in-out infinite" },
+      thinking:  { color: "#a78bfa", w: 1.12, h: .84, anim: "bl-squat 4.5s ease-in-out infinite",
+                   eye: { w: 12, h: 28, rot: 16 }, gap: 22, bx: 6, by: -9 },
+      asking:    { color: "var(--warn)", w: .92, h: 1.1, radius: "50% 50% 46% 54% / 56% 56% 44% 44%",
+                   anim: "bl-nod 2.4s cubic-bezier(.3,1.5,.4,1) infinite", eye: { w: 13, h: 48 }, gap: 24,
+                   ring: true, prop: "?" },
+      waiting:   { color: "var(--link)", w: 1, h: 1, radius: "54% 46% 52% 48% / 48% 52% 48% 52%",
+                   anim: "bl-sway 4.4s ease-in-out infinite", eye: { w: 12, h: 32, rot: -12, mirror: false },
+                   gap: 22, innerAnim: "bl-dart 5.6s cubic-bezier(.6,0,.2,1) infinite" },
+      reply:     { color: "var(--unread-bg)", w: 1, h: 1, radius: "50% 50% 52% 48% / 48% 52% 50% 50%",
+                   anim: "bl-hop 2.2s ease-in-out infinite", eye: { w: 40, chev: "up", thick: 9 }, gap: 16 },
+      error:     { color: "var(--danger)", w: .86, h: .9, radius: "46% 54% 56% 44% / 44% 56% 44% 56%",
+                   anim: "bl-jitter .28s steps(2) infinite", eye: { w: 11, h: 26, rot: -26 }, gap: 18 },
+      launching: { color: "var(--text-dim)", w: 1, h: 1, anim: "bl-boot 1.4s ease-in-out infinite",
+                   eye: { w: 12, h: 26 }, gap: 22, eyeAnim: "bl-boot 1.4s ease-in-out infinite", ghost: true },
+      offline:   { color: "#3f3f46", w: 1, h: .78, radius: "50%", eye: { w: 34, h: 5 }, gap: 20,
+                   dim: true, zzz: true },
+    };
+    const BLOB_LABEL = {
+      idle: "up and waiting", working: "working", speaking: "writing", thinking: "thinking",
+      asking: "waiting for you in the terminal", waiting: "waiting on background agents",
+      reply: "new reply you have not opened", error: "its last nudge was refused",
+      launching: "coming up", offline: "not running",
+    };
+
+    /**
+     * Which face an agent wears. Order is priority, not preference: what BLOCKS
+     * the operator outranks what merely describes the agent.
+     */
+    function blobStateOf(agent) {
+      if (state.reopening.has(agent.name)) return "launching";
+      if (agent.status !== "online") return "offline";
+      if (agent.blocked) return "asking";
+      if (agent.waitingFor) return "waiting";
+      if (agent.activity === "working") return agent.phase === "speaking" ? "speaking" : agent.phase === "thinking" ? "thinking" : "working";
+      if (state.unseen.has(agent.name)) return "reply";
+      return "idle";
+    }
+
+    /** The sleep breath, scaled off the body but never below a readable floor. */
+    function blobZzz(sp, k) {
+      if (!sp.zzz) return null;
+      const z = Math.max(k, 0.42);
+      const wrap = el("div");
+      wrap.style.cssText = `position:absolute;top:${(14 * k).toFixed(1)}px;right:${(10 * k).toFixed(1)}px;width:0;height:0;pointer-events:none`;
+      [[30, 0], [40, 1.1], [23, 2.2]].forEach(([px, delay], i) => {
+        const z1 = el("span", null, i === 1 ? "Z" : "z");
+        z1.style.cssText =
+          `position:absolute;font-size:${(px * z).toFixed(1)}px;font-weight:700;line-height:1;color:#9a9aa4;` +
+          `white-space:nowrap;animation:bl-zzz 3.4s ease-out ${delay}s infinite;--zk:${z.toFixed(2)}`;
+        wrap.appendChild(z1);
+      });
+      return wrap;
+    }
+
+    /** One eye. Strokes, not dots: length, thickness and tilt carry the mood. */
+    function blobEye(sp, k, side) {
+      const e = sp.eye;
+      const eye = el("div");
+      const w = Math.max(1, e.w * k);
+      const h = Math.max(1, (e.h || 0) * k);
+      const delay = side === "r" && e.altDelay ? `animation-delay:${e.altDelay}s;` : "";
+      const anim = sp.eyeAnim ? `animation:${sp.eyeAnim};${delay}` : "";
+      if (e.chev) {
+        // A hard "^": two straight arms meeting at a point, no curve.
+        const armLen = (e.w * k) / 1.414;
+        const thick = Math.max(1, (e.thick || 4) * k);
+        eye.style.cssText =
+          `width:${armLen.toFixed(1)}px;height:${armLen.toFixed(1)}px;` +
+          `border-top:${thick.toFixed(1)}px solid var(--bg);border-left:${thick.toFixed(1)}px solid var(--bg);` +
+          `box-sizing:border-box;transform:rotate(45deg);${anim}`;
+        return eye;
+      }
+      const rot = e.rot ? (side === "r" ? (e.mirror === false ? e.rot : -e.rot) : e.rot) : 0;
+      const cap = Math.max(1.2, Math.min(w, h) / 2);
+      eye.style.cssText =
+        `width:${w.toFixed(1)}px;height:${h.toFixed(1)}px;border-radius:${cap.toFixed(1)}px;` +
+        `background:var(--bg);${rot ? `transform:rotate(${rot}deg);` : ""}` +
+        `transition:width .35s cubic-bezier(.34,1.3,.5,1),height .35s cubic-bezier(.34,1.3,.5,1),transform .35s ease;${anim}`;
+      return eye;
+    }
+
+    /**
+     * Builds a face at `size` px. The geometry in BLOB_SPEC is authored against
+     * a 150px body, so everything scales by k — including the eye gap, which is
+     * what keeps a 22px rail portrait from turning into one wide smudge.
+     */
+    function blobFace(stateKey, size) {
+      const sp = BLOB_SPEC[stateKey] || BLOB_SPEC.idle;
+      const k = size / 150;
+      const face = el("div", "blob-face");
+      face.style.cssText += `width:${size}px;height:${size}px;`;
+      if (sp.ring) {
+        const ring = el("div");
+        ring.style.cssText =
+          `position:absolute;width:${size}px;height:${size}px;border-radius:50%;` +
+          `border:${Math.max(1, 2 * k * 3).toFixed(1)}px solid ${sp.color};animation:bl-ring 1.5s ease-out infinite`;
+        face.appendChild(ring);
+      }
+      const lean = el("div", "blob-lean");
+      const body = el("div");
+      const w = size * (sp.w || 1);
+      const h = size * (sp.h || 1);
+      const radius = sp.radius || "52% 48% 46% 54% / 50% 54% 46% 50%";
+      const fill = sp.ghost
+        ? `background:color-mix(in srgb, ${sp.color} 40%, transparent);border:${Math.max(1, size / 70).toFixed(1)}px dashed ${sp.color}`
+        : `background:${sp.color}`;
+      body.style.cssText =
+        `position:relative;width:${w.toFixed(1)}px;height:${h.toFixed(1)}px;border-radius:${radius};${fill};` +
+        `transition:width .45s cubic-bezier(.34,1.3,.5,1),height .45s cubic-bezier(.34,1.3,.5,1),border-radius .45s ease,background .35s ease;` +
+        (sp.anim ? `animation:${sp.anim};` : "") + (sp.dim ? "opacity:.85;" : "");
+      const pupils = el("div", "blob-pupils");
+      const inner = el("div");
+      inner.style.cssText =
+        `display:flex;align-items:center;gap:${Math.max(1, (sp.gap || 26) * k).toFixed(1)}px;` +
+        (sp.innerAnim ? `animation:${sp.innerAnim};` : "");
+      inner.append(blobEye(sp, k, "l"), blobEye(sp, k, "r"));
+      pupils.appendChild(inner);
+      if (sp.bx || sp.by) {
+        pupils.style.transform = `translate(${((sp.bx || 0) * k).toFixed(2)}px, ${((sp.by || 0) * k).toFixed(2)}px)`;
+      }
+      body.appendChild(pupils);
+      lean.appendChild(body);
+      face.appendChild(lean);
+      if (sp.prop) {
+        const prop = el("div", null, sp.prop);
+        const d = Math.max(10, 24 * k * 2.2);
+        prop.style.cssText =
+          `position:absolute;top:${(-d * 0.15).toFixed(1)}px;right:${(-d * 0.15).toFixed(1)}px;` +
+          `min-width:${d.toFixed(1)}px;height:${d.toFixed(1)}px;display:flex;align-items:center;justify-content:center;` +
+          `border-radius:999px;background:${sp.color};color:var(--bg);font-size:${(d * 0.62).toFixed(1)}px;` +
+          `font-weight:700;animation:bl-pulse 1.6s ease-in-out infinite`;
+        face.appendChild(prop);
+      }
+      const zzz = blobZzz(sp, k);
+      if (zzz) face.appendChild(zzz);
+      return face;
+    }
+
     function agentTypeOf(agent) {
       return agent && agent.agentType === "codex" ? "codex" : "claude";
     }
@@ -4829,11 +5036,17 @@
       const online = agent.status === "online";
       const working = online && agent.activity === "working";
       const type = agentTypeOf(agent);
-      const dot = el("span", `status-dot ${online ? "online" : "offline"}${working ? " working" : ""}`);
-      dot.title = online ? (working ? "online · working" : "online · idle") : "offline";
-      const portrait = el("span", "agent-portrait");
-      portrait.title = `${AGENT_TYPE_TITLES[type]} · ${dot.title}`;
-      portrait.append(agentLogo(type), dot);
+      // The face IS the status: three signals (engine mark, presence lamp,
+      // unseen-reply pip) collapse into one shape you read without decoding.
+      // The engine mark survives as a corner badge — which CLI an agent runs
+      // is a fact the face cannot carry, and the owner keeps codex siblings.
+      const blobState = blobStateOf(agent);
+      const portrait = el("span", "agent-portrait blob");
+      portrait.title = `${AGENT_TYPE_TITLES[type]} · ${BLOB_LABEL[blobState] || blobState}`;
+      portrait.appendChild(blobFace(blobState, 22));
+      const badge = el("span", "blob-engine");
+      badge.appendChild(agentLogo(type));
+      portrait.appendChild(badge);
 
       // NAME LINE: lamp, then the label filling the width. The leader crown
       // sits BEFORE the name (its own thing, never lost among metadata), and the
@@ -4851,14 +5064,11 @@
       name.appendChild(document.createTextNode(displayOf(agent)));
       name.title = agent.displayName ? `${agent.displayName} (${agent.name})` : agent.name;
       nameRow.append(portrait, name);
-      // Unseen output: a glowing amber pip at the name's end. Set when the agent
-      // finished a turn (working → idle) and cleared the moment you open it.
-      if (state.unseen.has(agent.name)) {
-        card.classList.add("unseen");
-        const pip = el("span", "unseen-pip");
-        pip.title = "New reply you haven't opened yet";
-        nameRow.appendChild(pip);
-      }
+      // Unseen output: the face already says it (chevron eyes, hopping), so the
+      // pip beside the name would be the same fact twice. The brighter name
+      // stays — that is what makes the ROW findable when you are scanning a
+      // rail of twenty, without adding a second thing to decode.
+      if (state.unseen.has(agent.name)) card.classList.add("unseen");
 
       // SIGNAL LINE: engine · state — quiet mono, the way a console labels a
       // channel. (The old "MCP" chip is gone: whether an agent had joined was hub

@@ -29,6 +29,7 @@ import {
   type Agent,
   type AgentActivity,
   type AgentPermission,
+  type AgentPhase,
   type AgentStatus,
   type Config,
   type Delivery,
@@ -126,6 +127,13 @@ export interface PaneStatus {
    * the conversation as finished while work is still pending.
    */
   waitingFor: string | null;
+  /**
+   * The output-token counter from the spinner line ("↓ 108k tokens"), or null
+   * when the frame does not show one. On its own it says little; COMPARED with
+   * the previous poll it is the honest way to tell "producing text" from
+   * "running a tool / thinking", which no single frame reveals.
+   */
+  outputTokens: number | null;
   permission: AgentPermission | null;
   goalActive: boolean;
   goalFor: string | null; // "21m" from "/goal active (21m)", or null
@@ -173,6 +181,20 @@ export function dropDim(line: string): string {
   }
   if (!dim) out += line.slice(i);
   return out;
+}
+
+/**
+ * The spinner's output-token counter: "↓ 108k tokens" → 108000, "↓ 940 tokens"
+ * → 940. Returns null when the line is absent (the CLI only draws it mid-turn).
+ * Exported for direct unit testing.
+ */
+export function parseTokenCount(pane: string): number | null {
+  const m = /↓\s*([\d.,]+)\s*(k|m)?\s*tokens/i.exec(stripAnsi(pane));
+  if (!m) return null;
+  const n = Number(m[1].replace(/,/g, ""));
+  if (!Number.isFinite(n)) return null;
+  const unit = (m[2] || "").toLowerCase();
+  return Math.round(n * (unit === "m" ? 1_000_000 : unit === "k" ? 1_000 : 1));
 }
 
 /**
@@ -262,6 +284,7 @@ export function parsePaneStatus(pane: string): PaneStatus {
       blockedOptions.push(label.slice(0, 160));
     }
   }
+  const outputTokens = parseTokenCount(pane);
   const waitMatch = pane.match(/Waiting for \d+ background (?:agents?|tasks?) to finish/i);
   const waitingFor = waitMatch ? waitMatch[0] : null;
   const goalMatch = pane.match(/\/goal active(?:\s*\(([^)]+)\))?/i);
@@ -279,7 +302,7 @@ export function parsePaneStatus(pane: string): PaneStatus {
           ? "plan"
           : "default";
   }
-  return { working, blocked, composerBusy, composerText, composerWrapped, blockedPrompt, blockedOptions, waitingFor, permission, goalActive, goalFor };
+  return { working, blocked, composerBusy, composerText, composerWrapped, outputTokens, blockedPrompt, blockedOptions, waitingFor, permission, goalActive, goalFor };
 }
 
 /** Back-compat shim: whether the CLI is mid-turn. */
@@ -339,6 +362,9 @@ export class Dispatcher {
 
   /** Agents whose rescue is already running — never two at once on a pane. */
   private readonly rescuing = new Set<string>();
+
+  /** Output-token counter per agent at the previous sweep — see AgentPhase. */
+  private readonly lastOutputTokens = new Map<string, number>();
   /**
    * Agents whose LAST nudge attempt failed (pane guard abort or tmux error).
    * Breaks the perpetual online↔offline flap for "session alive but pane on a
@@ -607,7 +633,7 @@ export class Dispatcher {
       for (const { name, tmuxSession } of this.store.listAgents()) {
         const agent = this.store.getAgent(name);
         if (!agent || agent.status !== "online") continue;
-        let status: PaneStatus = { working: false, blocked: false, composerBusy: false, composerText: "", composerWrapped: false, blockedPrompt: null, blockedOptions: [], waitingFor: null, permission: null, goalActive: false, goalFor: null };
+        let status: PaneStatus = { working: false, blocked: false, composerBusy: false, composerText: "", composerWrapped: false, outputTokens: null, blockedPrompt: null, blockedOptions: [], waitingFor: null, permission: null, goalActive: false, goalFor: null };
         try {
           status = parsePaneStatus(await this.tmux.capturePane(tmuxSession, 30, true));
         } catch {
@@ -617,6 +643,17 @@ export class Dispatcher {
         const blocked = status.blocked;
         const composerBusy = status.composerBusy;
         const composerText = status.composerText;
+        // Writing or thinking? The frame looks identical either way — the CLI
+        // spins the same way for both — so the answer is whether the output
+        // counter MOVED since the last sweep. No counter, no claim.
+        const seen = this.lastOutputTokens.get(name);
+        const tokens = status.outputTokens;
+        let phase: AgentPhase | undefined;
+        if (next === "working" && tokens !== null) {
+          phase = seen !== undefined && tokens > seen ? "speaking" : "thinking";
+        }
+        if (tokens === null) this.lastOutputTokens.delete(name);
+        else this.lastOutputTokens.set(name, tokens);
         const blockedPrompt = status.blockedPrompt ?? "";
         const blockedOptions = status.blockedOptions;
         // Only write on a real change (any field), so a steady agent is free.
@@ -633,6 +670,7 @@ export class Dispatcher {
           (agent.waitingFor ?? "") === waitingFor &&
           !!agent.blocked === blocked &&
           !!agent.composerBusy === composerBusy &&
+          (agent.phase ?? undefined) === phase &&
           (agent.composerText ?? "") === composerText &&
           (agent.blockedPrompt ?? "") === blockedPrompt &&
           (agent.blockedOptions ?? []).join("|") === blockedOptions.join("|")
@@ -641,6 +679,7 @@ export class Dispatcher {
         }
         const updated = this.store.updateAgent(name, {
           activity: next,
+          phase,
           blocked,
           composerBusy,
           composerText,
@@ -787,7 +826,7 @@ export class Dispatcher {
     // this nudge's Enter as its answer. Fail-CLOSED — an unreadable pane is
     // treated as blocked, exactly like the pane guard.
     if (this.tmux.capturePane) {
-      let live: PaneStatus = { working: false, blocked: true, composerBusy: true, composerText: "", composerWrapped: true, blockedPrompt: null, blockedOptions: [], waitingFor: null, permission: null, goalActive: false, goalFor: null };
+      let live: PaneStatus = { working: false, blocked: true, composerBusy: true, composerText: "", composerWrapped: true, outputTokens: null, blockedPrompt: null, blockedOptions: [], waitingFor: null, permission: null, goalActive: false, goalFor: null };
       try {
         live = parsePaneStatus(await this.tmux.capturePane(agent.tmuxSession, 30, true));
       } catch {

@@ -605,6 +605,7 @@ describe("parsePaneStatus", () => {
       composerBusy: false,
       composerText: "",
       composerWrapped: true, // the footer sits right under the prompt line
+      outputTokens: 108_000, // the frame's own spinner line
       blockedPrompt: null,
       blockedOptions: [],
       waitingFor: null,
@@ -623,6 +624,7 @@ describe("parsePaneStatus", () => {
       composerBusy: false,
       composerText: "",
       composerWrapped: true, // the footer sits right under the prompt line
+      outputTokens: null,
       blockedPrompt: null,
       blockedOptions: [],
       waitingFor: null,
@@ -640,6 +642,7 @@ describe("parsePaneStatus", () => {
       composerBusy: false,
       composerText: "",
       composerWrapped: false, // no prompt line at all in this frame
+      outputTokens: null,
       blockedPrompt: null,
       blockedOptions: [],
       waitingFor: null,
@@ -1126,5 +1129,61 @@ describe("no message stays in limbo: the hub borrows the line and gives it back"
     expect(bytes).toEqual([]);
     expect(nudges).toEqual([]);
     expect(typed).toEqual([]);
+  });
+});
+
+
+describe("speaking vs thinking: the counter has to MOVE", () => {
+  // The CLI draws the same spinner whether it is writing text or running a
+  // tool, so no single frame tells them apart. The output-token counter does —
+  // but only when compared with the previous sweep.
+  const spinner = (t) => `\u00b7 Transfiguring\u2026 (30m \u00b7 \u2193 ${t} tokens)`;
+  const footer = "  \u23f5\u23f5 bypass permissions on (shift+tab to cycle) \u00b7 esc to interrupt";
+
+  it("parseTokenCount reads the units the CLI actually prints", async () => {
+    const { parseTokenCount } = await import("../src/server/dispatcher.js");
+    expect(parseTokenCount(spinner("108k"))).toBe(108_000);
+    expect(parseTokenCount(spinner("940"))).toBe(940);
+    expect(parseTokenCount(spinner("1.2k"))).toBe(1_200);
+    expect(parseTokenCount(spinner("2.5m"))).toBe(2_500_000);
+    expect(parseTokenCount("\u001b[2m" + spinner("12k") + "\u001b[0m")).toBe(12_000); // through SGR
+  });
+
+  it("no counter on the frame → no reading, and no guess", async () => {
+    const { parseTokenCount, parsePaneStatus } = await import("../src/server/dispatcher.js");
+    expect(parseTokenCount(footer)).toBeNull();
+    expect(parsePaneStatus(footer).outputTokens).toBeNull();
+    // "/clear to save 822.6k tokens" is a HINT, not the spinner — it has no
+    // arrow, and reading it would make an idle agent look like it is writing.
+    expect(parseTokenCount("new task? /clear to save 822.6k tokens")).toBeNull();
+  });
+
+  it("the counter climbing means text is coming out", async () => {
+    const { tmux, paneText } = mockTmux();
+    const dispatcher = makeDispatcher(tmux);
+    registerOnline("alpha");
+
+    paneText.set("sb-alpha", `${spinner("10k")}\n${footer}`);
+    await dispatcher.refreshActivityOnce();
+    // First sweep has nothing to compare against: working, but no claim yet.
+    expect(store.getAgent("alpha")!.phase).toBe("thinking");
+
+    paneText.set("sb-alpha", `${spinner("12k")}\n${footer}`);
+    await dispatcher.refreshActivityOnce();
+    expect(store.getAgent("alpha")!.phase).toBe("speaking");
+
+    paneText.set("sb-alpha", `${spinner("12k")}\n${footer}`);
+    await dispatcher.refreshActivityOnce();
+    expect(store.getAgent("alpha")!.phase).toBe("thinking"); // stalled = a tool is running
+  });
+
+  it("an idle agent has no phase at all", async () => {
+    const { tmux, paneText } = mockTmux();
+    const dispatcher = makeDispatcher(tmux);
+    registerOnline("alpha");
+    paneText.set("sb-alpha", "\u276f \n  \u23f5\u23f5 bypass permissions on (shift+tab to cycle)");
+    await dispatcher.refreshActivityOnce();
+    expect(store.getAgent("alpha")!.activity).toBe("idle");
+    expect(store.getAgent("alpha")!.phase ?? null).toBeNull();
   });
 });
