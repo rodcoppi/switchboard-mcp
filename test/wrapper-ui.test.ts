@@ -1050,3 +1050,33 @@ describe("the sign of life", () => {
     expect(face).toContain("quirk.appendChild(skin)"); // quirk wraps the animated body
   });
 });
+
+describe("repainting a face must not kill its animations", () => {
+  // paintBlobFace writes cssText, and cssText wipes EVERY inline property —
+  // animation included. Reapplying only on a state change meant an agent that
+  // stays in one state (offline, forever) lost its loops on the first repaint
+  // and never got them back: the z's sat frozen mid-breath (owner, 28/08).
+  const src = script.match(/function paintBlobFace[\s\S]*?\n    }\n/)?.[0] ?? "";
+
+  it("the z's, the ring and the ? badge are re-animated on every paint", () => {
+    for (const anim of ["bl-zzz", "bl-ring", "bl-pulse"]) {
+      const line = src.split("\n").find((l) => l.includes(anim) && l.includes("animateSynced"));
+      expect(line, `${anim} is never re-applied`).toBeDefined();
+      expect(line, `${anim} is only applied on a state change`).not.toMatch(/if \(!same\)/);
+    }
+  });
+
+  it("every node whose cssText is rewritten gets its animation set right after", () => {
+    // The trap is structural, so guard it structurally: no cssText write may be
+    // the LAST word on a node that has a loop.
+    expect(src).toContain("animateSynced(node,");
+    expect(src).toContain("animateSynced(ring,");
+    expect(src).toContain("animateSynced(prop,");
+  });
+
+  it("the sleep z's are sized against the face, not against the study's 150px", () => {
+    // 0.42 of the original scale put a 17px "Z" on a 22px portrait — taller
+    // than the face, and sitting on the agent's name.
+    expect(src).toContain("Math.max(k, 0.22)");
+  });
+});
