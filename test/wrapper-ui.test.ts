@@ -919,7 +919,7 @@ describe("blob faces: shape is the agent, expression is the state", () => {
     const frames = [...styles.matchAll(/@keyframes (bl-[\w-]+)\s*\{((?:[^{}]|\{[^{}]*\})*)\}/g)];
     expect(frames.length).toBeGreaterThan(15);
     for (const [, name, body] of frames) {
-      if (["bl-zzz", "bl-ring"].includes(name)) continue; // one-shot cues, not loops
+      if (["bl-zzz", "bl-ring", "bl-quirk-spiny", "bl-quirk-spinx"].includes(name)) continue; // one-shot cues, not loops
       const stops = new Map<string, string>();
       for (const [, sel, decl] of body.matchAll(/([\d.%,\s]+)\{([^}]*)\}/g)) {
         for (const one of sel.split(",")) {
@@ -1002,5 +1002,51 @@ describe("faces survive the rail's rebuild", () => {
     const src = script.match(/function blobFace[\s\S]*?\n    }/)?.[0] ?? "";
     expect(src).toContain("skin.append(body, pupils)"); // siblings, not nested
     expect(src).not.toMatch(/body\.appendChild\(pupils\)/);
+  });
+});
+
+describe("the sign of life", () => {
+  // Every so often one resting agent hops or turns around. The rules are what
+  // keep it charming instead of annoying, so they are what gets tested.
+  const src = (() => {
+    const m = script.match(/function playBlobQuirk\(\)[\s\S]*?\n    }/);
+    if (!m) throw new Error("playBlobQuirk not found in the page");
+    return m[0];
+  })();
+
+  it("only ever picks an IDLE agent", () => {
+    // A hop from an agent that is erroring out, or asleep, would be a lie.
+    expect(src).toContain('node.dataset.blobState !== "idle"');
+  });
+
+  it("never the same face twice in a row", () => {
+    expect(src).toContain("name === lastQuirked");
+    expect(src).toContain("lastQuirked = name");
+  });
+
+  it("one face at a time — a rail moving together is a screensaver", () => {
+    // It picks a single candidate and animates that one, not the list.
+    expect(src).toMatch(/candidates\[Math\.floor\(Math\.random\(\) \* candidates\.length\)\]/);
+    expect(src).not.toMatch(/candidates\.forEach|for \(const .* of candidates\)/);
+  });
+
+  it("stays quiet while the tab is hidden", () => {
+    expect(src).toContain("document.hidden");
+  });
+
+  it("skips a face that is already mid-gesture", () => {
+    expect(src).toContain("!layer.style.animationName");
+  });
+
+  it("is sparse: one gesture every 14–34s across the whole rail", () => {
+    const sched = script.match(/function scheduleQuirk[\s\S]*?\n    \}\)\(\);/)?.[0] ?? "";
+    expect(sched).toContain("14000");
+    expect(sched).toMatch(/Math\.random\(\) \* 20000/);
+  });
+
+  it("rides its own layer, so it never fights the state loop for the transform", () => {
+    const face = script.match(/function blobFace\([\s\S]*?\n    }/)?.[0] ?? "";
+    expect(face).toContain('el("div", "blob-quirk")');
+    expect(face).toContain("quirk.appendChild(skin)"); // quirk wraps the animated body
   });
 });
