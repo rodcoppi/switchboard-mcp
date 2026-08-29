@@ -1260,3 +1260,103 @@ describe("the terminal's wheel", () => {
     expect(src).toMatch(/now - lastWheel < \d+/);
   });
 });
+
+describe("the rail's agent filter", () => {
+  // The rail is torn down and rebuilt every ~2.5s, so the piece worth pinning
+  // is the decision itself: given an agent and a query, does its card stay?
+  // Evaluated in one scope because it leans on displayOf/groupOf and the
+  // DEFAULT_GROUP const — same trick as the CLI_BUILTIN_COMMANDS block above.
+  const defaultGroup = script.match(/const DEFAULT_GROUP = "[^"]*";/)?.[0];
+  if (!defaultGroup) throw new Error("DEFAULT_GROUP not found in the page");
+  const wanted = ["agentMatchesQuery", "foldSearch", "displayOf", "groupOf"];
+  const fns: string[] = [];
+  source.forEachChild((node) => {
+    if (ts.isFunctionDeclaration(node) && node.name && wanted.includes(node.name.text)) {
+      fns.push(script.slice(node.getStart(source), node.getEnd()));
+    }
+  });
+  if (fns.length !== wanted.length) {
+    throw new Error(`expected ${wanted.length} embedded functions, found ${fns.length}`);
+  }
+  const matches = new Function(`${defaultGroup}\n${fns.join("\n")}\nreturn agentMatchesQuery;`)() as (
+    agent: Record<string, unknown>,
+    query: string,
+  ) => boolean;
+
+  const renderAgentsSrc = (() => {
+    let found: ts.FunctionDeclaration | undefined;
+    source.forEachChild((node) => {
+      if (ts.isFunctionDeclaration(node) && node.name?.text === "renderAgents") found = node;
+    });
+    if (!found) throw new Error("renderAgents not found in the page");
+    return script.slice(found.getStart(source), found.getEnd());
+  })();
+
+  const roteirista = {
+    name: "video-roteiro",
+    displayName: "🎬 Roteirista",
+    role: "Roteirista de vídeo, cuida da narração",
+    group: "conteudo",
+  };
+
+  it("keeps everyone while the box is empty — blank is not a filter", () => {
+    expect(matches(roteirista, "")).toBe(true);
+    expect(matches(roteirista, "   ")).toBe(true);
+  });
+
+  it("matches the four things the card puts on screen", () => {
+    expect(matches(roteirista, "video-roteiro")).toBe(true); // the id
+    expect(matches(roteirista, "Roteirista")).toBe(true); // the display name
+    expect(matches(roteirista, "narração")).toBe(true); // the role line
+    expect(matches(roteirista, "conteudo")).toBe(true); // the room
+    expect(matches(roteirista, "postgres")).toBe(false);
+  });
+
+  it("ignores case and accents, because the owner types Portuguese flat", () => {
+    expect(matches(roteirista, "ROTEIRISTA")).toBe(true);
+    expect(matches(roteirista, "roteirista")).toBe(true);
+    expect(matches(roteirista, "narracao")).toBe(true); // typed without the ç/ã
+    expect(matches({ ...roteirista, role: "Revisao de codigo" }, "revisão")).toBe(true);
+  });
+
+  it("does not choke on an agent with no role and no group", () => {
+    expect(matches({ name: "solo" }, "solo")).toBe(true);
+    expect(matches({ name: "solo" }, "default")).toBe(true); // groupOf's fallback
+    expect(matches({ name: "solo" }, "roteiro")).toBe(false);
+  });
+
+  it("names the rail after what is in it", () => {
+    expect(html).toContain('<span class="eyebrow">Agents</span>');
+    expect(html).not.toContain(">Patchbay<");
+  });
+
+  it("puts the box outside the container the poll wipes", () => {
+    // renderAgents() empties #agents every ~2.5s; an input in there would be
+    // destroyed mid-word, the way the rename input was before its guard.
+    const head = html.match(/<div class="sidebar-head">[\s\S]*?<\/div>/)?.[0] ?? "";
+    expect(head).toContain('id="rail-search"');
+    expect(renderAgentsSrc).not.toContain("rail-search");
+  });
+
+  it("hides rooms a search emptied, and says so when nothing is left", () => {
+    expect(renderAgentsSrc).toContain("if (query && inGroup.length === 0) continue;");
+    expect(renderAgentsSrc).toContain("No agent matches");
+    // Without a search an empty group keeps its header (a room you just named).
+    expect(renderAgentsSrc).toContain("const query = state.railSearch.trim();");
+  });
+
+  it("is view state, stored nowhere", () => {
+    expect(script).toContain('railSearch: ""');
+    expect(script).not.toMatch(/localStorage[^\n]*railSearch/);
+    expect(script).not.toContain("sb.railSearch");
+  });
+
+  it("clears on Escape without taking the key away from the page", () => {
+    const wiring = script.match(/\$\("#rail-search"\)\.addEventListener\("keydown"[\s\S]*?\n {6}\}\);/)?.[0] ?? "";
+    expect(wiring).toContain('if (e.key !== "Escape" || !e.target.value) return;');
+    expect(wiring).toContain("e.stopPropagation();");
+    // Its own two listeners are all there is: nothing document-level reaches
+    // for the box, so it claims no key from the palette (⌘K) or the composer.
+    expect(script.match(/\$\("#rail-search"\)/g)?.length).toBe(2);
+  });
+});
