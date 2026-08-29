@@ -5693,7 +5693,7 @@
         "colour-reset-btn": "⭕", "mute-toggle": "🔇", "rename-btn": "✏️", "remove-btn": "🗑",
         "autostart-btn": "⏻", "bootcmd-btn": "🛠", "cliargs-btn": "⚙",
         "display-btn": "🏷", "leader-btn": "👑", "stop-btn": "⏹", "desc-btn": "📄",
-        "folder-btn": "📂", "fresh-btn": "✨", "shape-btn": "⬡",
+        "folder-btn": "📂", "fresh-btn": "✨", "shape-btn": "⬡", "filter-btn": "🔎",
       };
       function menuItem(cls, label, title, onClick) {
         const item = el("button", `agent-menu-item ${cls}`);
@@ -5735,6 +5735,22 @@
           ),
         );
       }
+      // Filter the transcript to this agent. It used to be what clicking an
+      // OFFLINE card did — the only way in, and undiscoverable at that. That
+      // click now opens the wake screen (which is what you actually want from
+      // a sleeping agent), so the filter needs a door of its own rather than
+      // quietly disappearing.
+      menu.appendChild(
+        menuItem(
+          "filter-btn",
+          "filter transcript",
+          `Show only ${displayOf(agent)}'s messages in the transcript`,
+          () => {
+            closeMenus();
+            setFilter(agent.name);
+          },
+        ),
+      );
       // The agent's silhouette. Cycles through the shapes on click: with ten of
       // them, a submenu would be a lot of chrome for a choice you make once and
       // recognise by eye anyway.
