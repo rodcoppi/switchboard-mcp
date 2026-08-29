@@ -447,10 +447,15 @@
        presence signal. Actions stay contextual instead of filling the row. */
     .agent-card {
       position: relative;
+      /* Two columns: the face on the left, vertically centred against the whole
+         card, and the text beside it. It used to sit inline before the name, on
+         the first line only, which read as a bullet point rather than as the
+         agent's portrait. */
       display: flex;
-      flex-direction: column;
-      gap: 4px;
-      padding: 12px 14px 12px 24px;
+      flex-direction: row;
+      align-items: center;
+      gap: 11px;
+      padding: 12px 14px 12px 18px;
       margin-bottom: 8px;
       background: var(--bg-elev);
       border: 1px solid var(--border-soft);
@@ -476,8 +481,14 @@
       box-shadow: 0 0 7px 1px rgba(245, 166, 35, 0.65);
     }
     .agent-card.unseen .agent-name { color: var(--accent-bright); font-weight: 700; }
-    /* Signal line + description line align under the NAME, past the lamp. */
-    .agent-meta, .agent-role { padding-left: 29px; }
+    /* The text column beside the face. */
+    .agent-card-body {
+      flex: 1 1 auto;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
     /* Engine siblings (claude + its codex on the same folder) read as ONE
        project: joined vertically (no gap, shared rounded corners) with a
        "linked" bracket down the left so it is clear they are two engines of the
@@ -684,7 +695,7 @@
       background: none;
       box-shadow: none;
       overflow: visible;
-      width: 22px; height: 22px;
+      width: 26px; height: 26px;
     }
     .status-dot {
       position: absolute;
@@ -4408,6 +4419,8 @@
     };
     const BLOB_SHAPE_NAMES = Object.keys(BLOB_SHAPES);
     const BLOB_SHAPE_KEY = "sb.blobShape";
+    /** Face size on the rail. Keep in step with .agent-portrait.blob in the CSS. */
+    const BLOB_RAIL_SIZE = 26;
 
     /** Operator-chosen shapes, by agent. A view preference, like the colours. */
     const blobShapes = (() => {
@@ -5493,7 +5506,7 @@
       const portrait = el("span", "agent-portrait blob");
       portrait.title = `${AGENT_TYPE_TITLES[type]} · ${BLOB_LABEL[blobState] || blobState}`;
       portrait.appendChild(
-        blobFaceFor(agent.name, blobState, 22, blobShapeOf(agent.name), blobVariantOf(agent.name, blobState)),
+        blobFaceFor(agent.name, blobState, BLOB_RAIL_SIZE, blobShapeOf(agent.name), blobVariantOf(agent.name, blobState)),
       );
       const badge = el("span", "blob-engine");
       badge.appendChild(agentLogo(type));
@@ -5514,7 +5527,7 @@
       }
       name.appendChild(document.createTextNode(displayOf(agent)));
       name.title = agent.displayName ? `${agent.displayName} (${agent.name})` : agent.name;
-      nameRow.append(portrait, name);
+      nameRow.appendChild(name);
       // Unseen output: the face already says it (chevron eyes, hopping), so the
       // pip beside the name would be the same fact twice. The brighter name
       // stays — that is what makes the ROW findable when you are scanning a
@@ -5996,7 +6009,9 @@
       const pulseTarget = menu.querySelector(".nudge-btn");
       if (pulseTarget) pulseTarget.dataset.nudgeFor = agent.name;
 
-      card.append(nameRow, meta, role, actions);
+      const cardBody = el("div", "agent-card-body");
+      cardBody.append(nameRow, meta, role);
+      card.append(portrait, cardBody, actions);
       // Clicking the agent shows the AGENT — its screen, live. The rail is the
       // tab bar and a card is the tab, so making you click a second button to
       // see the thing you just selected was friction for nothing.
