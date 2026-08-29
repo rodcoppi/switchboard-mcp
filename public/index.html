@@ -1022,8 +1022,8 @@
        state must be re-derivable from state.reopening (a label swapped on
        the live node gets wiped by the next render) — and it must LOOK like
        loading: a spinner, not just different text. */
-    .reopen-btn.busy { pointer-events: none; opacity: 0.85; }
-    .reopen-btn.busy::before {
+    .reopen-btn.busy, .chat-wake-btn.busy { pointer-events: none; opacity: 0.85; }
+    .reopen-btn.busy::before, .chat-wake-btn.busy::before {
       content: "";
       display: inline-block;
       width: 9px;
@@ -2111,7 +2111,7 @@
     .chat-typing-note:empty { display: none; }
     /* The agent's own question, surfaced in the chat: while a dialog owns the
        TUI the composer cannot reach it, so answering lives here. */
-    .chat-ask {
+    .chat-ask, .chat-wake {
       width: 100%;
       max-width: 880px;
       margin: 10px auto 4px;
@@ -2129,6 +2129,18 @@
     .chat-ask-q { color: var(--text); margin-bottom: 10px; }
     .chat-ask-options { display: flex; flex-wrap: wrap; gap: 8px; }
     .chat-ask-opt { text-align: left; }
+    /* Same block for an agent that is simply OFF. Nothing is wrong, so it drops
+       the amber, and it centres itself the way the empty state it replaces did.
+       It is deliberately NOT a .chat-ask: updateChatAsk removes every .chat-ask
+       it did not build itself. */
+    .chat-wake { margin: auto; border-color: var(--border); }
+    .chat-wake .chat-ask-eyebrow { color: var(--text-dim); }
+    .chat-wake-facts {
+      font-family: var(--mono);
+      font-size: var(--fs-xs);
+      color: var(--text-faint);
+      margin-bottom: 10px;
+    }
     @keyframes typing-bounce {
       0%, 60%, 100% { transform: translateY(0); opacity: 0.5; }
       30% { transform: translateY(-4px); opacity: 1; }
@@ -5309,6 +5321,11 @@
     }
 
     function renderAgents() {
+      // Every path that changes an agent repaints the rail, so this is where
+      // the panel hears that its agent fell asleep or woke up. BEFORE the
+      // menu guard below: that guard protects the rail's DOM, and the panel
+      // must not stay wrong just because a card's ⋯ menu happens to be open.
+      syncScreenPresence();
       const container = $("#agents");
       // A rebuild while a card's ⋯ menu is open closes it in the operator's
       // face — and the idle/working poll re-renders every ~2.5s, which made the
@@ -5631,7 +5648,7 @@
       // Actions (owner UX feedback: one PRIMARY action per state, the rest in
       // a compact ⋯ menu — four inline buttons crowded the card):
       //   online  → [screen] + ⋯(window, nudge, group, mute)
-      //   offline → [reopen] + ⋯(group, mute, remove)
+      //   offline → [wake] + ⋯(group, mute, remove)
       // Stop propagation everywhere so a control click never toggles the
       // card's feed filter.
       const actions = el("div", "agent-actions");
@@ -5648,15 +5665,15 @@
       const primary = el(
         "button",
         online ? "open-btn" : reopening ? "reopen-btn busy" : "reopen-btn",
-        online ? "window" : reopening ? "reopening…" : "reopen",
+        online ? "window" : reopening ? "waking…" : "wake",
       );
       primary.type = "button";
       primary.disabled = reopening;
       primary.title = online
         ? `Open a Windows terminal window attached to "${agent.name}" (the card alone shows its screen here)`
         : reopening
-          ? `Relaunching "${agent.name}"…`
-          : `Relaunch "${agent.name}" in ${agent.cwd} (continues its conversation) and open its window`;
+          ? `Waking "${agent.name}"…`
+          : `Wake "${agent.name}" — it comes back in ${agent.cwd}, continuing its conversation`;
       primary.addEventListener("click", (ev) => {
         ev.stopPropagation();
         if (online) openAgentTerminal(agent.name, primary);
@@ -5931,7 +5948,7 @@
               field: "cliArgs",
               endpoint: "cliargs",
               bodyKey: "args",
-              hint: "replaces the standard CLI argv on every launch — reopen's continue no longer applies",
+              hint: "replaces the standard CLI argv on every launch — wake's continue no longer applies",
               placeholder: "--resume <session-id> --dangerously-skip-permissions",
             });
           },
@@ -5983,7 +6000,7 @@
           menuItem(
             "stop-btn",
             "stop",
-            `Stop "${agent.name}" (kills its tmux session) but keep it in the Hub — you can reopen it`,
+            `Stop "${agent.name}" (kills its tmux session) but keep it in the Hub — you can wake it again`,
             async () => {
               closeMenus();
               try {
@@ -6084,13 +6101,12 @@
       // tab bar and a card is the tab, so making you click a second button to
       // see the thing you just selected was friction for nothing.
       //
-      // This used to filter the transcript instead. That is still there, but as
-      // what it always was: a filter, living inside Messages where filters
-      // belong (see renderFilterBar).
-      const activateCard = () => {
-        if (agent.status === "online") openScreen(agent.name);
-        else setFilter(agent.name); // no screen to show — fall back to its traffic
-      };
+      // A sleeping agent opens its screen too. Clicking one used to set the
+      // transcript filter instead — an answer to a question nobody asked: you
+      // clicked the AGENT. Now the panel says it is off and offers to wake it,
+      // and the filter is what it always was, a control inside Messages (the
+      // filter bar clears it; see renderFilterBar).
+      const activateCard = () => openScreen(agent.name);
       card.addEventListener("click", activateCard);
       card.addEventListener("keydown", (ev) => {
         if (ev.target !== card || (ev.key !== "Enter" && ev.key !== " ")) return;
@@ -6149,7 +6165,7 @@
       // re-derives the same look from state.reopening (see the card renderer).
       btn.disabled = true;
       btn.classList.add("busy");
-      btn.textContent = "reopening…";
+      btn.textContent = "waking…";
       try {
         const res = await fetch("/api/agents/launch", {
           method: "POST",
@@ -6171,7 +6187,7 @@
         });
         const body = await res.json();
         if (!res.ok || !body.ok) {
-          toast(`Reopen failed: ${body.error || `HTTP ${res.status}`}`, "warn");
+          toast(`Could not wake "${agent.name}": ${body.error || `HTTP ${res.status}`}`, "warn");
           return;
         }
         const conv = fresh
@@ -6179,13 +6195,13 @@
           : body.fallback
             ? "with a FRESH conversation (no resumable one found)"
             : "continuing its conversation";
-        toast(`Agent "${agent.name}" reopened ${conv}.`, "ok");
+        toast(`"${agent.name}" is awake, ${conv}.`, "ok");
       } catch (err) {
-        toast(`Reopen failed: ${err && err.message ? err.message : err}`, "warn");
+        toast(`Could not wake "${agent.name}": ${err && err.message ? err.message : err}`, "warn");
       } finally {
         // `btn` may be an orphaned node by now (the rail re-renders on SSE
         // events mid-launch) — the render below restores whichever card
-        // exists NOW: online → "window", still offline (failure) → "reopen".
+        // exists NOW: online → "window", still offline (failure) → "wake".
         state.reopening.delete(agent.name);
         renderAgents();
       }
@@ -6575,7 +6591,7 @@
     // belongs to tmux, not to the dashboard.
     // =====================================================================
 
-    const screenState = { name: null, term: null, fit: null, sse: null, ro: null, mode: "chat", chatSse: null, model: null, context: null };
+    const screenState = { name: null, term: null, fit: null, sse: null, ro: null, mode: "chat", chatSse: null, model: null, context: null, presence: null };
 
     // Groups folded away in the rail. Page-local on purpose: which projects you
     // have collapsed right now is a view, not something the hub should store.
@@ -6680,6 +6696,23 @@
         const active = b.dataset.mode === mode;
         b.classList.toggle("active", active);
         b.setAttribute("aria-pressed", String(active));
+      }
+      const agent = state.agents.get(name);
+      screenState.presence = presenceKey(name);
+      // A sleeping agent has neither of the two things this panel streams: the
+      // conversation endpoint answers "no conversation log" and the terminal
+      // attaches to a session that is gone. Neither is an answer to the click,
+      // which was "I want this agent" — so the panel asks whether to wake it.
+      if (agent && agent.status !== "online") {
+        teardownTerminal();
+        teardownChat();
+        $("#screen-term-wrap").hidden = true;
+        $("#screen-chat").hidden = false;
+        $("#chat-composer").hidden = true; // nothing to type into yet
+        mountWakeScreen(agent);
+        updateStopButton();
+        renderScreenStatus();
+        return;
       }
       if (mode === "terminal") {
         teardownChat();
@@ -6964,6 +6997,78 @@
       screenState.chatSse = sse;
     }
 
+    /**
+     * The panel for an agent that is not running: what it is, where it lives,
+     * and one button to bring it back. It reuses the .chat-ask block (same
+     * callout the agent's own questions get) and calls reopenAgent, the exact
+     * path the card's wake button takes — one relaunch, one guard, one toast.
+     *
+     * The busy look is derived from state.reopening rather than latched here,
+     * so opening the panel on an agent whose wake was started from its CARD
+     * still shows the wake in flight.
+     */
+    function mountWakeScreen(agent) {
+      screenState.model = null; // both are read off a conversation log; there is none
+      screenState.context = null;
+      const waking = state.reopening.has(agent.name);
+      setScreenHint(waking ? "waking it up…" : "not running", false);
+      const view = $("#screen-chat");
+      view.textContent = "";
+      const box = el("div", "chat-wake");
+      box.append(
+        el("div", "chat-ask-eyebrow", "⏻ this agent is not running"),
+        el(
+          "div",
+          "chat-ask-q",
+          `Nothing is attached to ${agent.cwd || "its folder"} right now. Waking it relaunches ` +
+            `${displayOf(agent)} there, continuing the conversation it left behind.`,
+        ),
+      );
+      // The two facts that decide whether you want it back at all: how stale it
+      // is, and whether anything is queued for it (a nudge only lands on a live
+      // pane, so those messages sit unread until it returns).
+      const facts = [];
+      const seen = agent.lastSeenAt ? Date.parse(agent.lastSeenAt) : NaN;
+      if (!Number.isNaN(seen)) facts.push(`last seen ${fmtAgo(seen)}`);
+      if (agent.unreadCount > 0) {
+        facts.push(`${agent.unreadCount} message${agent.unreadCount > 1 ? "s" : ""} waiting for it`);
+      }
+      if (facts.length) box.appendChild(el("div", "chat-wake-facts", facts.join(" · ")));
+      const row = el("div", "chat-ask-options");
+      const btn = el("button", `btn chat-ask-opt chat-wake-btn${waking ? " busy" : ""}`, waking ? "waking…" : "wake");
+      btn.type = "button";
+      btn.disabled = waking;
+      btn.title = `Wake "${agent.name}" — it comes back in ${agent.cwd}, continuing its conversation`;
+      btn.addEventListener("click", () => reopenAgent(agent, btn));
+      row.appendChild(btn);
+      box.appendChild(row);
+      view.appendChild(box);
+    }
+
+    /**
+     * What the panel had to be built for: the agent's presence, plus whether a
+     * wake is in flight. Both change UNDER the panel (SSE, the activity poll,
+     * a launch settling), and both change what it should be showing.
+     */
+    function presenceKey(name) {
+      const agent = state.agents.get(name);
+      if (agent && agent.status !== "online") {
+        return state.reopening.has(name) ? "asleep-waking" : "asleep";
+      }
+      return "awake";
+    }
+
+    /**
+     * Rebuilds the panel when the open agent crosses that line: the wake screen
+     * hands over to the real chat the moment it comes online, and drops the
+     * spinner if the wake failed instead of freezing on "waking…".
+     */
+    function syncScreenPresence() {
+      if (!screenState.name) return;
+      if (presenceKey(screenState.name) === screenState.presence) return;
+      setScreenMode(screenState.mode || "chat");
+    }
+
     function teardownChat() {
       if (screenState.chatSse) screenState.chatSse.close();
       screenState.chatSse = null;
@@ -6981,6 +7086,7 @@
       teardownChat();
       const had = screenState.name;
       screenState.name = null;
+      screenState.presence = null;
       $("#screen").hidden = true;
       // Mid-switch: openScreen is about to show the next agent, so leaving
       // Messages visible for that instant would just flash the transcript.
@@ -7198,12 +7304,25 @@
      * dots while the open agent is mid-turn (activity === "working"), so you can
      * see it is chewing on your message instead of wondering if it landed.
      */
+    /**
+     * The open agent, but only while it is running. Every pinned chat surface
+     * (its question, the stalled composer, its subagents, the typing dots, the
+     * STOP button, the footer pills) describes a LIVE pane and most of them act
+     * on one — and going offline does NOT clear those ephemeral fields on the
+     * record (dispatcher.markOffline only flips `status`). Without this the
+     * wake screen kept offering buttons that type into a session that is gone.
+     */
+    function liveScreenAgent() {
+      const agent = screenState.name ? state.agents.get(screenState.name) : null;
+      return agent && agent.status === "online" ? agent : null;
+    }
+
     function updateChatTyping() {
       const view = $("#screen-chat");
       if (!view) return;
       const off = () => view.querySelector(".chat-typing")?.remove();
       if (screenState.name === null || screenState.mode !== "chat") return off();
-      const agent = state.agents.get(screenState.name);
+      const agent = liveScreenAgent();
       const working = !!(agent && agent.activity === "working");
       // "Waiting for N background agents to finish": the turn's text is done
       // but spawned work is still pending — without this the chat rendered
@@ -7253,7 +7372,7 @@
       const view = $("#screen-chat");
       if (!view) return;
       const old = view.querySelector(".chat-stall");
-      const agent = screenState.name ? state.agents.get(screenState.name) : null;
+      const agent = liveScreenAgent();
       const unread = (agent && agent.unreadCount) || 0;
       const stalled = !!(agent && agent.composerBusy && !agent.blocked && unread > 0 && screenState.mode === "chat");
       if (!stalled) {
@@ -7324,7 +7443,7 @@
       const view = $("#screen-chat");
       if (!view) return;
       const old = view.querySelector(".chat-subagents");
-      const agent = screenState.name ? state.agents.get(screenState.name) : null;
+      const agent = liveScreenAgent();
       const subs = (agent && agent.subagents) || [];
       if (!subs.length || screenState.mode !== "chat") {
         old?.remove();
@@ -7364,7 +7483,7 @@
       const view = $("#screen-chat");
       if (!view) return;
       const old = view.querySelector(".chat-ask");
-      const agent = screenState.name ? state.agents.get(screenState.name) : null;
+      const agent = liveScreenAgent();
       const asking = !!(agent && agent.blocked && screenState.mode === "chat");
       const options = (agent && agent.blockedOptions) || [];
       if (!asking || !options.length) {
@@ -7415,7 +7534,7 @@
       updateChatSubagents();
       const btn = $("#chat-stop");
       if (!btn) return;
-      const agent = screenState.name ? state.agents.get(screenState.name) : null;
+      const agent = liveScreenAgent();
       const working = !!(agent && agent.activity === "working");
       btn.classList.toggle("visible", working && screenState.name !== null && screenState.mode === "chat");
     }
@@ -7539,7 +7658,7 @@
       renderScreenIdentity();
       const box = $("#chat-statusbar");
       if (!box) return;
-      const agent = screenState.name === null ? null : state.agents.get(screenState.name);
+      const agent = liveScreenAgent();
       if (!agent || screenState.mode !== "chat") {
         box.hidden = true;
         return;
