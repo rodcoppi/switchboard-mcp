@@ -1462,3 +1462,23 @@ describe("the rail's agent filter", () => {
     expect(script.match(/\$\("#rail-search"\)/g)?.length).toBe(2);
   });
 });
+
+describe("the transcript filter kept a door", () => {
+  // Clicking an OFFLINE card used to filter the transcript to that agent — the
+  // only way in, and undiscoverable at that. That click now opens the wake
+  // screen, which is what you want from a sleeping agent, so the filter needed
+  // an entry of its own instead of quietly disappearing.
+  it("lives in the agent's ⋯ menu", () => {
+    // The comma matters: "filter-btn": "🔎" in the icon map comes first.
+    const at = script.indexOf('"filter-btn",');
+    expect(at, "the filter menu item is gone").toBeGreaterThan(-1);
+    const item = script.slice(at, at + 500);
+    expect(item).toContain("setFilter(agent.name)");
+    expect(item).toContain("closeMenus()"); // the transcript is elsewhere on screen
+  });
+
+  it("is not reachable ONLY by the clear button any more", () => {
+    const calls = [...script.matchAll(/setFilter\(/g)].length;
+    expect(calls).toBeGreaterThanOrEqual(3); // definition + clear + the menu item
+  });
+});
