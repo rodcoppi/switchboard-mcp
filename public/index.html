@@ -384,7 +384,7 @@
     /* ------------------------------- Layout ------------------------------ */
     .layout { flex: 1 1 auto; display: flex; min-height: 0; }
 
-    /* ----------------------------- Sidebar (PATCHBAY) -------------------- */
+    /* --------------------------- Sidebar (agent rail) -------------------- */
     .sidebar {
       position: relative;
       flex: 0 0 var(--sidebar-w);
@@ -417,9 +417,26 @@
     .sidebar-head {
       flex: 0 0 auto;
       display: flex; align-items: center; gap: 8px;
+      flex-wrap: wrap;
       padding: 13px 16px 11px;
       border-bottom: 1px solid var(--border-soft);
     }
+    /* The filter takes the whole second line of the head: the label, the tally
+       and the two + buttons already fill the first one at the rail's default
+       width, and the ~60px left over is not a box anyone types a name into. */
+    .rail-search {
+      flex: 1 1 100%;
+      min-width: 0;
+      padding: 5px 10px;
+      background: var(--bg-inset);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: var(--fs-xs);
+    }
+    .rail-search:focus { outline: none; border-color: var(--accent-line); }
+    .rail-search::placeholder { color: var(--text-faint); }
     .rail-count {
       font-family: var(--mono);
       font-size: var(--fs-xs);
@@ -3463,7 +3480,7 @@
       <div class="sidebar-resizer" id="sidebar-resizer" role="separator"
         aria-orientation="vertical" title="Drag to resize · double-click to reset"></div>
       <div class="sidebar-head">
-        <span class="eyebrow">Patchbay</span>
+        <span class="eyebrow">Agents</span>
         <span id="sidebar-count" class="rail-count">0</span>
         <!-- Groups and + agent live HERE, over the rail: both are about the
              agents listed below them. Groups was up in the tab strip, which is
@@ -3472,6 +3489,13 @@
           title="Create a group, and move agents between rooms">+ group</button>
         <button class="btn launcher-open" id="launcher-open" type="button"
           title="Launch a new agent">+ agent</button>
+        <!-- It sits in the HEAD, not in #agents: renderAgents() wipes that
+             container every ~2.5s, and an input inside it would be destroyed
+             mid-word the way the rename input was. No hotkey opens it — ⌘K is
+             the palette's and "/" belongs to the composer's slash menu. -->
+        <input class="rail-search" id="rail-search" type="search"
+          aria-label="Filter the agent rail" placeholder="filter by name, role or group…"
+          autocomplete="off" spellcheck="false" />
       </div>
 
       <div class="agents" id="agents"></div>
@@ -3653,6 +3677,7 @@
       filter: null,        // active agent-name filter, or null
       group: null,         // active group tab, or null for "all groups"
       search: "",          // free-text filter over the transcript, or ""
+      railSearch: "",      // free-text filter over the agent rail, or ""
       unseen: new Set(),   // agents that finished a turn you haven't opened yet
       reopening: new Set(), // agents with a relaunch in flight (see reopenAgent)
       sse: null,
@@ -4307,7 +4332,13 @@
       const online = agents.filter((a) => a.status === "online").length;
       $("#online-count").textContent = String(online);
       $("#agent-count").textContent = String(agents.length);
-      $("#sidebar-count").textContent = String(agents.length);
+      // Filtered, the rail's badge counts MATCHES over the roster: the group
+      // tallies below it already follow the filter, and one number disagreeing
+      // with the others reads as a bug rather than as a search.
+      const railQuery = state.railSearch.trim();
+      $("#sidebar-count").textContent = railQuery
+        ? `${agents.filter((a) => agentMatchesQuery(a, railQuery)).length}/${agents.length}`
+        : String(agents.length);
       // The MCP registration line is a first-run instruction, not furniture.
       $("#mcp-add").hidden = agents.length > 0;
 
@@ -4902,6 +4933,32 @@
       return a.displayName || a.name;
     }
 
+    /**
+     * Case- and accent-folded text, for comparing what the operator TYPED with
+     * what is on screen. The owner writes Portuguese and types it flat, so
+     * "roteirista" has to reach a role that reads "Roteirista de vídeo".
+     */
+    function foldSearch(text) {
+      return String(text == null ? "" : text)
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase();
+    }
+
+    /**
+     * Does an agent survive the rail's filter? It is matched against the four
+     * things its card puts on screen — the id, the display name, the role line
+     * and the room it sits in — because a filter that ignores what you are
+     * looking at reads as broken. An empty query keeps everyone.
+     */
+    function agentMatchesQuery(agent, query) {
+      const q = foldSearch(query).trim();
+      if (!q) return true;
+      return [agent.name, displayOf(agent), agent.role, groupOf(agent)].some((field) =>
+        foldSearch(field).includes(q),
+      );
+    }
+
     // --- Per-group colour ------------------------------------------------
     // A group's colour is a VIEWER preference (this is one operator's console),
     // so it lives in localStorage, not on the server. Unset groups get a stable
@@ -5262,13 +5319,20 @@
       // Enter/Esc/blur all remove it, so the rail never stays frozen.
       if (container.querySelector(".agent-menu:not([hidden]), .agent-rename-input")) return;
       container.textContent = "";
-      const agents = sortedAgents();
+      // The filter box needs no such guard: it lives in .sidebar-head, OUTSIDE
+      // the container wiped above, and its text is state — so neither the poll
+      // nor a mid-word rebuild can take it away.
+      const query = state.railSearch.trim();
+      const roster = sortedAgents();
+      const agents = query ? roster.filter((a) => agentMatchesQuery(a, query)) : roster;
       if (agents.length === 0) {
         container.appendChild(
           el(
             "div",
             "empty-hint",
-            "No registered agents. Run `switchboard start <name>`.",
+            roster.length === 0
+              ? "No registered agents. Run `switchboard start <name>`."
+              : `No agent matches “${query}”.`,
           ),
         );
         renderHeader();
@@ -5289,6 +5353,10 @@
         for (const group of groups) {
           const inGroup = agents.filter((a) => groupOf(a) === group);
           if (state.group && group !== state.group) continue;
+          // A search empties most rooms, and a header over nothing is a shell.
+          // Only a search hides one: with the box empty, a room you have just
+          // named and not yet filled still has to be visible.
+          if (query && inGroup.length === 0) continue;
           const box = el("div", "rail-group");
           box.dataset.group = group;
           box.style.setProperty("--group-color", groupColor(group));
@@ -10136,6 +10204,24 @@
           state.search = v;
           renderFeed();
         }, 120);
+      });
+
+      // Free-text filter over the rail. Undebounced, unlike the transcript's
+      // search: this is a dozen rows, and a filter that trails the keys by a
+      // frame feels like it is not listening.
+      $("#rail-search").addEventListener("input", (e) => {
+        state.railSearch = e.target.value;
+        renderAgents();
+      });
+      // Escape empties the box — and only while there IS something to empty, so
+      // an already-clear box hands the key back to the page (Escape closes the
+      // launcher, the groups sheet and the dir picker).
+      $("#rail-search").addEventListener("keydown", (e) => {
+        if (e.key !== "Escape" || !e.target.value) return;
+        e.stopPropagation();
+        e.target.value = "";
+        state.railSearch = "";
+        renderAgents();
       });
 
       // Chat composer: type to the agent.
