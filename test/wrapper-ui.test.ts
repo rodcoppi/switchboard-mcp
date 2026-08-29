@@ -27,6 +27,16 @@ function embeddedFunction<T extends (...args: any[]) => any>(name: string): T {
  * scope and returns the named one — for page functions that call each other
  * (toWhatsAppText → unwrapForWhatsApp).
  */
+/** The raw text of one embedded function — for contracts a UI function cannot be run to prove. */
+function embeddedFunctionSource(name: string): string {
+  let found: ts.FunctionDeclaration | undefined;
+  source.forEachChild((node) => {
+    if (ts.isFunctionDeclaration(node) && node.name?.text === name) found = node;
+  });
+  if (!found) throw new Error(`Embedded function ${name} not found`);
+  return script.slice(found.getStart(source), found.getEnd());
+}
+
 function embeddedFunctionWith<T extends (...args: any[]) => any>(name: string, helpers: string[]): T {
   const wanted = new Set([name, ...helpers]);
   const codes: string[] = [];
@@ -163,19 +173,11 @@ describe("WhatsApp copy formatting", () => {
   });
 });
 
-describe("wrapper reopen loading state", () => {
-  // Behavior, not units: the rail re-renders on every SSE event, so a reopen
+describe("wrapper wake loading state", () => {
+  // Behavior, not units: the rail re-renders on every SSE event, so a wake
   // in flight must be re-derivable from state (state.reopening), never from a
   // label mutated on the live button node — the old version blinked back to
-  // "reopen" mid-launch and looked dead. Source-level contract assertions.
-  function embeddedFunctionSource(name: string): string {
-    let found: ts.FunctionDeclaration | undefined;
-    source.forEachChild((node) => {
-      if (ts.isFunctionDeclaration(node) && node.name?.text === name) found = node;
-    });
-    if (!found) throw new Error(`Embedded function ${name} not found`);
-    return script.slice(found.getStart(source), found.getEnd());
-  }
+  // its idle label mid-launch and looked dead. Source-level contract assertions.
 
   it("reopenAgent tracks the in-flight launch in state and re-renders on settle", () => {
     const src = embeddedFunctionSource("reopenAgent");
@@ -184,7 +186,7 @@ describe("wrapper reopen loading state", () => {
     // The finally must re-render (the clicked node may be orphaned), not
     // poke the possibly-dead node back to its idle label.
     expect(src).toContain("renderAgents()");
-    expect(src).not.toContain('btn.textContent = "reopen"');
+    expect(src).not.toContain('btn.textContent = "wake"');
     // Double-click guard.
     expect(src).toContain("if (state.reopening.has(agent.name)) return;");
   });
@@ -193,7 +195,7 @@ describe("wrapper reopen loading state", () => {
     const src = embeddedFunctionSource("buildAgentCard");
     expect(src).toContain("state.reopening.has(agent.name)");
     expect(src).toContain('"reopen-btn busy"');
-    expect(src).toContain('"reopening…"');
+    expect(src).toContain('"waking…"');
   });
 
   it("the busy button has a real spinner, not just a label swap", () => {
@@ -219,6 +221,106 @@ describe("wrapper reopen loading state", () => {
     // The activity poll re-renders every ~2.5s; a rebuild mid-typing
     // destroyed the rename/nickname input ("it kicks me out").
     expect(html).toContain('querySelector(".agent-menu:not([hidden]), .agent-rename-input")');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Clicking an agent that is NOT running. It used to bounce you to that agent's
+// traffic filter, and forcing the panel open landed on the conversation
+// endpoint's "no conversation log" (there is no log to tail) or on a terminal
+// attached to a session that no longer exists. All three answer something
+// other than the click. The panel owes: it is off, this is its folder, here is
+// the way back.
+// ---------------------------------------------------------------------------
+
+describe("wake screen for a sleeping agent", () => {
+  /** presenceKey, with a fake registry — the one bit of this that is pure logic. */
+  function presenceKeyWith(agents: Record<string, { status: string }>, waking: string[]) {
+    return new Function(
+      `const state = { agents: new Map(Object.entries(arguments[0])), reopening: new Set(arguments[1]) };
+       ${embeddedFunctionSource("presenceKey")}
+       return presenceKey;`,
+    )(agents, waking) as (name: string) => string;
+  }
+
+  it("presenceKey separates asleep, waking and awake", () => {
+    const key = presenceKeyWith({ beta: { status: "offline" }, alfa: { status: "online" } }, []);
+    expect(key("beta")).toBe("asleep");
+    expect(key("alfa")).toBe("awake");
+    // An agent the rail has not heard of yet must not be declared asleep —
+    // that would put a wake button under a name nobody can launch.
+    expect(key("ghost")).toBe("awake");
+  });
+
+  it("a wake in flight is its own presence, so the screen can show progress", () => {
+    const key = presenceKeyWith({ beta: { status: "offline" } }, ["beta"]);
+    expect(key("beta")).toBe("asleep-waking");
+  });
+
+  it("the pinned chat surfaces refuse a pane that is gone", () => {
+    // Going offline does NOT clear activity/blocked/composerBusy on the record
+    // (dispatcher.markOffline only flips status), so every surface that types
+    // into a pane has to ask whether the pane is still there.
+    const live = new Function(
+      `const state = { agents: new Map(Object.entries(arguments[0])) };
+       const screenState = { name: arguments[1] };
+       ${embeddedFunctionSource("liveScreenAgent")}
+       return liveScreenAgent;`,
+    )({ beta: { name: "beta", status: "offline", blocked: true, blockedOptions: ["1. yes"] } }, "beta") as () => unknown;
+    expect(live()).toBeNull();
+  });
+
+  it("clicking the card opens the screen whatever the agent's status is", () => {
+    const src = embeddedFunctionSource("buildAgentCard");
+    expect(src).toContain("const activateCard = () => openScreen(agent.name);");
+  });
+
+  it("setScreenMode mounts the wake screen instead of a stream when the agent is off", () => {
+    const src = embeddedFunctionSource("setScreenMode");
+    const cut = src.indexOf('if (mode === "terminal")');
+    const branch = src.slice(0, cut);
+    expect(branch).toContain('agent.status !== "online"');
+    expect(branch).toContain("mountWakeScreen(agent)");
+    expect(branch).toContain("return;"); // neither stream is reached
+    expect(branch).not.toContain("mountChat(");
+    expect(branch).not.toContain("mountTerminal(");
+    // Nothing to type into: the composer would send-keys into a dead pane.
+    expect(branch).toContain('$("#chat-composer").hidden = true');
+  });
+
+  it("the wake screen offers the same relaunch the card's button does, with the context to decide", () => {
+    const src = embeddedFunctionSource("mountWakeScreen");
+    expect(src).toContain("reopenAgent(agent, btn)"); // one path, one guard, one toast
+    expect(src).toContain("agent.cwd"); // which folder comes back
+    expect(src).toContain("fmtAgo(seen)"); // how stale it is
+    expect(src).toContain("agent.unreadCount"); // what is queued behind it
+    // Busy is DERIVED, so a wake started from the card already reads as in
+    // flight when you open the panel (same rule as the rail's button).
+    expect(src).toContain("state.reopening.has(agent.name)");
+  });
+
+  it("the panel re-derives its presence on every rail repaint, before the menu guard", () => {
+    // The guard protects the rail's DOM from a rebuild mid-menu; the panel
+    // must not stay on a stale screen just because a card's menu is open.
+    const src = embeddedFunctionSource("renderAgents");
+    const sync = src.indexOf("syncScreenPresence()");
+    expect(sync).toBeGreaterThan(-1);
+    expect(sync).toBeLessThan(src.indexOf('.agent-menu:not([hidden])'));
+  });
+
+  it("the rebuild only fires when the presence the panel was built for changed", () => {
+    const src = embeddedFunctionSource("syncScreenPresence");
+    expect(src).toContain("=== screenState.presence");
+    expect(src).toContain("setScreenMode(screenState.mode");
+  });
+
+  it("the wake block borrows .chat-ask's styling without joining the class", () => {
+    // updateChatAsk removes every .chat-ask it did not build itself, so the
+    // wake block reuses the RULE and keeps its own class.
+    expect(styles).toContain(".chat-ask, .chat-wake {");
+    expect(styles).toContain(".chat-wake .chat-ask-eyebrow");
+    // …and the spinner is the rail button's, not a second one.
+    expect(styles).toContain(".reopen-btn.busy::before, .chat-wake-btn.busy::before");
   });
 });
 
