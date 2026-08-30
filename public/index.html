@@ -589,7 +589,7 @@
        "-7px" hop is 5% there and 32% on a 22px rail portrait — which read as a
        jump, not a hop (owner, 27/08: "dá um pulo pra cima"). Every translation
        below is expressed against --blk, the face's own scale factor. */
-    @keyframes bl-hop { 0%,70%,100% { transform: translateY(0) scale(1,1); } 78% { transform: translateY(calc(-10px * var(--bla,1))) scale(.92,1.09); } 88% { transform: translateY(0) scale(1.07,.93); } }
+    @keyframes bl-hop { 0%,48%,100% { transform: translateY(0) scale(1,1); } 58% { transform: translateY(calc(-13px * var(--bla,1))) scale(.9,1.12); } 72% { transform: translateY(0) scale(1.1,.9); } 84% { transform: translateY(calc(-5px * var(--bla,1))) scale(.97,1.04); } }
     @keyframes bl-jitter { 0%,100% { transform: translate(0,0) rotate(0); } 25% { transform: translate(calc(1.6px * var(--blk,1)),calc(-1.1px * var(--blk,1))) rotate(1.6deg); } 75% { transform: translate(calc(-1.6px * var(--blk,1)),calc(1.1px * var(--blk,1))) rotate(-1.6deg); } }
     @keyframes bl-boot { 0%,100% { transform: scale(.82); opacity:.6 } 50% { transform: scale(1.05); opacity:1 } }
     @keyframes bl-squat { 0%,100% { transform: scale(1,1) skewX(-2.5deg); } 50% { transform: scale(1.07,.93) skewX(2.5deg); } }
@@ -4512,7 +4512,7 @@
                    anim: ["bl-sway 3.2s ease-in-out infinite, bl-breathe 3.4s ease-in-out infinite", "bl-lilt 3.6s ease-in-out infinite, bl-float 4.4s ease-in-out infinite", "bl-roll 3.4s ease-in-out infinite, bl-drift 5.2s ease-in-out infinite"], eye: { w: 15, h: 27, rot: -14, mirror: false },
                    gap: 22, innerAnim: "bl-dart 5.6s cubic-bezier(.6,0,.2,1) infinite" },
       reply:     { color: "var(--unread-bg)", w: 1, h: 1, radius: "50% 50% 52% 48% / 48% 52% 50% 50%",
-                   anim: ["bl-hop 1.9s ease-in-out infinite, bl-swell 3.1s ease-in-out infinite", "bl-hop 2.4s ease-in-out infinite, bl-roll 3.2s ease-in-out infinite", "bl-hop 1.7s ease-in-out infinite, bl-lilt 2.8s ease-in-out infinite"], eye: { w: 20, arc: "up", thick: 11 }, gap: 16 },
+                   anim: ["bl-hop 2.4s ease-in-out infinite, bl-breathe 2.3s ease-in-out infinite, bl-float 3.1s ease-in-out infinite", "bl-hop 2.8s ease-in-out infinite, bl-swell 2.1s ease-in-out infinite, bl-drift 3.6s ease-in-out infinite", "bl-hop 2.1s ease-in-out infinite, bl-breathe 2.6s ease-in-out infinite, bl-lilt 3.3s ease-in-out infinite"], eye: { w: 20, arc: "up", thick: 11 }, gap: 16 },
       error:     { color: "var(--danger)", w: .86, h: .9, radius: "46% 54% 56% 44% / 44% 56% 44% 56%",
                    anim: ["bl-jitter .28s steps(2) infinite", "bl-jitter .22s steps(2) infinite", "bl-jitter .34s steps(2) infinite, bl-throb 1.1s ease-in-out infinite"], eye: { w: 14, h: 22, rot: -28 }, gap: 16 },
       launching: { color: "var(--text-dim)", w: 1, h: 1, anim: ["bl-boot 1.4s ease-in-out infinite, bl-float 3.4s ease-in-out infinite", "bl-boot 1.7s ease-in-out infinite, bl-roll 3.2s ease-in-out infinite", "bl-boot 1.2s ease-in-out infinite, bl-drift 4s ease-in-out infinite"],
@@ -5620,6 +5620,29 @@
       });
     }
 
+    /**
+     * Everything the rail draws, as one string. Cheap to build (a dozen agents),
+     * and it decides whether the DOM is touched at all — see renderAgents.
+     * Anything that changes a card must appear here, or the rail goes stale.
+     */
+    let lastRailSignature = "";
+    function railSignature() {
+      const parts = sortedAgents().map((a) =>
+        [
+          a.name, a.status, a.activity || "", a.phase || "", blobStateOf(a), groupOf(a),
+          a.unreadCount || 0, a.muted ? "m" : "", displayOf(a), a.role || "",
+          agentTypeOf(a), a.waitingFor || "", a.blocked ? "b" : "", a.permission || "",
+          a.goalActive ? "g" : "", a.goalFor || "", blobShapeOf(a.name),
+        ].join("\u0001"),
+      );
+      return [
+        parts.join("\u0002"),
+        state.filter || "", state.railSearch || "", screenState.name || "",
+        [...state.reopening].sort().join(","), [...state.unseen].sort().join(","),
+        [...collapsedGroups].sort().join(","),
+      ].join("\u0003");
+    }
+
     function renderAgents() {
       // Every path that changes an agent repaints the rail, so this is where
       // the panel hears that its agent fell asleep or woke up. BEFORE the
@@ -5635,6 +5658,17 @@
       // typing and then kicks me out". The input only exists while editing —
       // Enter/Esc/blur all remove it, so the rail never stays frozen.
       if (container.querySelector(".agent-menu:not([hidden]), .agent-rename-input")) return;
+      // NOTHING TO DO IS THE COMMON CASE, and rebuilding anyway is what killed
+      // the faces. Wiping the container REMOVES every card from the document,
+      // and removing a node cancels its running CSS animations — so with 31
+      // call sites firing on every SSE event, poll and nudge, a 1.5s spin was
+      // being cancelled mid-turn and a 3s breath restarted several times a
+      // second. It looked like nothing moved, because nothing ever got to
+      // (owner, 30/08: "n tem nada disso rolando" / "o 360 eu nunca mais vi
+      // dar"). Repaint only when what the rail SHOWS actually changed.
+      const signature = railSignature();
+      if (signature === lastRailSignature && container.firstChild) return;
+      lastRailSignature = signature;
       container.textContent = "";
       // The filter box needs no such guard: it lives in .sidebar-head, OUTSIDE
       // the container wiped above, and its text is state — so neither the poll
