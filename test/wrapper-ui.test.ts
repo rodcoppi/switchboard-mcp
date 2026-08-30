@@ -1044,8 +1044,8 @@ describe("blob faces: shape is the agent, expression is the state", () => {
       // Drop every calc() that scales off one of the face variables; whatever
       // pixels are left are literal ones.
       const scrubbed = body
-        .replace(/calc\([^()]*var\(--bl[kgr][^()]*\)[^()]*\)/g, "")
-        .replace(/var\(--bl[kgr][^()]*\)/g, "");
+        .replace(/calc\([^()]*var\(--bl[kgra][^()]*\)[^()]*\)/g, "")
+        .replace(/var\(--bl[kgra][^()]*\)/g, "");
       expect(scrubbed, `${name} translates by a literal pixel`).not.toMatch(/[\d.]px/);
     }
   });
@@ -1155,7 +1155,10 @@ describe("the sign of life", () => {
   it("rides its own layer, so it never fights the state loop for the transform", () => {
     const face = script.match(/function blobFace\([\s\S]*?\n    }/)?.[0] ?? "";
     expect(face).toContain('el("div", "blob-quirk")');
-    expect(face).toContain("quirk.appendChild(skin)"); // quirk wraps the animated body
+    // quirk → react → skin: each gesture gets a layer of its own, so a reaction
+    // playing over a spin over a state loop never fights for one transform.
+    expect(face).toContain("quirk.appendChild(react)");
+    expect(face).toContain("react.appendChild(skin)");
   });
 });
 
@@ -1523,5 +1526,131 @@ describe("the eyes read as quotation marks, not as bars", () => {
     // other, so they must not be parallel.
     expect(eyeOf("thinking")).not.toContain("mirror: false");
     expect(eyeOf("error")).not.toContain("mirror: false");
+  });
+});
+
+
+describe("faces: proportion, motion and reaction", () => {
+  const spec = script.match(/const BLOB_SPEC = \{[\s\S]*?\n    \};/)?.[0] ?? "";
+  const eyeOf = (state: string) => {
+    const at = spec.indexOf(`${state}:`);
+    const m = /eye: \{([^}]*)\}/.exec(spec.slice(at));
+    return m ? m[1] : "";
+  };
+  const num = (src: string, key: string) => Number(new RegExp(`${key}: ([\\d.]+)`).exec(src)?.[1]);
+
+  // --- 1. idle motion you can actually see ---------------------------------
+  it("idle motion scales by --bla, which does not vanish on a small face", () => {
+    // Scaled literally by --blk, the float travelled 0.7px on a 26px portrait
+    // and the face read as frozen.
+    for (const name of ["bl-float", "bl-drift", "bl-nod", "bl-dart", "bl-shift", "bl-hop", "bl-lilt"]) {
+      const body = styles.match(new RegExp(`@keyframes ${name}\\s*\\{((?:[^{}]|\\{[^{}]*\\})*)\\}`))?.[1] ?? "";
+      expect(body, `${name} is not there`).not.toBe("");
+      expect(body, `${name} still breathes on the geometric scale`).toContain("--bla");
+    }
+  });
+
+  it("geometry keeps --blk: a spin's reach is not a mood", () => {
+    const spin = styles.match(/@keyframes bl-spin-y\s*\{((?:[^{}]|\{[^{}]*\})*)\}/)?.[1] ?? "";
+    expect(spin).toContain("--blr");
+    expect(spin).not.toContain("--bla");
+  });
+
+  // --- 2. the reply face ---------------------------------------------------
+  it("the finished face wears rounded arcs, not a square-edged chevron", () => {
+    const reply = eyeOf("reply");
+    expect(reply).toContain('arc: "up"');
+    expect(reply).not.toContain("chev");
+  });
+
+  it("its eyes stopped eating the body: under half the width", () => {
+    const at = spec.indexOf("reply:");
+    const gap = Number(/gap: ([\d.]+)/.exec(spec.slice(at))?.[1]);
+    const row = num(eyeOf("reply"), "w") * 2 + gap;
+    expect(row / 150).toBeLessThan(0.5); // it was 61%
+  });
+
+  // --- 3. the clamp --------------------------------------------------------
+  it("eyes can never outgrow the body, at any size", () => {
+    const src = script.match(/function paintBlobFace[\s\S]*?\n    }\n/)?.[0] ?? "";
+    const m = /const bodyW[\s\S]*?eyeK \*= Math\.min\([^;]*;/.exec(src);
+    expect(m, "the clamp is gone").not.toBeNull();
+    const clamp = new Function(
+      "size", "sp", "eyeK",
+      `${m![0].replace(/^\s*const /gm, "var ")} return eyeK;`,
+    ) as (size: number, sp: unknown, k: number) => number;
+    // The worst real case: a squashed state on the 26px rail, with the
+    // small-face boost already applied.
+    const squashed = { w: 1.12, h: 0.78, eye: { w: 16, h: 40 }, gap: 21 };
+    const size = 26, k = size / 150;
+    const boosted = k * (1 + ((110 - size) / 110) * 0.9);
+    const out = clamp(size, squashed, boosted);
+    expect(out).toBeLessThanOrEqual(boosted); // only ever rescues
+    expect((squashed.eye.w * 2 + squashed.gap) * out).toBeLessThanOrEqual(size * squashed.w * 0.58 + 0.01);
+    expect(squashed.eye.h * out).toBeLessThanOrEqual(size * squashed.h * 0.46 + 0.01);
+  });
+
+  it("a face that already fits is left alone", () => {
+    const src = script.match(/function paintBlobFace[\s\S]*?\n    }\n/)?.[0] ?? "";
+    const m = /const bodyW[\s\S]*?eyeK \*= Math\.min\([^;]*;/.exec(src)!;
+    const clamp = new Function("size", "sp", "eyeK", `${m[0].replace(/^\s*const /gm, "var ")} return eyeK;`) as
+      (size: number, sp: unknown, k: number) => number;
+    const roomy = { w: 1, h: 1, eye: { w: 15, h: 30 }, gap: 20 };
+    expect(clamp(150, roomy, 1)).toBeCloseTo(1, 5);
+  });
+
+  // --- 4. the shape set ----------------------------------------------------
+  it("the cornered shapes are paths with rounded corners, not polygons", () => {
+    const shapes = script.match(/const BLOB_SHAPES = \{[\s\S]*?\n    \};/)?.[0] ?? "";
+    expect(shapes).not.toContain("polygon("); // CSS cannot round those corners
+    for (const name of ["hexagon", "triangle", "diamond"]) {
+      expect(shapes, `${name} lost its outline`).toContain(`${name}:`);
+      expect(shapes).toMatch(new RegExp(`${name}:\\s*\\{ poly:`));
+    }
+    expect(shapes).toContain("clover:"); // from the reference set
+  });
+
+  it("blobShapePath rounds every corner and closes the outline", () => {
+    const fn = embeddedFunctionWith<(pts: number[][], size: number) => string>("blobShapePath", [
+      "trimToward",
+    ]);
+    const tri = fn([[0.5, 0.05], [0.95, 0.9], [0.05, 0.9]], 100);
+    expect(tri.startsWith('path("M ')).toBe(true);
+    expect(tri.trimEnd().endsWith('Z")')).toBe(true);
+    expect((tri.match(/Q /g) || []).length).toBe(3); // one curve per corner
+  });
+
+  it("a corner never folds through itself on a narrow vertex", () => {
+    const trim = embeddedFunction<(a: number[], b: number[], d: number) => number[]>("trimToward");
+    // Asking for more than the edge has: it stops at the midpoint.
+    expect(trim([0, 0], [10, 0], 999)).toEqual([5, 0]);
+    expect(trim([0, 0], [10, 0], 2)).toEqual([2, 0]);
+  });
+
+  // --- 5. reactions --------------------------------------------------------
+  it("every reaction offers more than one gesture", () => {
+    const table = script.match(/const BLOB_REACTIONS = \[[\s\S]*?\n    \];/)?.[0] ?? "";
+    const bodies = [...table.matchAll(/body: \[([^\]]*)\]/g)];
+    expect(bodies.length).toBeGreaterThanOrEqual(7);
+    for (const [, list] of bodies) {
+      expect(list.split(",").length, `a reaction has only one gesture: ${list}`).toBeGreaterThan(1);
+    }
+  });
+
+  it("the pick is random — a reaction is a moment, not a state", () => {
+    const play = script.match(/function playBlobReaction[\s\S]*?\n    }/)?.[0] ?? "";
+    expect(play).toContain("Math.random()");
+    // …and the state loops are still SEEDED, which is the opposite rule.
+    const variant = script.match(/function blobVariantOf[\s\S]*?\n    }/)?.[0] ?? "";
+    expect(variant).not.toContain("Math.random");
+  });
+
+  it("a poke answers the click without stealing it from the card", () => {
+    const at = script.indexOf("portrait.addEventListener");
+    expect(at).toBeGreaterThan(-1);
+    const handler = script.slice(at, at + 400);
+    expect(handler).toContain("bl-poke");
+    expect(handler).not.toContain("stopPropagation"); // the card still opens
+    expect(handler).not.toContain("preventDefault");
   });
 });
