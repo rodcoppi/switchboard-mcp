@@ -1701,3 +1701,39 @@ describe("the head has a pose, not just eyes", () => {
     expect(paint).toMatch(/scaleX\(\$\{squeeze/);
   });
 });
+
+describe("reduce-motion is surfaced, not silently obeyed", () => {
+  // One Windows toggle makes Chrome report the flag, and the page's own
+  // reduced-motion rule then kills every animation with !important — faces
+  // included — while saying nothing. That is how an evening goes into making
+  // the idle motion bolder against a browser throwing all of it away.
+  it("the blanket rule can be overridden by the operator", () => {
+    const rule = styles.match(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\n    \}/)?.[0] ?? "";
+    expect(rule).toContain("html:not(.force-motion)");
+  });
+
+  it("the dashboard says so, and offers the switch", () => {
+    const src = script.match(/function initMotionPreference[\s\S]*?\n    }/)?.[0] ?? "";
+    expect(src).toContain('matchMedia("(prefers-reduced-motion: reduce)")');
+    expect(src).toContain("toastAction(");
+    expect(src).toContain("force-motion");
+  });
+
+  it("it obeys by default — the override is a choice, not a default", () => {
+    const src = script.match(/function initMotionPreference[\s\S]*?\n    }/)?.[0] ?? "";
+    // The class is only added from storage or from the button's handler.
+    const adds = [...src.matchAll(/classList\.add\("force-motion"\)/g)];
+    expect(adds).toHaveLength(2);
+    expect(src).toContain('localStorage.getItem(MOTION_KEY) === "1"');
+  });
+
+  it("it says it once per session, not on every reconnect", () => {
+    const src = script.match(/function initMotionPreference[\s\S]*?\n    }/)?.[0] ?? "";
+    expect(src).toContain("sessionStorage");
+  });
+
+  it("runs before anything animates", () => {
+    const boot = script.match(/async function boot\(\) \{[\s\S]{0,200}/)?.[0] ?? "";
+    expect(boot).toContain("initMotionPreference()");
+  });
+});

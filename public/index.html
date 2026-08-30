@@ -3521,8 +3521,15 @@
     }
 
     /* Motion is purposeful; honor the OS reduced-motion request. */
+    /* The OS asked for less motion, and until now that was the end of the
+       conversation: this rule kills every animation on the page with
+       !important, faces included, and says nothing about it. Windows turns the
+       flag on with a single Settings toggle, so a dashboard can go completely
+       still while its owner reads the code wondering why (30/08). It still
+       obeys by default; `html.force-motion` is the operator's own override,
+       offered by the banner that now explains what happened. */
     @media (prefers-reduced-motion: reduce) {
-      *, *::before, *::after {
+      html:not(.force-motion) *, html:not(.force-motion) *::before, html:not(.force-motion) *::after {
         animation-duration: 0.001ms !important;
         animation-iteration-count: 1 !important;
         transition-duration: 0.001ms !important;
@@ -4488,7 +4495,7 @@
     // is deliberately unused — "finished and unopened" is exactly `reply`.
     const BLOB_SPEC = {
       idle:      { color: "var(--online)", w: 1, h: 1,
-                   anim: ["bl-wobble 7s ease-in-out infinite, bl-float 7s ease-in-out infinite", "bl-roll 8.5s ease-in-out infinite, bl-drift 11s ease-in-out infinite", "bl-breathe 5.6s ease-in-out infinite, bl-sway 9s ease-in-out infinite"],
+                   anim: ["bl-breathe 3.1s ease-in-out infinite, bl-float 4.3s ease-in-out infinite, bl-wobble 6.2s ease-in-out infinite", "bl-swell 2.7s ease-in-out infinite, bl-drift 5.1s ease-in-out infinite, bl-roll 7.4s ease-in-out infinite", "bl-breathe 3.6s ease-in-out infinite, bl-float 3.5s ease-in-out infinite, bl-sway 5.8s ease-in-out infinite"],
                    eye: { w: 15, h: 30, rot: 13, mirror: false }, gap: 20, eyeAnim: "bl-blink 5.4s ease-in-out infinite" },
       working:   { color: "var(--text)", w: 1.02, h: .96, anim: ["bl-churn 1.15s ease-in-out infinite", "bl-throb 1.05s ease-in-out infinite", "bl-swell .95s ease-in-out infinite, bl-roll 2.4s ease-in-out infinite"],
                    eye: { w: 13, h: 22, rot: 13, mirror: false, altDelay: .28 }, gap: 19,
@@ -4496,21 +4503,21 @@
       speaking:  { color: "var(--text)", w: 1.02, h: 1.02, radius: "52% 48% 48% 52% / 50% 50% 50% 50%",
                    anim: ["bl-pump .62s ease-in-out infinite", "bl-swell .58s ease-in-out infinite", "bl-throb .66s ease-in-out infinite"], eye: { w: 15, h: 24, rot: 10, mirror: false, altDelay: .31 }, gap: 21,
                    eyeAnim: "bl-wave .62s ease-in-out infinite" },
-      thinking:  { color: "#a78bfa", w: 1.12, h: .84, anim: ["bl-squat 4.5s ease-in-out infinite", "bl-roll 5.2s ease-in-out infinite", "bl-swell 4.8s ease-in-out infinite, bl-drift 9s ease-in-out infinite"],
+      thinking:  { color: "#a78bfa", w: 1.12, h: .84, anim: ["bl-squat 3.4s ease-in-out infinite, bl-float 4.6s ease-in-out infinite", "bl-roll 3.8s ease-in-out infinite, bl-breathe 3.2s ease-in-out infinite", "bl-swell 3.1s ease-in-out infinite, bl-drift 5.4s ease-in-out infinite"],
                    eye: { w: 15, h: 26, rot: 20 }, gap: 20, bx: 6, by: -9 },
       asking:    { color: "var(--warn)", w: .92, h: 1.1, radius: "50% 50% 46% 54% / 56% 56% 44% 44%",
                    anim: ["bl-nod 2.4s cubic-bezier(.3,1.5,.4,1) infinite", "bl-nod 2.9s cubic-bezier(.3,1.5,.4,1) infinite, bl-lilt 3.4s ease-in-out infinite", "bl-nod 2.1s cubic-bezier(.3,1.5,.4,1) infinite, bl-swell 2.6s ease-in-out infinite"], eye: { w: 16, h: 40, rot: 8, mirror: false }, gap: 21,
                    ring: true, prop: "?" },
       waiting:   { color: "var(--link)", w: 1, h: 1, radius: "54% 46% 52% 48% / 48% 52% 48% 52%",
-                   anim: ["bl-sway 4.4s ease-in-out infinite", "bl-lilt 5.1s ease-in-out infinite", "bl-roll 4.8s ease-in-out infinite, bl-drift 7.5s ease-in-out infinite"], eye: { w: 15, h: 27, rot: -14, mirror: false },
+                   anim: ["bl-sway 3.2s ease-in-out infinite, bl-breathe 3.4s ease-in-out infinite", "bl-lilt 3.6s ease-in-out infinite, bl-float 4.4s ease-in-out infinite", "bl-roll 3.4s ease-in-out infinite, bl-drift 5.2s ease-in-out infinite"], eye: { w: 15, h: 27, rot: -14, mirror: false },
                    gap: 22, innerAnim: "bl-dart 5.6s cubic-bezier(.6,0,.2,1) infinite" },
       reply:     { color: "var(--unread-bg)", w: 1, h: 1, radius: "50% 50% 52% 48% / 48% 52% 50% 50%",
                    anim: ["bl-hop 1.9s ease-in-out infinite, bl-swell 3.1s ease-in-out infinite", "bl-hop 2.4s ease-in-out infinite, bl-roll 3.2s ease-in-out infinite", "bl-hop 1.7s ease-in-out infinite, bl-lilt 2.8s ease-in-out infinite"], eye: { w: 20, arc: "up", thick: 11 }, gap: 16 },
       error:     { color: "var(--danger)", w: .86, h: .9, radius: "46% 54% 56% 44% / 44% 56% 44% 56%",
                    anim: ["bl-jitter .28s steps(2) infinite", "bl-jitter .22s steps(2) infinite", "bl-jitter .34s steps(2) infinite, bl-throb 1.1s ease-in-out infinite"], eye: { w: 14, h: 22, rot: -28 }, gap: 16 },
-      launching: { color: "var(--text-dim)", w: 1, h: 1, anim: ["bl-boot 1.4s ease-in-out infinite", "bl-boot 1.7s ease-in-out infinite, bl-roll 3.2s ease-in-out infinite", "bl-boot 1.2s ease-in-out infinite"],
+      launching: { color: "var(--text-dim)", w: 1, h: 1, anim: ["bl-boot 1.4s ease-in-out infinite, bl-float 3.4s ease-in-out infinite", "bl-boot 1.7s ease-in-out infinite, bl-roll 3.2s ease-in-out infinite", "bl-boot 1.2s ease-in-out infinite, bl-drift 4s ease-in-out infinite"],
                    eye: { w: 14, h: 23, rot: 13, mirror: false }, gap: 19, eyeAnim: "bl-boot 1.4s ease-in-out infinite", ghost: true },
-      offline:   { color: "#3f3f46", w: 1, h: .78, radius: "50%", eye: { w: 30, h: 7 }, gap: 18,
+      offline:   { color: "#3f3f46", w: 1, h: .78, radius: "50%", anim: ["bl-breathe 5.2s ease-in-out infinite", "bl-swell 5.8s ease-in-out infinite", "bl-breathe 4.6s ease-in-out infinite"], eye: { w: 30, h: 7 }, gap: 18,
                    dim: true, zzz: true },
     };
     /**
@@ -5123,6 +5130,42 @@
     document.addEventListener("mouseleave", () => { blobGaze.x = null; blobGaze.y = null; queueBlobGaze(); });
     window.addEventListener("blur", () => { blobGaze.x = null; blobGaze.y = null; queueBlobGaze(); });
     window.addEventListener("scroll", queueBlobGaze, { passive: true });
+
+    /**
+     * The OS-level "reduce motion" flag, surfaced instead of silently obeyed.
+     *
+     * One toggle in Windows Settings (Accessibility → Visual effects →
+     * Animation effects) makes Chrome report it, and the page's own
+     * reduced-motion rule then kills every animation with !important — faces,
+     * spinners, the unread pulse, all of it. Nothing said so, which is how an
+     * evening goes into making the idle motion bolder while the browser is
+     * throwing all of it away (30/08: "n tem nada disso rolando aqui").
+     *
+     * Default stays: obey. But the operator gets told, and gets a switch.
+     */
+    const MOTION_KEY = "sb.forceMotion";
+    function initMotionPreference() {
+      const forced = localStorage.getItem(MOTION_KEY) === "1";
+      if (forced) document.documentElement.classList.add("force-motion");
+      const query = window.matchMedia("(prefers-reduced-motion: reduce)");
+      const announce = () => {
+        if (!query.matches || forced || sessionStorage.getItem("sb.motionToldOnce")) return;
+        sessionStorage.setItem("sb.motionToldOnce", "1");
+        toastAction(
+          "Your system asks apps to reduce motion, so every animation here is off — " +
+            "the agent faces included.",
+          "animate anyway",
+          () => {
+            localStorage.setItem(MOTION_KEY, "1");
+            document.documentElement.classList.add("force-motion");
+            toast("Motion on — the faces are alive again.", "ok");
+          },
+          16000,
+        );
+      };
+      announce();
+      query.addEventListener?.("change", announce);
+    }
 
     /**
      * A SIGN OF LIFE: every so often one resting agent hops, or turns all the
@@ -10530,6 +10573,7 @@
     }
 
     async function boot() {
+      initMotionPreference(); // before anything animates, so the banner is honest
       setupMcpCommand();
       loadUsageCollapsed();
       $("#usage-toggle").addEventListener("click", () => {
