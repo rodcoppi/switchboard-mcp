@@ -1482,3 +1482,46 @@ describe("the transcript filter kept a door", () => {
     expect(calls).toBeGreaterThanOrEqual(3); // definition + clear + the menu item
   });
 });
+
+describe("the eyes read as quotation marks, not as bars", () => {
+  // From the reference set the owner sent: short, THICK, rounded strokes
+  // tilted the SAME way — that parallel slant is what gives those faces their
+  // character. Ours were tall thin vertical bars.
+  const spec = script.match(/const BLOB_SPEC = \{[\s\S]*?\n    \};/)?.[0] ?? "";
+  const eyeOf = (state: string) => {
+    const at = spec.indexOf(`${state}:`);
+    const m = /eye: \{([^}]*)\}/.exec(spec.slice(at));
+    return m ? m[1] : "";
+  };
+
+  it("the resting face tilts both eyes the same way", () => {
+    const idle = eyeOf("idle");
+    expect(idle).toMatch(/rot: \d+/);
+    expect(idle).toContain("mirror: false"); // parallel, like a quotation mark
+  });
+
+  it("strokes are thick relative to their length — not hairlines", () => {
+    for (const state of ["idle", "working", "speaking", "asking", "launching"]) {
+      const e = eyeOf(state);
+      const w = Number(/w: ([\d.]+)/.exec(e)?.[1]);
+      const h = Number(/h: ([\d.]+)/.exec(e)?.[1]);
+      expect(w, `${state} has no width`).toBeGreaterThan(0);
+      // A bar is far taller than it is wide; a quote mark is close to 1:2.
+      expect(h / w, `${state} still reads as a bar`).toBeLessThan(3);
+    }
+  });
+
+  it("size still carries the expression — that is the part worth keeping", () => {
+    const height = (s: string) => Number(/h: ([\d.]+)/.exec(eyeOf(s))?.[1]);
+    // Attention opens the eyes; work narrows them.
+    expect(height("asking")).toBeGreaterThan(height("idle"));
+    expect(height("working")).toBeLessThan(height("idle"));
+  });
+
+  it("the two states whose meaning IS the mismatch keep mirrored eyes", () => {
+    // Curiosity and a scowl both read from the eyes disagreeing with each
+    // other, so they must not be parallel.
+    expect(eyeOf("thinking")).not.toContain("mirror: false");
+    expect(eyeOf("error")).not.toContain("mirror: false");
+  });
+});
