@@ -1737,3 +1737,45 @@ describe("reduce-motion is surfaced, not silently obeyed", () => {
     expect(boot).toContain("initMotionPreference()");
   });
 });
+
+describe("the rail stops cancelling its own animations", () => {
+  // Wiping the container removes every card from the document, and removing a
+  // node cancels its running CSS animations. With 31 call sites firing on
+  // every SSE event, poll and nudge, a 1.5s spin was cancelled mid-turn and a
+  // 3s breath restarted several times a second: it looked like nothing moved
+  // because nothing ever got to (owner, 30/08).
+  const render = script.match(/function renderAgents\(\) \{[\s\S]*?\n      container\.textContent = "";/)?.[0] ?? "";
+
+  it("bails out before touching the DOM when nothing changed", () => {
+    expect(render).toContain("const signature = railSignature()");
+    expect(render).toMatch(/if \(signature === lastRailSignature && container\.firstChild\) return;/);
+    // …and the bail-out comes BEFORE the wipe, or it would be pointless.
+    expect(render.indexOf("railSignature()")).toBeLessThan(render.indexOf('container.textContent = ""'));
+  });
+
+  it("the signature covers everything a card can show", () => {
+    const sig = script.match(/function railSignature\(\) \{[\s\S]*?\n    }/)?.[0] ?? "";
+    for (const field of [
+      "a.status", "a.activity", "a.phase", "blobStateOf(a)", "groupOf(a)", "a.unreadCount",
+      "a.muted", "displayOf(a)", "a.role", "agentTypeOf(a)", "a.waitingFor", "a.blocked",
+      "blobShapeOf(a.name)",
+    ]) {
+      expect(sig, `${field} is missing — the rail would go stale`).toContain(field);
+    }
+    // View state that changes what is drawn, not just which data exists.
+    for (const field of ["state.filter", "state.railSearch", "screenState.name", "state.reopening", "state.unseen", "collapsedGroups"]) {
+      expect(sig, `${field} is missing`).toContain(field);
+    }
+  });
+
+  it("the attention state is not a frozen face that twitches", () => {
+    const spec = script.match(/const BLOB_SPEC = \{[\s\S]*?\n    \};/)?.[0] ?? "";
+    const at = spec.indexOf("reply:");
+    const anim = /anim: \[([\s\S]*?)\]/.exec(spec.slice(at))?.[1] ?? "";
+    // Every variant pairs the hop with something continuous: bl-hop rests for
+    // half its cycle, so on its own it reads as stillness plus a twitch.
+    for (const variant of anim.split('", "')) {
+      expect(variant, `a reply variant only hops: ${variant}`).toMatch(/bl-(breathe|swell|float|drift|lilt)/);
+    }
+  });
+});
