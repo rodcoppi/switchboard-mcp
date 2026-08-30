@@ -581,9 +581,9 @@
     /* Four stops, not three: with 0/33/66/100 the last third had to travel from
        +2deg back to -2deg while the other two moved barely a degree, and an
        ease-in-out over that stretch reads as a lurch. */
-    @keyframes bl-wobble { 0%,100% { transform: rotate(-3.5deg) scale(1,1) skewX(0deg); } 25% { transform: rotate(.8deg) scale(1.035,.982) skewX(2deg); } 50% { transform: rotate(3.5deg) scale(.982,1.03) skewX(0deg); } 75% { transform: rotate(.8deg) scale(1.02,.99) skewX(-2deg); } }
+    @keyframes bl-wobble { 0%,100% { transform: rotate(-5deg) scale(1,1) skewX(0deg); } 25% { transform: rotate(1deg) scale(1.05,.972) skewX(3deg); } 50% { transform: rotate(5deg) scale(.972,1.045) skewX(0deg); } 75% { transform: rotate(1deg) scale(1.03,.985) skewX(-3deg); } }
     @keyframes bl-churn { 0%,100% { transform: rotate(-3deg) scale(1,1) skewX(2deg); } 50% { transform: rotate(3deg) scale(1.05,.95) skewX(-2deg); } }
-    @keyframes bl-breathe { 0%,100% { transform: scale(1); } 50% { transform: scale(1.07); } }
+    @keyframes bl-breathe { 0%,100% { transform: scale(1); } 50% { transform: scale(1.1); } }
     @keyframes bl-pump { 0%,100% { transform: scale(1,1); } 40% { transform: scale(1.07,.93); } 72% { transform: scale(.96,1.04); } }
     /* PIXELS SCALE. The study is authored against a 150px body, so a literal
        "-7px" hop is 5% there and 32% on a 22px rail portrait — which read as a
@@ -592,11 +592,11 @@
     @keyframes bl-hop { 0%,70%,100% { transform: translateY(0) scale(1,1); } 78% { transform: translateY(calc(-10px * var(--bla,1))) scale(.92,1.09); } 88% { transform: translateY(0) scale(1.07,.93); } }
     @keyframes bl-jitter { 0%,100% { transform: translate(0,0) rotate(0); } 25% { transform: translate(calc(1.6px * var(--blk,1)),calc(-1.1px * var(--blk,1))) rotate(1.6deg); } 75% { transform: translate(calc(-1.6px * var(--blk,1)),calc(1.1px * var(--blk,1))) rotate(-1.6deg); } }
     @keyframes bl-boot { 0%,100% { transform: scale(.82); opacity:.6 } 50% { transform: scale(1.05); opacity:1 } }
-    @keyframes bl-squat { 0%,100% { transform: scale(1,1) skewX(-1.5deg); } 50% { transform: scale(1.04,.96) skewX(1.5deg); } }
+    @keyframes bl-squat { 0%,100% { transform: scale(1,1) skewX(-2.5deg); } 50% { transform: scale(1.07,.93) skewX(2.5deg); } }
     @keyframes bl-sway { 0%,100% { transform: rotate(-7deg); } 50% { transform: rotate(7deg); } }
     @keyframes bl-blink { 0%,90%,100% { transform: scaleY(1); } 94%,96% { transform: scaleY(.06); } }
     @keyframes bl-shift { 0%,100% { transform: translateX(calc(-3px * var(--bla,1))); } 50% { transform: translateX(calc(3px * var(--bla,1))); } }
-    @keyframes bl-float { 0%,100% { translate: 0 calc(-4px * var(--bla,1)); } 50% { translate: 0 calc(5px * var(--bla,1)); } }
+    @keyframes bl-float { 0%,100% { translate: 0 calc(-5px * var(--bla,1)); } 50% { translate: 0 calc(6px * var(--bla,1)); } }
     @keyframes bl-nod { 0%,62%,100% { translate: 0 0; } 72% { translate: 0 calc(9px * var(--bla,1)); } 80% { translate: 0 0; } 88% { translate: 0 calc(5px * var(--bla,1)); } }
     @keyframes bl-dart { 0%,26% { translate: calc(-8px * var(--bla,1)) 0; } 34%,60% { translate: calc(8px * var(--bla,1)) 0; } 68%,100% { translate: calc(-8px * var(--bla,1)) 0; } }
     @keyframes bl-scan { 0%,100% { scale: 1 1; } 50% { scale: 1 .45; } }
@@ -618,8 +618,8 @@
        agents in the same state do not breathe in unison. Each one closes on
        itself: 0% and 100% identical, and ease-in-out lands at the seam with
        zero velocity, which is what makes a repeat invisible. */
-    @keyframes bl-roll { 0%,100% { transform: rotate(-1.6deg) skewX(1deg) scale(1,1); } 33% { transform: rotate(1.8deg) skewX(-.8deg) scale(1.015,.99); } 66% { transform: rotate(.4deg) skewX(1.4deg) scale(.99,1.012); } }
-    @keyframes bl-swell { 0%,100% { transform: scale(1,1); } 30% { transform: scale(1.035,.968); } 65% { transform: scale(.975,1.03); } }
+    @keyframes bl-roll { 0%,100% { transform: rotate(-3deg) skewX(2deg) scale(1,1); } 33% { transform: rotate(3.4deg) skewX(-1.6deg) scale(1.03,.98); } 66% { transform: rotate(.8deg) skewX(2.6deg) scale(.98,1.025); } }
+    @keyframes bl-swell { 0%,100% { transform: scale(1,1); } 30% { transform: scale(1.06,.945); } 65% { transform: scale(.955,1.055); } }
     @keyframes bl-lilt { 0%,100% { transform: rotate(-4deg) translateY(0) scale(1,1); } 50% { transform: rotate(4deg) translateY(calc(-2.5px * var(--bla,1))) scale(1.02,.99); } }
     @keyframes bl-drift { 0%,100% { translate: calc(-2.5px * var(--bla,1)) calc(2px * var(--bla,1)); } 33% { translate: calc(3px * var(--bla,1)) calc(-2.5px * var(--bla,1)); } 66% { translate: calc(1.5px * var(--bla,1)) calc(3px * var(--bla,1)); } }
     @keyframes bl-throb { 0%,100% { transform: scale(1,1) rotate(-1deg); } 45% { transform: scale(1.06,.94) rotate(1.5deg); } 78% { transform: scale(.97,1.03) rotate(-.5deg); } }
@@ -4505,7 +4505,7 @@
                    anim: ["bl-sway 4.4s ease-in-out infinite", "bl-lilt 5.1s ease-in-out infinite", "bl-roll 4.8s ease-in-out infinite, bl-drift 7.5s ease-in-out infinite"], eye: { w: 15, h: 27, rot: -14, mirror: false },
                    gap: 22, innerAnim: "bl-dart 5.6s cubic-bezier(.6,0,.2,1) infinite" },
       reply:     { color: "var(--unread-bg)", w: 1, h: 1, radius: "50% 50% 52% 48% / 48% 52% 50% 50%",
-                   anim: ["bl-hop 1.9s ease-in-out infinite, bl-swell 3.1s ease-in-out infinite", "bl-hop 2.4s ease-in-out infinite, bl-roll 3.2s ease-in-out infinite", "bl-hop 1.7s ease-in-out infinite, bl-lilt 2.8s ease-in-out infinite"], eye: { w: 26, arc: "up", thick: 7 }, gap: 18 },
+                   anim: ["bl-hop 1.9s ease-in-out infinite, bl-swell 3.1s ease-in-out infinite", "bl-hop 2.4s ease-in-out infinite, bl-roll 3.2s ease-in-out infinite", "bl-hop 1.7s ease-in-out infinite, bl-lilt 2.8s ease-in-out infinite"], eye: { w: 20, arc: "up", thick: 11 }, gap: 16 },
       error:     { color: "var(--danger)", w: .86, h: .9, radius: "46% 54% 56% 44% / 44% 56% 44% 56%",
                    anim: ["bl-jitter .28s steps(2) infinite", "bl-jitter .22s steps(2) infinite", "bl-jitter .34s steps(2) infinite, bl-throb 1.1s ease-in-out infinite"], eye: { w: 14, h: 22, rot: -28 }, gap: 16 },
       launching: { color: "var(--text-dim)", w: 1, h: 1, anim: ["bl-boot 1.4s ease-in-out infinite", "bl-boot 1.7s ease-in-out infinite, bl-roll 3.2s ease-in-out infinite", "bl-boot 1.2s ease-in-out infinite"],
@@ -4597,6 +4597,31 @@
       const chosen = blobShapes.get(name);
       return chosen && BLOB_SHAPES[chosen] ? chosen : "blob";
     }
+
+    /**
+     * The head's POSE per state — yaw (turned), pitch (up/down), roll (tilted).
+     *
+     * Taken from the bloub reference the owner sent, whose expressions are
+     * exactly this plus eye geometry: "curieux" is yaw 16 / pitch -9 / roll
+     * -15, "timide" is yaw -19 / pitch -14 / roll -7. Two strokes and a
+     * silhouette can only say so much; WHERE THE HEAD IS POINTING is the rest
+     * of it, and it costs one transform.
+     *
+     * Yaw also foreshortens the eye row, the same trick the spin uses — a face
+     * turned away shows a narrower pair, which is what sells the volume.
+     */
+    const BLOB_GAZE = {
+      idle:      { yaw: 0, pitch: 2, roll: 0 },
+      working:   { yaw: 4, pitch: -3, roll: -3 },   // head down, into the work
+      speaking:  { yaw: 2, pitch: 4, roll: 0 },     // up and out, toward you
+      thinking:  { yaw: 15, pitch: -8, roll: -13 }, // looking away, tilted
+      asking:    { yaw: 0, pitch: 7, roll: 0 },     // squared up, facing you
+      waiting:   { yaw: -12, pitch: 2, roll: 4 },   // watching the door
+      reply:     { yaw: 3, pitch: 9, roll: 0 },     // chin up, pleased
+      error:     { yaw: -6, pitch: -12, roll: 6 },  // turned away, down
+      launching: { yaw: 0, pitch: -6, roll: 0 },
+      offline:   { yaw: 0, pitch: -14, roll: 0 },   // head hanging, asleep
+    };
 
     /** Stable string hash — the same seed every render, on every restart. */
     function blobHash(str) {
@@ -4809,8 +4834,12 @@
       const bodyW = size * (sp.w || 1);
       const bodyH = size * (sp.h || 1);
       const rowW = (sp.eye.w * 2 + (sp.gap || 26)) * eyeK;
-      const eyeH = (sp.eye.h || sp.eye.w / 2) * eyeK;
+      // An arc's height is the curve's bounding box, but what you SEE is the
+      // stroke: clamping on the box squeezed a line that was already thin to
+      // 1.2px (owner, 30/08: "a porra do ^^ agora mal da pra ver").
+      const eyeH = (sp.eye.arc ? sp.eye.thick || 4 : sp.eye.h || sp.eye.w / 2) * eyeK;
       eyeK *= Math.min(1, (bodyW * 0.58) / (rowW || 1), (bodyH * 0.46) / (eyeH || 1));
+      const pose = BLOB_GAZE[stateKey] || { yaw: 0, pitch: 0, roll: 0 };
       const anims = Array.isArray(sp.anim) ? sp.anim : sp.anim ? [sp.anim] : [];
       const anim = anims.length ? anims[variant % anims.length] : null;
 
@@ -4822,11 +4851,24 @@
       // scaled literally, the idle float travels 0.7px on a 26px portrait and
       // the face reads as frozen (owner, 28/08: "as movimentacoes de idle deles
       // tá mto fraca").
-      const amp = Math.min(0.65, k * (1 + Math.max(0, (110 - size) / 110) * 2.2));
-      face.style.setProperty("--bla", (size >= 110 ? k : amp).toFixed(3));
+      // Interpolated toward 1 as the face shrinks, not merely boosted: at 26px
+      // the previous curve still only travelled 1.8px, which is 7% of the face
+      // and reads as stillness. This lands near 0.8, so the idle float covers
+      // ~12% of the portrait — the same share it covers at 150px.
+      // Target ~0.65, not 1: interpolating all the way up put the float at 19%
+      // of a 26px face, which is a bounce, not a breath. This lands near 0.54
+      // there — about 12% of the portrait, the share that reads as alive.
+      const amp = size >= 110 ? k : k + (0.65 - k) * ((110 - size) / 110);
+      face.style.setProperty("--bla", amp.toFixed(3));
       // How far an eye rides before it reaches the rim — a third of the face,
       // which is where a sphere's surface turns away from you.
       face.style.setProperty("--blr", `${(size * 0.34).toFixed(2)}px`);
+      // Roll — the head tilting — rides the OUTER node, the only layer that
+      // owns no transform: the lean is the pointer's, the quirk and react
+      // layers are gestures, the skin is the state loop. Stacking it on any of
+      // those would mean two things fighting over one property.
+      face.style.transform = pose.roll ? `rotate(${pose.roll}deg)` : "";
+      face.style.transition = "transform .5s cubic-bezier(.34,1.2,.5,1)";
 
       const ring = face.querySelector(".blob-ring");
       if (sp.ring) {
@@ -4869,9 +4911,13 @@
       const gaze = face.querySelector(".blob-gaze");
       if (!same) animateSynced(gaze, `bl-gaze ${(6.5 + (variant % 5) * 0.9).toFixed(1)}s ease-in-out infinite`);
       const inner = face.querySelector(".blob-eyes");
+      // A turned head shows a narrower pair of eyes — the same foreshortening
+      // the spin uses, held at whatever angle the pose sits at.
+      const squeeze = 1 - Math.min(0.3, Math.abs(pose.yaw) / 100);
       inner.style.cssText =
         `display:flex;align-items:center;gap:${Math.max(1, (sp.gap || 26) * k).toFixed(1)}px;` +
-        `transition:gap .38s cubic-bezier(.34,1.3,.5,1);`;
+        `transform:scaleX(${squeeze.toFixed(3)});` +
+        `transition:gap .38s cubic-bezier(.34,1.3,.5,1),transform .38s cubic-bezier(.34,1.3,.5,1);`;
       inner.style.animation = "";
       if (sp.innerAnim) animateSynced(inner, sp.innerAnim);
       const eyes = inner.children;
@@ -4879,8 +4925,10 @@
       styleBlobEye(eyes[1], sp, eyeK, "r");
 
       const pupils = face.querySelector(".blob-pupils");
-      const baseX = (sp.bx || 0) * k;
-      const baseY = (sp.by || 0) * k + sh.dy * size;
+      // The pose moves the eyes across the face; the per-state bx/by stay as a
+      // manual nudge on top of it.
+      const baseX = ((sp.bx || 0) + pose.yaw * 0.75) * k;
+      const baseY = ((sp.by || 0) - pose.pitch * 0.55) * k + sh.dy * size;
       pupils.dataset.bx = String(baseX);
       pupils.dataset.by = String(baseY);
       if (!face.classList.contains("tracking")) {
