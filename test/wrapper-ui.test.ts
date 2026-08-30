@@ -1654,3 +1654,50 @@ describe("faces: proportion, motion and reaction", () => {
     expect(handler).not.toContain("preventDefault");
   });
 });
+
+
+describe("the head has a pose, not just eyes", () => {
+  // From the bloub reference: every one of its expressions is eye geometry
+  // PLUS yaw/pitch/roll. Two strokes and a silhouette can only say so much —
+  // where the head points is the rest of it, for the cost of one transform.
+  const gaze = script.match(/const BLOB_GAZE = \{[\s\S]*?\n    \};/)?.[0] ?? "";
+
+  it("every state has a pose", () => {
+    for (const state of ["idle", "working", "speaking", "thinking", "asking", "waiting", "reply", "error", "launching", "offline"]) {
+      expect(gaze, `${state} has no pose`).toMatch(new RegExp(`${state}:\\s*\\{ yaw:`));
+    }
+  });
+
+  it("the poses actually differ — a table of zeroes would be decoration", () => {
+    const rows = [...gaze.matchAll(/yaw: (-?\d+), pitch: (-?\d+), roll: (-?\d+)/g)];
+    expect(rows.length).toBeGreaterThanOrEqual(10);
+    const distinct = new Set(rows.map((r) => r.slice(1).join(",")));
+    expect(distinct.size).toBeGreaterThanOrEqual(8);
+  });
+
+  it("the poses say what the states mean", () => {
+    const of = (s: string) => {
+      const m = new RegExp(`${s}:\\s*\\{ yaw: (-?\\d+), pitch: (-?\\d+), roll: (-?\\d+)`).exec(gaze)!;
+      return { yaw: +m[1], pitch: +m[2], roll: +m[3] };
+    };
+    expect(of("offline").pitch).toBeLessThan(-8);       // head hanging, asleep
+    expect(Math.abs(of("thinking").yaw)).toBeGreaterThan(8); // looking away
+    expect(of("thinking").roll).not.toBe(0);            // and tilted with it
+    expect(of("asking").yaw).toBe(0);                   // squared up at you
+    expect(of("reply").pitch).toBeGreaterThan(0);       // chin up, pleased
+  });
+
+  it("roll rides the outer node, where nothing else claims the transform", () => {
+    const paint = script.match(/function paintBlobFace[\s\S]*?\n    }\n/)?.[0] ?? "";
+    expect(paint).toMatch(/face\.style\.transform = pose\.roll/);
+    // The layers that DO own a transform must not be handed the roll as well.
+    expect(paint).not.toMatch(/lean\.style\.transform = .*roll/);
+    expect(paint).not.toMatch(/skin\.style\.transform/);
+  });
+
+  it("a turned head shows a narrower pair of eyes", () => {
+    const paint = script.match(/function paintBlobFace[\s\S]*?\n    }\n/)?.[0] ?? "";
+    expect(paint).toContain("const squeeze = 1 - Math.min(0.3, Math.abs(pose.yaw) / 100)");
+    expect(paint).toMatch(/scaleX\(\$\{squeeze/);
+  });
+});
