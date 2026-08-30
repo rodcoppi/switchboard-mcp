@@ -581,24 +581,24 @@
     /* Four stops, not three: with 0/33/66/100 the last third had to travel from
        +2deg back to -2deg while the other two moved barely a degree, and an
        ease-in-out over that stretch reads as a lurch. */
-    @keyframes bl-wobble { 0%,100% { transform: rotate(-2deg) scale(1,1) skewX(0deg); } 25% { transform: rotate(.5deg) scale(1.02,.99) skewX(1.2deg); } 50% { transform: rotate(2deg) scale(.99,1.015) skewX(0deg); } 75% { transform: rotate(.5deg) scale(1.01,.995) skewX(-1.2deg); } }
+    @keyframes bl-wobble { 0%,100% { transform: rotate(-3.5deg) scale(1,1) skewX(0deg); } 25% { transform: rotate(.8deg) scale(1.035,.982) skewX(2deg); } 50% { transform: rotate(3.5deg) scale(.982,1.03) skewX(0deg); } 75% { transform: rotate(.8deg) scale(1.02,.99) skewX(-2deg); } }
     @keyframes bl-churn { 0%,100% { transform: rotate(-3deg) scale(1,1) skewX(2deg); } 50% { transform: rotate(3deg) scale(1.05,.95) skewX(-2deg); } }
-    @keyframes bl-breathe { 0%,100% { transform: scale(1); } 50% { transform: scale(1.05); } }
+    @keyframes bl-breathe { 0%,100% { transform: scale(1); } 50% { transform: scale(1.07); } }
     @keyframes bl-pump { 0%,100% { transform: scale(1,1); } 40% { transform: scale(1.07,.93); } 72% { transform: scale(.96,1.04); } }
     /* PIXELS SCALE. The study is authored against a 150px body, so a literal
        "-7px" hop is 5% there and 32% on a 22px rail portrait — which read as a
        jump, not a hop (owner, 27/08: "dá um pulo pra cima"). Every translation
        below is expressed against --blk, the face's own scale factor. */
-    @keyframes bl-hop { 0%,70%,100% { transform: translateY(0) scale(1,1); } 78% { transform: translateY(calc(-7px * var(--blk,1))) scale(.94,1.07); } 88% { transform: translateY(0) scale(1.05,.95); } }
+    @keyframes bl-hop { 0%,70%,100% { transform: translateY(0) scale(1,1); } 78% { transform: translateY(calc(-10px * var(--bla,1))) scale(.92,1.09); } 88% { transform: translateY(0) scale(1.07,.93); } }
     @keyframes bl-jitter { 0%,100% { transform: translate(0,0) rotate(0); } 25% { transform: translate(calc(1.6px * var(--blk,1)),calc(-1.1px * var(--blk,1))) rotate(1.6deg); } 75% { transform: translate(calc(-1.6px * var(--blk,1)),calc(1.1px * var(--blk,1))) rotate(-1.6deg); } }
     @keyframes bl-boot { 0%,100% { transform: scale(.82); opacity:.6 } 50% { transform: scale(1.05); opacity:1 } }
     @keyframes bl-squat { 0%,100% { transform: scale(1,1) skewX(-1.5deg); } 50% { transform: scale(1.04,.96) skewX(1.5deg); } }
-    @keyframes bl-sway { 0%,100% { transform: rotate(-5deg); } 50% { transform: rotate(5deg); } }
+    @keyframes bl-sway { 0%,100% { transform: rotate(-7deg); } 50% { transform: rotate(7deg); } }
     @keyframes bl-blink { 0%,90%,100% { transform: scaleY(1); } 94%,96% { transform: scaleY(.06); } }
-    @keyframes bl-shift { 0%,100% { transform: translateX(calc(-2.5px * var(--blk,1))); } 50% { transform: translateX(calc(2.5px * var(--blk,1))); } }
-    @keyframes bl-float { 0%,100% { translate: 0 calc(-3px * var(--blk,1)); } 50% { translate: 0 calc(4px * var(--blk,1)); } }
-    @keyframes bl-nod { 0%,62%,100% { translate: 0 0; } 72% { translate: 0 calc(7px * var(--blk,1)); } 80% { translate: 0 0; } 88% { translate: 0 calc(4px * var(--blk,1)); } }
-    @keyframes bl-dart { 0%,26% { translate: calc(-7px * var(--blk,1)) 0; } 34%,60% { translate: calc(7px * var(--blk,1)) 0; } 68%,100% { translate: calc(-7px * var(--blk,1)) 0; } }
+    @keyframes bl-shift { 0%,100% { transform: translateX(calc(-3px * var(--bla,1))); } 50% { transform: translateX(calc(3px * var(--bla,1))); } }
+    @keyframes bl-float { 0%,100% { translate: 0 calc(-4px * var(--bla,1)); } 50% { translate: 0 calc(5px * var(--bla,1)); } }
+    @keyframes bl-nod { 0%,62%,100% { translate: 0 0; } 72% { translate: 0 calc(9px * var(--bla,1)); } 80% { translate: 0 0; } 88% { translate: 0 calc(5px * var(--bla,1)); } }
+    @keyframes bl-dart { 0%,26% { translate: calc(-8px * var(--bla,1)) 0; } 34%,60% { translate: calc(8px * var(--bla,1)) 0; } 68%,100% { translate: calc(-8px * var(--bla,1)) 0; } }
     @keyframes bl-scan { 0%,100% { scale: 1 1; } 50% { scale: 1 .45; } }
     @keyframes bl-wave { 0%,100% { scale: 1 .8; } 50% { scale: 1 1.9; } }
     @keyframes bl-pulse { 0%,100% { opacity:1; } 50% { opacity:.4; } }
@@ -620,11 +620,82 @@
        zero velocity, which is what makes a repeat invisible. */
     @keyframes bl-roll { 0%,100% { transform: rotate(-1.6deg) skewX(1deg) scale(1,1); } 33% { transform: rotate(1.8deg) skewX(-.8deg) scale(1.015,.99); } 66% { transform: rotate(.4deg) skewX(1.4deg) scale(.99,1.012); } }
     @keyframes bl-swell { 0%,100% { transform: scale(1,1); } 30% { transform: scale(1.035,.968); } 65% { transform: scale(.975,1.03); } }
-    @keyframes bl-lilt { 0%,100% { transform: rotate(-2.4deg) translateY(0) scale(1,1); } 50% { transform: rotate(2.4deg) translateY(calc(-1.5px * var(--blk,1))) scale(1.01,.995); } }
-    @keyframes bl-drift { 0%,100% { translate: calc(-2px * var(--blk,1)) calc(1.5px * var(--blk,1)); } 33% { translate: calc(2.5px * var(--blk,1)) calc(-2px * var(--blk,1)); } 66% { translate: calc(1px * var(--blk,1)) calc(2.5px * var(--blk,1)); } }
+    @keyframes bl-lilt { 0%,100% { transform: rotate(-4deg) translateY(0) scale(1,1); } 50% { transform: rotate(4deg) translateY(calc(-2.5px * var(--bla,1))) scale(1.02,.99); } }
+    @keyframes bl-drift { 0%,100% { translate: calc(-2.5px * var(--bla,1)) calc(2px * var(--bla,1)); } 33% { translate: calc(3px * var(--bla,1)) calc(-2.5px * var(--bla,1)); } 66% { translate: calc(1.5px * var(--bla,1)) calc(3px * var(--bla,1)); } }
     @keyframes bl-throb { 0%,100% { transform: scale(1,1) rotate(-1deg); } 45% { transform: scale(1.06,.94) rotate(1.5deg); } 78% { transform: scale(.97,1.03) rotate(-.5deg); } }
     .blob-face { position: relative; display: grid; place-items: center; flex: none; }
     .blob-quirk { display: grid; place-items: center; }
+    /* REACTIONS — the moment something changes, not the state that follows it.
+       A face that only ever wears its current state is informative and inert:
+       you look away, you look back, it is simply different. These fire ON the
+       transition, once, and then get out of the way. Each is a single motion
+       with a beginning and an end (never a loop), on its own layer so it plays
+       over whatever the state's own animation is doing. */
+    .blob-react { display: grid; place-items: center; }
+    /* Caught by surprise: pull back, then overshoot forward. */
+    @keyframes bl-startle {
+      0%   { transform: scale(1,1) translateY(0); }
+      14%  { transform: scale(.84,1.18) translateY(calc(-3px * var(--blk,1))); }
+      42%  { transform: scale(1.14,.88) translateY(calc(1.5px * var(--blk,1))); }
+      68%  { transform: scale(.96,1.05) translateY(0); }
+      100% { transform: scale(1,1) translateY(0); }
+    }
+    /* Delighted: two quick hops, the second smaller. */
+    @keyframes bl-cheer {
+      0%   { transform: translateY(0) scale(1,1); }
+      15%  { transform: translateY(0) scale(1.12,.88); }
+      35%  { transform: translateY(calc(-11px * var(--blk,1))) scale(.9,1.12); }
+      55%  { transform: translateY(0) scale(1.1,.9); }
+      72%  { transform: translateY(calc(-5px * var(--blk,1))) scale(.95,1.06); }
+      88%  { transform: translateY(0) scale(1.04,.96); }
+      100% { transform: translateY(0) scale(1,1); }
+    }
+    /* Hit by something: recoil away and shrink, then come back unsure. */
+    @keyframes bl-flinch {
+      0%   { transform: translateX(0) scale(1,1) rotate(0); }
+      12%  { transform: translateX(calc(-5px * var(--blk,1))) scale(.86,.92) rotate(-7deg); }
+      34%  { transform: translateX(calc(3px * var(--blk,1))) scale(1.04,.96) rotate(4deg); }
+      58%  { transform: translateX(calc(-2px * var(--blk,1))) scale(.97,1.02) rotate(-2deg); }
+      100% { transform: translateX(0) scale(1,1) rotate(0); }
+    }
+    /* Attention: sit up straight and lean in. */
+    @keyframes bl-perk {
+      0%   { transform: scaleY(1) translateY(0); }
+      22%  { transform: scaleY(1.16) translateY(calc(-4px * var(--blk,1))); }
+      55%  { transform: scaleY(.97) translateY(calc(1px * var(--blk,1))); }
+      100% { transform: scaleY(1) translateY(0); }
+    }
+    /* Waking up: a long stretch, the way anything does after a nap. */
+    @keyframes bl-stretch {
+      0%   { transform: scale(1,1); }
+      30%  { transform: scale(1.1,.86); }
+      62%  { transform: scale(.9,1.14); }
+      84%  { transform: scale(1.04,.97); }
+      100% { transform: scale(1,1); }
+    }
+    /* Poked by the operator: squashed, then springs back past its own size. */
+    @keyframes bl-poke {
+      0%   { transform: scale(1,1); }
+      22%  { transform: scale(1.18,.8); }
+      52%  { transform: scale(.86,1.16); }
+      78%  { transform: scale(1.06,.95); }
+      100% { transform: scale(1,1); }
+    }
+    /* The eyes go with it: wide open on a surprise, shut tight on a flinch.
+       Applied to the eye ROW, so both move together and neither state's own
+       eye animation is disturbed. */
+    @keyframes bl-eyes-wide {
+      0%   { transform: scale(1,1); }
+      20%  { transform: scale(1.25,1.35); }
+      60%  { transform: scale(1.05,1.1); }
+      100% { transform: scale(1,1); }
+    }
+    @keyframes bl-eyes-shut {
+      0%   { transform: scaleY(1); }
+      18%  { transform: scaleY(.12); }
+      52%  { transform: scaleY(.5); }
+      100% { transform: scaleY(1); }
+    }
     @keyframes bl-quirk-hop {
       0%, 100% { transform: translateY(0) scale(1,1); }
       18% { transform: translateY(0) scale(1.08,.92); }
@@ -4434,7 +4505,7 @@
                    anim: ["bl-sway 4.4s ease-in-out infinite", "bl-lilt 5.1s ease-in-out infinite", "bl-roll 4.8s ease-in-out infinite, bl-drift 7.5s ease-in-out infinite"], eye: { w: 15, h: 27, rot: -14, mirror: false },
                    gap: 22, innerAnim: "bl-dart 5.6s cubic-bezier(.6,0,.2,1) infinite" },
       reply:     { color: "var(--unread-bg)", w: 1, h: 1, radius: "50% 50% 52% 48% / 48% 52% 50% 50%",
-                   anim: ["bl-hop 2.2s ease-in-out infinite", "bl-hop 2.7s ease-in-out infinite, bl-roll 3.6s ease-in-out infinite", "bl-hop 1.9s ease-in-out infinite, bl-swell 2.4s ease-in-out infinite"], eye: { w: 38, chev: "up", thick: 10 }, gap: 15 },
+                   anim: ["bl-hop 1.9s ease-in-out infinite, bl-swell 3.1s ease-in-out infinite", "bl-hop 2.4s ease-in-out infinite, bl-roll 3.2s ease-in-out infinite", "bl-hop 1.7s ease-in-out infinite, bl-lilt 2.8s ease-in-out infinite"], eye: { w: 26, arc: "up", thick: 7 }, gap: 18 },
       error:     { color: "var(--danger)", w: .86, h: .9, radius: "46% 54% 56% 44% / 44% 56% 44% 56%",
                    anim: ["bl-jitter .28s steps(2) infinite", "bl-jitter .22s steps(2) infinite", "bl-jitter .34s steps(2) infinite, bl-throb 1.1s ease-in-out infinite"], eye: { w: 14, h: 22, rot: -28 }, gap: 16 },
       launching: { color: "var(--text-dim)", w: 1, h: 1, anim: ["bl-boot 1.4s ease-in-out infinite", "bl-boot 1.7s ease-in-out infinite, bl-roll 3.2s ease-in-out infinite", "bl-boot 1.2s ease-in-out infinite"],
@@ -4448,18 +4519,54 @@
      * either fighting the other. `dy` nudges the eyes toward the shape's visual
      * centre of mass (a triangle reads wrong with eyes dead centre).
      */
+    /**
+     * The reference set, replacing ours. Rounded silhouettes stay on
+     * border-radius, which already works; the three with real corners are
+     * drawn as paths, because CSS cannot round the corner of a polygon() and
+     * knife-sharp corners are precisely what made ours look crude beside the
+     * reference. `poly` is [x, y] in unit space, rounded by blobShapePath.
+     */
     const BLOB_SHAPES = {
       blob:     { dy: 0 },
       circle:   { radius: "50%", dy: 0 },
-      squircle: { radius: "32%", dy: 0 },
       capsule:  { radius: "999px", dy: 0 },
-      hexagon:  { clip: "polygon(25% 3%, 75% 3%, 100% 50%, 75% 97%, 25% 97%, 0% 50%)", dy: 0 },
-      triangle: { clip: "polygon(50% 2%, 98% 98%, 2% 98%)", dy: 0.14 },
-      diamond:  { clip: "polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)", dy: 0 },
-      shield:   { clip: "polygon(50% 0%, 100% 16%, 100% 62%, 50% 100%, 0% 62%, 0% 16%)", dy: -0.02 },
-      chip:     { clip: "polygon(18% 0%, 82% 0%, 100% 18%, 100% 82%, 82% 100%, 18% 100%, 0% 82%, 0% 18%)", dy: 0 },
-      teardrop: { radius: "50% 50% 50% 6%", dy: 0 },
+      squircle: { radius: "32%", dy: 0 },
+      teardrop: { radius: "50% 50% 50% 12%", dy: 0 },
+      // Four lobes: a radius per corner, all of them full — no path needed.
+      clover:   { radius: "42% 42% 42% 42% / 42% 42% 42% 42%", lobes: true, dy: 0 },
+      hexagon:  { poly: [[.5, .02], [.98, .27], [.98, .73], [.5, .98], [.02, .73], [.02, .27]], dy: 0 },
+      triangle: { poly: [[.5, .05], [.95, .9], [.05, .9]], dy: 0.12 },
+      diamond:  { poly: [[.5, .03], [.97, .5], [.5, .97], [.03, .5]], dy: 0 },
     };
+
+    /**
+     * A polygon with ROUNDED corners, as a clip-path `path()`. Each corner is
+     * a quadratic curve pulled back along both edges — the amount is capped by
+     * the shorter of the two, so a sharp vertex (a triangle's apex) rounds as
+     * much as it can rather than folding through itself.
+     */
+    function blobShapePath(points, size) {
+      const r = size * 0.17;
+      const px = points.map(([x, y]) => [x * size, y * size]);
+      const at = (i) => px[(i + px.length) % px.length];
+      let d = "";
+      for (let i = 0; i < px.length; i++) {
+        const prev = at(i - 1), cur = at(i), next = at(i + 1);
+        const back = trimToward(cur, prev, r);
+        const fwd = trimToward(cur, next, r);
+        d += (i === 0 ? `M ${back[0].toFixed(2)} ${back[1].toFixed(2)}` : ` L ${back[0].toFixed(2)} ${back[1].toFixed(2)}`);
+        d += ` Q ${cur[0].toFixed(2)} ${cur[1].toFixed(2)} ${fwd[0].toFixed(2)} ${fwd[1].toFixed(2)}`;
+      }
+      return `path("${d} Z")`;
+    }
+
+    /** A point `dist` along the segment from `a` toward `b`, never past halfway. */
+    function trimToward(a, b, dist) {
+      const dx = b[0] - a[0], dy = b[1] - a[1];
+      const len = Math.hypot(dx, dy) || 1;
+      const t = Math.min(dist, len / 2) / len;
+      return [a[0] + dx * t, a[1] + dy * t];
+    }
     const BLOB_SHAPE_NAMES = Object.keys(BLOB_SHAPES);
     const BLOB_SHAPE_KEY = "sb.blobShape";
     /** Face size on the rail. Keep in step with .agent-portrait.blob in the CSS. */
@@ -4592,6 +4699,24 @@
       const w = Math.max(1, e.w * k);
       const h = Math.max(1, (e.h || 0) * k);
       const altDelay = side === "r" && e.altDelay ? e.altDelay : 0;
+      if (e.arc) {
+        // A stroke bent into a curve: one border plus a matching radius. The
+        // study defined three eye shapes and only two were ported, which left
+        // the happiest state wearing the hardest one — a square-edged "^" next
+        // to everyone else's rounded strokes (owner, 28/08: "o risco tá feio").
+        const thick = Math.max(1, (e.thick || 4) * k);
+        const down = e.arc === "down";
+        eye.style.cssText =
+          `width:${w.toFixed(1)}px;height:${(w / 2).toFixed(1)}px;` +
+          `border-style:solid;border-color:var(--bg);border-width:${down ? `0 0 ${thick.toFixed(1)}px 0` : `${thick.toFixed(1)}px 0 0 0`};` +
+          `border-radius:${down ? `0 0 ${w.toFixed(1)}px ${w.toFixed(1)}px` : `${w.toFixed(1)}px ${w.toFixed(1)}px 0 0`};` +
+          `background-color:transparent;box-sizing:border-box;` +
+          `transform:rotate(${e.rot ? (side === "r" && e.mirror !== false ? -e.rot : e.rot) : 0}deg);${EYE_TRANSITION}`;
+        eye.style.animation = "";
+        eye.style.animationDelay = "";
+        if (sp.eyeAnim) animateSynced(eye, sp.eyeAnim, [altDelay]);
+        return;
+      }
       if (e.chev) {
         // A hard "^": two straight arms meeting at a point, no curve. The other
         // two borders are declared at 0 width so the morph has somewhere to go
@@ -4634,6 +4759,7 @@
       const ring = el("div", "blob-ring");
       const lean = el("div", "blob-lean");
       const quirk = el("div", "blob-quirk");
+      const react = el("div", "blob-react");
       const skin = el("div", "blob-skin");
       const body = el("div", "blob-body");
       const pupils = el("div", "blob-pupils");
@@ -4648,7 +4774,8 @@
       spin.appendChild(gaze);
       pupils.appendChild(spin);
       skin.append(body, pupils);
-      quirk.appendChild(skin);
+      react.appendChild(skin);
+      quirk.appendChild(react);
       lean.appendChild(quirk);
       const prop = el("div", "blob-prop");
       const zzz = el("div", "blob-zzz");
@@ -4673,12 +4800,30 @@
       const sh = BLOB_SHAPES[shapeName] || BLOB_SHAPES.blob;
       const same = face.dataset.blobState === stateKey && face.dataset.blobShape === shapeName;
       const k = size / 150;
-      const eyeK = k * (size >= 110 ? 1 : 1 + ((110 - size) / 110) * 0.9);
+      let eyeK = k * (size >= 110 ? 1 : 1 + ((110 - size) / 110) * 0.9);
+      // The small-face boost multiplies the stroke without ever consulting the
+      // BODY, and several states squash the body (thinking 0.84, offline 0.78)
+      // — so a 26px portrait could end up wearing eyes wider than the thing
+      // they sit on (owner, 28/08: "os corpinhos as vezes ficam menores q os
+      // olhos"). Shrink back to fit; never grow, this only ever rescues.
+      const bodyW = size * (sp.w || 1);
+      const bodyH = size * (sp.h || 1);
+      const rowW = (sp.eye.w * 2 + (sp.gap || 26)) * eyeK;
+      const eyeH = (sp.eye.h || sp.eye.w / 2) * eyeK;
+      eyeK *= Math.min(1, (bodyW * 0.58) / (rowW || 1), (bodyH * 0.46) / (eyeH || 1));
       const anims = Array.isArray(sp.anim) ? sp.anim : sp.anim ? [sp.anim] : [];
       const anim = anims.length ? anims[variant % anims.length] : null;
 
       face.style.setProperty("--blk", k.toFixed(3));
       face.style.setProperty("--blg", Math.max(0.85, 2.4 * k).toFixed(2));
+      // MOTION amplitude, which is not the same question as geometry. --blk is
+      // the honest scale and stays that way for anything positional; breathing
+      // has to remain PERCEPTIBLE as the face shrinks, and that is not linear:
+      // scaled literally, the idle float travels 0.7px on a 26px portrait and
+      // the face reads as frozen (owner, 28/08: "as movimentacoes de idle deles
+      // tá mto fraca").
+      const amp = Math.min(0.65, k * (1 + Math.max(0, (110 - size) / 110) * 2.2));
+      face.style.setProperty("--bla", (size >= 110 ? k : amp).toFixed(3));
       // How far an eye rides before it reaches the rim — a third of the face,
       // which is where a sphere's surface turns away from you.
       face.style.setProperty("--blr", `${(size * 0.34).toFixed(2)}px`);
@@ -4710,13 +4855,14 @@
       }
 
       const body = face.querySelector(".blob-body");
-      const radius = sh.clip ? "0" : sh.radius || sp.radius || "52% 48% 46% 54% / 50% 54% 46% 50%";
+      const clip = sh.poly ? blobShapePath(sh.poly, size) : null;
+      const radius = clip ? "0" : sh.radius || sp.radius || "52% 48% 46% 54% / 50% 54% 46% 50%";
       const fill = sp.ghost
         ? `background:color-mix(in srgb, ${sp.color} 40%, transparent);border:${Math.max(1, size / 70).toFixed(1)}px dashed ${sp.color};`
         : `background:${sp.color};border:0 solid transparent;`;
       body.style.cssText =
         `position:absolute;inset:0;border-radius:${radius};` +
-        `clip-path:${sh.clip || "none"};${fill}` +
+        `clip-path:${clip || "none"};${fill}` +
         `transition:border-radius .45s ease,background-color .38s ease,border-width .3s ease,clip-path .45s ease,opacity .3s ease;` +
         (sp.dim ? "opacity:.85;" : "opacity:1;");
 
@@ -4783,8 +4929,18 @@
         for (const node of zzz.children) node.style.animation = "";
       }
 
+      // The transition is only knowable HERE: the caller passes a state, and the
+      // node remembers the one it was wearing. Fired after the paint so the
+      // reaction plays over the new face, not the old one.
+      const previous = face.dataset.blobState;
       face.dataset.blobState = stateKey;
       face.dataset.blobShape = shapeName;
+      if (previous && previous !== stateKey) {
+        const rule = BLOB_REACTIONS.find(
+          (r) => r.to === stateKey && (!r.from || r.from.includes(previous)),
+        );
+        if (rule) playBlobReaction(face, rule);
+      }
     }
 
     /**
@@ -4800,6 +4956,59 @@
      * which is why a change read as a blink rather than a morph.
      */
     const blobNodes = new Map();
+
+    /**
+     * REACTIONS: what a face does at the MOMENT it changes, as opposed to what
+     * it looks like afterwards. A face that only wears its current state is
+     * informative and inert — you look away, you look back, it is simply
+     * different. These play once, on the transition that earns them.
+     *
+     * Keyed by the state being ENTERED; `from` narrows it when only some
+     * arrivals deserve the reaction (finishing a turn is a small triumph;
+     * merely being idle since the page loaded is not).
+     */
+    const BLOB_REACTIONS = [
+      // Something is asking for you: sit up and open your eyes.
+      { to: "asking", body: ["bl-perk", "bl-startle"], eyes: "bl-eyes-wide", dur: 620 },
+      // It broke: recoil and squeeze them shut.
+      { to: "error", body: ["bl-flinch", "bl-poke"], eyes: "bl-eyes-shut", dur: 560 },
+      // Finished, and you have not read it yet.
+      { to: "reply", from: ["working", "speaking", "thinking"], body: ["bl-cheer", "bl-stretch"], dur: 900 },
+      // Work just landed on it.
+      { to: "working", from: ["idle", "reply"], body: ["bl-startle", "bl-poke"], eyes: "bl-eyes-wide", dur: 520 },
+      { to: "speaking", from: ["idle", "reply"], body: ["bl-startle", "bl-poke"], eyes: "bl-eyes-wide", dur: 520 },
+      // Back from the dead: a proper stretch.
+      { to: "idle", from: ["offline", "launching"], body: ["bl-stretch", "bl-cheer"], dur: 900 },
+      { to: "working", from: ["offline", "launching"], body: ["bl-stretch", "bl-perk"], dur: 900 },
+    ];
+
+    /** Plays a one-shot reaction over whatever the state loop is doing. */
+    function playBlobReaction(face, rule) {
+      const react = face.querySelector(".blob-react");
+      if (!react) return;
+      const secs = (rule.dur / 1000).toFixed(2);
+      // RANDOM here, unlike the state loops. A loop is seeded per agent so it
+      // does not restart on every repaint; a reaction is a moment that happens
+      // once, and the same gesture every single time is what makes a mascot
+      // feel like a progress bar (owner: "tem q ser randomico tbm").
+      const bodies = Array.isArray(rule.body) ? rule.body : [rule.body];
+      const body = bodies[Math.floor(Math.random() * bodies.length)];
+      react.style.animation = `${body} ${secs}s cubic-bezier(.3,1.2,.4,1)`;
+      react.addEventListener("animationend", () => { react.style.animation = ""; }, { once: true });
+      if (!rule.eyes) return;
+      const eyes = face.querySelector(".blob-eyes");
+      if (!eyes) return;
+      // The eye row carries its own state animation (scan, dart); stash it and
+      // put it back, rather than leaving the face permanently blank-eyed.
+      const held = eyes.style.animation;
+      const heldDelay = eyes.style.animationDelay;
+      eyes.style.animation = `${rule.eyes} ${secs}s cubic-bezier(.3,1.2,.4,1)`;
+      eyes.addEventListener(
+        "animationend",
+        () => { eyes.style.animation = held; eyes.style.animationDelay = heldDelay; },
+        { once: true },
+      );
+    }
 
     /** The face for an agent: built once, repainted from then on. */
     function blobFaceFor(name, stateKey, size, shapeName, variant) {
@@ -5593,6 +5802,13 @@
       portrait.appendChild(
         blobFaceFor(agent.name, blobState, BLOB_RAIL_SIZE, blobShapeOf(agent.name), blobVariantOf(agent.name, blobState)),
       );
+      // Poke, from the study: the face answers a click before the card does.
+      // It does NOT stop the event — the click still opens the agent, which is
+      // what a click on a card is for.
+      portrait.addEventListener("click", () => {
+        const entry = blobNodes.get(agent.name);
+        if (entry) playBlobReaction(entry.node, { body: ["bl-poke", "bl-startle"], dur: 420 });
+      });
       const badge = el("span", "blob-engine");
       badge.appendChild(agentLogo(type));
       portrait.appendChild(badge);
