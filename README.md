@@ -541,6 +541,24 @@ Stop the tunnel process too — the hub has no way to see it, let alone stop it.
   A *missing* file is different — that is simply a hub that never turned this on, and it stays
   open and local as always.
 
+### If you have your own scripts against the API
+
+Anything of yours that calls `/api/*` needs the same token the CLI uses, or it
+will start getting 401s the moment you arm the gate — and a script that reads
+`/api/agents` inside a `try` will fail *silently*, which is how an autostart
+helper here went blind for eleven hours without a single line in its log:
+
+```python
+import json, os, urllib.request
+with open(os.path.expanduser("~/.switchboard/remote.json")) as fh:
+    token = json.load(fh)["localToken"]
+req = urllib.request.Request(url, headers={"authorization": f"Bearer {token}"})
+```
+
+`/api/health` is the exception and stays open, so an "is the hub up" probe keeps
+working untouched. That is exactly the trap: the probe passes, the next call
+401s, and the script concludes the board is fine.
+
 ### What it does not do
 
 It does not protect you from a tunnel URL that leaks, beyond the password. It does not audit
