@@ -22,6 +22,7 @@ import { registerSendCommand } from "./cli/send.js";
 import { registerStopCommands } from "./cli/stop.js";
 import { registerRenameCommand } from "./cli/rename.js";
 import { registerLogsCommand } from "./cli/logs.js";
+import { registerRemoteCommand } from "./cli/remote.js";
 import { hydrateWslDistroEnv } from "./shared/wsl.js";
 
 // WSL_DISTRO_NAME, once, for the whole process tree. It is exported only to
@@ -55,6 +56,7 @@ registerSendCommand(program);
 registerStopCommands(program); // stop <name> + down
 registerRenameCommand(program);
 registerLogsCommand(program);
+registerRemoteCommand(program);
 
 program.parseAsync(process.argv).catch((err) => {
   console.error(`switchboard: ${String(err)}`);

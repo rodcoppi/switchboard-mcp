@@ -10,6 +10,7 @@ import type { AddressInfo } from "node:net";
 import express from "express";
 import type { Config, LogLevel, OnMessage } from "../shared/types.js";
 import { BIND_HOST, defaultBaseDir, ensureConfigFile, loadConfig } from "./config.js";
+import { createRemoteGate } from "./remote-gate.js";
 import { Logger, createLogger } from "./log.js";
 import { Store } from "./store.js";
 import { PairRateLimiter } from "./ratelimit.js";
@@ -218,6 +219,18 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
   // envelope; the 1 MB floor keeps the default config (16 KB) generous.
   const jsonBodyLimitBytes = Math.max(config.maxMessageBytes * 2 + 4096, 1_000_000);
   app.use(express.json({ limit: jsonBodyLimitBytes }));
+
+  // The remote-access gate goes FIRST, ahead of the MCP endpoint, the API and
+  // the static dashboard — so "what is reachable without a password" is one
+  // function in one file rather than a property of route ordering. With remote
+  // access off (the default, and the overwhelming majority of runs) it calls
+  // next() and the hub behaves exactly as it did before this existed.
+  const remoteGate = createRemoteGate({
+    baseDir,
+    log: (level, message) => log[level](message),
+  });
+  app.use(remoteGate.middleware);
+  app.use(remoteGate.router);
 
   const mcp = createMcpEndpoint({
     store,

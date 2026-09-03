@@ -412,6 +412,7 @@ same way `wire` derives a name from a folder called `ai panorama`.
 | `switchboard stop <name>` | Stops the agent's tmux session (asks for confirmation if there are unread messages; `--yes` skips it). The **registration** in the Hub stays — a new `start <name>` reuses the name (re-attach). |
 | `switchboard down` | Stops the tmux sessions of **all** agents. The Hub stays up (it is never killed here). |
 | `switchboard logs [-f]` | Last ~100 lines of `~/.switchboard/logs/hub.log`; `-f` follows the file. |
+| `switchboard remote` | Password-protects the dashboard so it can be reached through a tunnel. `remote password` sets the password, `remote on` arms the gate, `remote off` disarms it. **Off by default.** See [Reaching it from your phone](#reaching-it-from-your-phone). |
 
 To stop the **Hub**: `Ctrl-C` in the `switchboard serve` terminal (or
 `tmux kill-session -t sb-hub`, if it runs in the recommended session).
@@ -430,8 +431,12 @@ before exposing anything:
 - **Bind on `127.0.0.1`, hard-coded and not configurable.** A delivered message becomes
   executable input for an agent with filesystem access. Exposing the Hub on the network = free
   RCE.
-- **NEVER port-forward port 4577** (no `ssh -L`, no firewall/NAT rule) and
-  **NEVER run the Hub behind a reverse proxy.** `127.0.0.1` is the only barrier.
+- **Never expose port 4577 unauthenticated** — no `ssh -L`, no firewall/NAT rule, no reverse
+  proxy, no tunnel — **unless `switchboard remote` is armed.** Until v1.2 `127.0.0.1` was the
+  only barrier and the answer was a flat "never". There is now a supported way to do it, and
+  it works by adding a *second* barrier rather than removing the first: the bind stays on
+  `127.0.0.1`, and the gate challenges every request that arrives. See
+  [Reaching it from your phone](#reaching-it-from-your-phone).
 - **Local trust model:** any local process can post to the Hub and therefore inject input
   into any agent. This is accepted in v1 (the same model as any local dev tool), as long as it
   never leaks to the network.
@@ -464,6 +469,83 @@ before exposing anything:
   try to manipulate another. v1 mitigation: the boundary declared in the protocol snippet (peer
   messages are evaluated critically; coordination ≠ subordination) plus full feed visibility in
   the dashboard.
+
+---
+
+## Reaching it from your phone
+
+The dashboard is responsive — it is usable on a phone, and it is laid out for a folding one
+open in landscape. Getting to it from outside the machine is the part that needs care, because
+**the Switchboard dashboard is not a read-only panel**: whoever opens it can send messages to
+agents, and a message becomes input those agents execute. Treat the login below as a shell
+login, because that is what it is worth.
+
+### Why there is no `--host` flag
+
+The hub binds to `127.0.0.1`, hard-coded, and that is not going to change. So reaching it from
+elsewhere means running a **tunnel**: a process that holds an outbound connection to some
+service and forwards requests back into loopback. Switchboard does not ship one and does not
+pick one for you — cloudflared, ngrok, `tailscale serve`, and `ssh -R` into a VPS you already
+own are all fine, and the hub cannot tell them apart anyway (they all arrive from `127.0.0.1`).
+
+What Switchboard owns is the **lock behind that door**.
+
+### Turning it on
+
+```bash
+switchboard remote password   # typed, never passed as an argument; min 12 chars
+switchboard remote on         # arms the gate
+```
+
+Then start any tunnel, in another terminal:
+
+```bash
+cloudflared tunnel --url http://127.0.0.1:4577   # prints a https://….trycloudflare.com URL
+ngrok http 4577                                  # prints a https://….ngrok-free.app URL
+tailscale serve 4577                             # your tailnet only, real certificate
+```
+
+Open the address on the phone, type the password, and you are in. When you are done:
+
+```bash
+switchboard remote off        # drops every open session; the password is kept
+```
+
+Stop the tunnel process too — the hub has no way to see it, let alone stop it.
+
+### What the gate actually does
+
+- **Everything is challenged.** There is no "but it came from localhost" exemption, because a
+  tunnel makes a phone in another country look exactly like the machine itself. The only
+  unauthenticated paths are `/login`, the login endpoint, `/api/health` (a flat up/down with no
+  data in it), and `/mcp` — which carries its own per-agent bearer token and is spoken by local
+  processes that have no cookie.
+- **The password is stored as a salted scrypt hash** in `~/.switchboard/remote.json`, created
+  mode `0600`. It is never logged and never echoed as you type it.
+- **The CLI keeps working** without typing anything: it reads a token out of that same 0600
+  file. Anyone who can read the file already owns the machine.
+- **Sessions live in memory only.** Restarting the hub, or `remote off` followed by `remote on`,
+  logs every browser out.
+- **Guessing is throttled** — a handful of wrong passwords locks logins for 15 minutes. The
+  throttle is global rather than per-IP on purpose: every request arrives from `127.0.0.1`, so
+  per-IP buckets would be one bucket in a disguise, and trusting `X-Forwarded-For` to separate
+  them would hand an attacker the key to their own rate limit. The honest cost: someone who
+  knows your URL can lock *you* out by failing on purpose. You still have the machine, and
+  `switchboard remote off` still works there.
+- **The session cookie** is `HttpOnly`, `SameSite=Lax`, and `Secure` whenever the request
+  arrived over https. Cross-site writes are refused a second time by an `Origin` check.
+- **A damaged `remote.json` fails closed.** If the file exists but cannot be parsed, the hub
+  stays armed and lets *nobody* in, rather than reading the damage as "remote access is off"
+  and dropping the lock while a tunnel is pointed at the machine. Recover it from the host,
+  where the CLI writes the file directly: `switchboard remote off` (or `remote password`).
+  A *missing* file is different — that is simply a hub that never turned this on, and it stays
+  open and local as always.
+
+### What it does not do
+
+It does not protect you from a tunnel URL that leaks, beyond the password. It does not audit
+who logged in. And it does not make the "any local process can post to the hub" trust model
+any smaller — it only stops the *network* from being one of those processes.
 
 ---
 

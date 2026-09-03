@@ -9,7 +9,8 @@
 
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { BIND_HOST, loadConfig } from "../server/config.js";
+import { BIND_HOST, defaultBaseDir, loadConfig } from "../server/config.js";
+import { loadRemoteAuth } from "../server/remote-auth.js";
 import { createTmux } from "../server/tmux.js";
 
 /**
@@ -170,6 +171,26 @@ export async function ensureHubUp(
   );
 }
 
+/**
+ * The CLI's own credential for a hub with remote access armed.
+ *
+ * When the gate is on, EVERY request needs to prove itself — there is no
+ * "but it came from localhost" exemption, because a tunnel makes the phone
+ * look exactly like localhost. The browser proves itself with a password; the
+ * CLI cannot stop mid-script to ask for one, so it reads the token out of
+ * ~/.switchboard/remote.json, which is mode 0600. Anyone able to read that
+ * file already owns the machine, so this adds no exposure — and it costs
+ * nothing when remote access is off, where the header is simply ignored.
+ */
+function localAuthHeader(): Record<string, string> {
+  try {
+    const token = loadRemoteAuth(defaultBaseDir()).localToken;
+    return token ? { authorization: `Bearer ${token}` } : {};
+  } catch {
+    return {};
+  }
+}
+
 async function hubFetch<T>(
   hubUrl: string,
   pathname: string,
@@ -180,6 +201,7 @@ async function hubFetch<T>(
     res = await fetch(`${hubUrl}${pathname}`, {
       signal: AbortSignal.timeout(10_000),
       ...init,
+      headers: { ...localAuthHeader(), ...(init?.headers as Record<string, string> | undefined) },
     });
   } catch (err) {
     throw new CliError(
