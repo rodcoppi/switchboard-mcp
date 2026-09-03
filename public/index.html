@@ -4,7 +4,8 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
   <title>Switchboard</title>
   <!-- xterm.js: the ONE thing this page loads that it did not write itself, and
        the hub serves it from its own node_modules — nothing is fetched off this
@@ -144,6 +145,7 @@
       display: flex;
       flex-direction: column;
       height: 100vh;
+      height: 100dvh;
       overflow: hidden;
     }
     button { font-family: inherit; cursor: pointer; }
@@ -3507,17 +3509,148 @@
     ::-webkit-scrollbar-thumb:hover { background: var(--text-faint); background-clip: padding-box; }
     ::-webkit-scrollbar-track { background: transparent; }
 
+    /* Sign out: present only when remote access is on (see boot()). */
+    .signout-btn {
+      flex: 0 0 auto;
+      margin-left: 10px;
+      font-size: var(--fs-xs);
+      color: var(--text-faint);
+    }
+    .signout-btn:hover { color: var(--accent); border-color: var(--accent-line); }
+    .signout-btn[hidden] { display: none; }
+
     /* ----------------------------- Responsive --------------------------- */
-    @media (max-width: 820px) {
+    /* Measured, not guessed. The Z Fold 8 Ultra's inner screen is 2504x2256
+       physical at DPR 3 — 835x752 CSS px unfolded and landscape, 752x835
+       unfolded and upright. BOTH clear the old 820px breakpoint by a hair, so
+       the unfolded phone used to land on the desktop layout squeezed: mouse-
+       sized targets, and a card action cluster only :hover could reveal.
+       The stacking split now sits at 640px. Above it the rail and the
+       conversation stay side by side — which is what a near-square screen is
+       FOR — and below it (folded, or any ordinary phone) they stack. */
+
+    /* --- Unfolded phone / small tablet: both columns survive ------------- */
+    @media (min-width: 641px) and (max-width: 1080px) {
+      .sidebar {
+        /* The operator's own rail width is applied INLINE by the resizer, so it
+           outranks any width declared here. min() lets that preference through
+           while capping it: a 322px rail on an 835px screen leaves the
+           conversation too narrow to read. */
+        flex: 0 0 auto;
+        width: min(var(--sidebar-w), 34vw);
+        min-width: 212px;
+      }
+      /* Uptime and version are ambient trivia. The online count is not. */
+      .hub-metrics .metric:not(:first-child) { display: none; }
+      .mcp-add code { max-width: 30ch; }
+    }
+
+    /* --- Folded / ordinary phone: one column ----------------------------- */
+    @media (max-width: 640px) {
       .layout { flex-direction: column; }
       .sidebar {
         flex: 0 0 auto;
         width: 100%;
-        max-height: 42vh;
+        max-height: 44dvh;
+        /* Belt to the max-height's braces: whatever happens inside the rail,
+           it may not paint over the conversation underneath it. */
+        overflow: hidden;
         border-right: none;
         border-bottom: 1px solid var(--border);
       }
-      .mcp-add code { max-width: 28ch; }
+      /* The usage card is a rigid ~350px block (flex: 0 0 auto). In a rail
+         capped at 44dvh it wins the space fight outright: the agent list is
+         squeezed to nothing and the card spills onto the panel below — which
+         is exactly what the old 42vh breakpoint did, silently. On a screen
+         this narrow the agents ARE the rail; usage is ambient reading that
+         can wait for a wider one. */
+      .usage-card { display: none; }
+      .wordmark, .hub-metrics { display: none; }
+      .mcp-add code { max-width: 24ch; }
+    }
+
+    /* --- Narrow: the transcript header stops eating the transcript ------- */
+    /* .feed-head lays its caption, its search box and every group tab on one
+       flex line. Under ~1080px that line wraps: the caption takes three lines,
+       the tabs take three more, and on the folded phone the header ends up
+       taller than the messages it introduces. The caption explains something
+       you already know by the second visit, so it goes; the tabs stay, on one
+       swipeable line. */
+    @media (max-width: 1080px) {
+      .feed-head { flex-wrap: nowrap; gap: 10px; padding: 10px 14px 9px; }
+      .feed-head .sub { display: none; }
+      .feed-search { margin-left: 0; width: auto; flex: 0 1 180px; min-width: 0; max-width: none; }
+      .feed-head .group-tabs {
+        flex: 1 1 auto;
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        scrollbar-width: none;
+      }
+      .feed-head .group-tabs::-webkit-scrollbar { display: none; }
+      /* nowrap on the STRIP only stops it stacking rows; without this the
+         chips themselves break mid-label ("ai-" over "panorama 9"). */
+      .feed-head .group-tabs > * { white-space: nowrap; flex: 0 0 auto; }
+    }
+
+    /* --- Touch: nothing may hide behind a hover that never fires --------- */
+    /* Each selector below is a CONTROL the desktop reveals on :hover — the
+       card's action cluster, the message edit/forward pair, the code copy
+       button, the group swatch and rename pencil. On a finger that event does
+       not exist, so the button may as well not be there. They come out at
+       rest, dimmed enough not to shout. Keyboard :focus-within keeps working
+       either way. */
+    @media (hover: none) {
+      .agent-actions,
+      .chat-turn-actions,
+      .chat-turn.user .chat-edit-btn,
+      .chat-tool-pre .copy-btn,
+      .code-wrap .copy-btn,
+      .group-head .group-rename {
+        opacity: 1;
+        pointer-events: auto;
+        transform: none;
+      }
+      .group-head .group-swatch { opacity: 1; }
+      /* Drag-to-reorder is a mouse gesture; the handle stays faint but present. */
+      .agent-card .card-grab { opacity: 0.45; }
+      /* "window" pops a real Windows terminal on the machine the hub runs on.
+         Reached from a phone, that is a button for a screen you are not
+         sitting at — so it goes, and the 60px it was holding go back to the
+         agent's name. "wake" (the same slot when the agent is asleep) stays:
+         reviving an agent from the road is the whole point of opening this on
+         a phone. */
+      .agent-actions > .open-btn { display: none; }
+      /* Revealing the cluster permanently means the name now has to live
+         BESIDE it rather than under it. Measured on the unfolded phone: the
+         cluster is 100px (a 60px verb + a 34px menu button + the gap) sitting
+         10px off the edge, while the name row reserves 70px — so the name ran
+         26px under the buttons and its ellipsis lied about where it ended.
+         A card with no wake button only carries the 34px menu, and :has lets
+         it hand the difference back to the name instead of reserving for a
+         button that is not there. */
+      .agent-name-row { padding-right: 116px; }
+      .agent-card:not(:has(.reopen-btn)) .agent-name-row { padding-right: 52px; }
+    }
+
+    /* --- Coarse pointer: fingertip-sized targets ------------------------- */
+    /* 34px is under the 44px guideline on purpose: these controls sit INSIDE a
+       card whose own body is the primary target, and inflating them further
+       starts pushing the name and the face around. */
+    @media (pointer: coarse) {
+      .agent-actions > button,
+      .agent-actions > .agent-menu-wrap > .menu-btn,
+      .chat-turn-actions button,
+      .send-btn, .btn {
+        min-width: 34px;
+        min-height: 34px;
+      }
+      .agent-menu button { min-height: 36px; }
+      /* Overlays measured against the VISIBLE viewport: with a keyboard open,
+         vh still reports the whole screen and the panel runs off the bottom. */
+      .info-card-body { max-height: 56dvh; }
+      .groups-panel { max-height: 66dvh; }
+      .preview-body { max-height: 68dvh; }
+      .palette { max-height: 60dvh; }
     }
 
     /* Motion is purposeful; honor the OS reduced-motion request. */
@@ -3559,6 +3692,11 @@
          on a hub with no agents yet, because that is the only time it is the
          next thing to do — `switchboard setup` runs it for you, and once an
          agent exists you are long past it. It used to sit here forever. -->
+    <!-- Only ever visible on a hub with remote access armed: on a local board
+         there is no session to end, and the button would be a lie. -->
+    <button class="btn signout-btn" id="signout" type="button" hidden
+      title="End this browser session (the hub and the agents keep running)">sign out</button>
+
     <div class="mcp-add" id="mcp-add" hidden>
       <code id="mcp-cmd" title=""></code>
       <button class="btn btn-copy" id="copy-mcp" type="button">copy</button>
@@ -10606,8 +10744,41 @@
       });
     }
 
+    /**
+     * Reveals "sign out" only on a hub whose remote gate is armed.
+     *
+     * A local board has no session to end — the button would promise something
+     * it cannot do. On a phone that reached this board through a tunnel it is
+     * the only way out, since the cookie otherwise lives for its full term.
+     */
+    async function setupRemoteSession() {
+      const btn = $("#signout");
+      if (!btn) return;
+      let enabled = false;
+      try {
+        const res = await fetch("/api/auth/status", { credentials: "same-origin" });
+        enabled = res.ok && (await res.json()).enabled === true;
+      } catch {
+        // A board that cannot reach its own hub has bigger problems, and the
+        // rest of the page already says so.
+        return;
+      }
+      if (!enabled) return;
+      btn.hidden = false;
+      btn.addEventListener("click", async () => {
+        btn.disabled = true;
+        try {
+          await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" });
+        } catch {
+          /* the reload below lands on the login page either way */
+        }
+        window.location.reload();
+      });
+    }
+
     async function boot() {
       initMotionPreference(); // before anything animates, so the banner is honest
+      setupRemoteSession();
       setupMcpCommand();
       loadUsageCollapsed();
       $("#usage-toggle").addEventListener("click", () => {

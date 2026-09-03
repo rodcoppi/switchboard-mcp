@@ -1779,3 +1779,133 @@ describe("the rail stops cancelling its own animations", () => {
     }
   });
 });
+
+/**
+ * The dashboard on a folding phone.
+ *
+ * The Z Fold's inner screen is 835x752 CSS px unfolded and landscape (752x835
+ * upright) — both a hair ABOVE the 820px breakpoint this file used to carry,
+ * so the unfolded phone silently got the desktop layout: mouse-sized targets,
+ * and every card control parked behind a :hover that a finger never fires.
+ * These lock the parts that are easy to undo by accident.
+ */
+describe("the layout survives a folding phone", () => {
+  /** The media queries, each with the block it guards. */
+  function mediaBlocks(): { query: string; body: string }[] {
+    const out: { query: string; body: string }[] = [];
+    const re = /@media([^{]+)\{/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(styles))) {
+      // Walk the braces so a nested rule cannot end the block early.
+      let depth = 1;
+      let i = re.lastIndex;
+      while (i < styles.length && depth > 0) {
+        if (styles[i] === "{") depth++;
+        else if (styles[i] === "}") depth--;
+        i++;
+      }
+      out.push({ query: m[1].trim(), body: styles.slice(re.lastIndex, i - 1) });
+    }
+    return out;
+  }
+
+  const blocks = mediaBlocks();
+  const stacking = blocks.filter((b) => /flex-direction:\s*column/.test(b.body) && /\.layout/.test(b.body));
+
+  it("only stacks the rail below the unfolded width, never at it", () => {
+    expect(stacking.length).toBeGreaterThan(0);
+    for (const b of stacking) {
+      const cap = /max-width:\s*(\d+)px/.exec(b.query);
+      expect(cap, `stacking block has no max-width: ${b.query}`).toBeTruthy();
+      // 752 is the NARROW side of the unfolded screen — upright. Stacking must
+      // begin below it, or the fold loses its second column in one rotation.
+      expect(Number(cap![1])).toBeLessThan(752);
+    }
+  });
+
+  it("keeps the rail's own width from eating a small screen", () => {
+    // The resizer writes --sidebar-w INLINE, which outranks any width here, so
+    // the cap has to come through min() rather than a plain declaration.
+    const narrow = blocks.find((b) => /max-width:\s*10\d\dpx/.test(b.query) && /\.sidebar/.test(b.body));
+    expect(narrow).toBeTruthy();
+    expect(narrow!.body).toMatch(/width:\s*min\(var\(--sidebar-w\)/);
+  });
+
+  it("brings every hover-revealed control out on touch", () => {
+    const touch = blocks.filter((b) => /hover:\s*none/.test(b.query));
+    expect(touch.length).toBeGreaterThan(0);
+    const body = touch.map((b) => b.body).join("\n");
+    // Each of these is a control the desktop hides until :hover — on a finger
+    // that event never arrives, so hidden means gone.
+    for (const sel of [".agent-actions", ".chat-turn-actions", ".chat-edit-btn", ".copy-btn", ".group-rename"]) {
+      expect(body, `${sel} stays hover-only on touch`).toContain(sel);
+    }
+    expect(body).toMatch(/opacity:\s*1/);
+  });
+
+  it("drops the button that acts on a screen you are not sitting at", () => {
+    const touch = blocks.filter((b) => /hover:\s*none/.test(b.query)).map((b) => b.body).join("\n");
+    // "window" pops a Windows terminal on the HUB's machine; "wake" revives a
+    // sleeping agent, which is the reason to open this from a phone at all.
+    expect(touch).toMatch(/\.open-btn\s*\{\s*display:\s*none/);
+    expect(touch).not.toMatch(/\.reopen-btn[^{]*\{[^}]*display:\s*none/);
+  });
+
+  it("reserves room for the cluster it just made permanent", () => {
+    const touch = blocks.filter((b) => /hover:\s*none/.test(b.query)).map((b) => b.body).join("\n");
+    // Measured: cluster 100px at 10px from the edge, against a 70px reserve —
+    // the name ran under the buttons and its ellipsis lied about where it ended.
+    const pad = /\.agent-name-row\s*\{\s*padding-right:\s*(\d+)px/.exec(touch);
+    expect(pad).toBeTruthy();
+    expect(Number(pad![1])).toBeGreaterThanOrEqual(110);
+  });
+
+  it("does not let the rigid usage card crush the agent list", () => {
+    // usage-card is flex: 0 0 auto and ~350px tall. In a rail capped to a
+    // fraction of a phone screen it wins outright: the list goes to zero and
+    // the card spills over the conversation.
+    const stackedBody = stacking.map((b) => b.body).join("\n");
+    expect(stackedBody).toMatch(/\.usage-card\s*\{\s*display:\s*none/);
+    expect(stackedBody).toMatch(/\.sidebar\s*\{[^}]*overflow:\s*hidden/);
+  });
+
+  it("measures phone-sized panels against the visible viewport", () => {
+    // vh still reports the whole screen with a keyboard open; dvh does not.
+    expect(styles).toMatch(/height:\s*100dvh/);
+    const stackedBody = stacking.map((b) => b.body).join("\n");
+    expect(stackedBody).toMatch(/max-height:\s*\d+dvh/);
+  });
+
+  it("lets a virtual keyboard resize the page instead of covering it", () => {
+    expect(html).toMatch(/interactive-widget=resizes-content/);
+  });
+
+  it("keeps the transcript header to one swipeable line when narrow", () => {
+    const narrow = blocks.find((b) => /max-width:\s*10\d\dpx/.test(b.query) && /\.feed-head/.test(b.body));
+    expect(narrow).toBeTruthy();
+    // The strip scrolls sideways; the chips inside it must not break mid-label.
+    expect(narrow!.body).toMatch(/overflow-x:\s*auto/);
+    expect(narrow!.body).toMatch(/white-space:\s*nowrap/);
+  });
+});
+
+/**
+ * The sign-out button exists for exactly one situation: a board reached
+ * through a tunnel, where the session cookie is otherwise good for its full
+ * term and there is no other way to end it. On a local hub there is no session
+ * at all, so the button must not sit there promising one.
+ */
+describe("signing out of a remote session", () => {
+  it("ships hidden, and is revealed only after asking the hub", () => {
+    expect(html).toMatch(/id="signout"[^>]*hidden/);
+    // Revealed from the auth status, never from a guess about the URL.
+    expect(script).toContain("/api/auth/status");
+    expect(script).toMatch(/enabled\s*===\s*true/);
+  });
+
+  it("ends the session on the hub, not just in the tab", () => {
+    // Dropping the cookie locally would leave the session valid on the server;
+    // the point is to invalidate it there.
+    expect(script).toMatch(/"\/api\/auth\/logout"[\s\S]{0,120}method:\s*"POST"/);
+  });
+});
