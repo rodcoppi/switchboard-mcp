@@ -1938,3 +1938,30 @@ describe("the slash menu offers the agent's own skills", () => {
     expect(script).toMatch(/scope === "project" \? 0/);
   });
 });
+
+/**
+ * Showing what the agent saw, and what it handed over.
+ */
+describe("images and files in the chat", () => {
+  it("fetches each image instead of inlining it", () => {
+    // Inlining is the obvious implementation and the wrong one: these are
+    // ~200 KB of base64 each and one conversation here holds 315.
+    expect(script).toMatch(/transcript\/image/);
+    expect(script).toMatch(/loading = "lazy"/);
+  });
+
+  it("keeps a card with pictures out of the folded 'N actions' group", () => {
+    // Runs of tool cards fold into a collapsed group, and collapsed means
+    // display:none — which hides the picture AND stops the lazy <img> from
+    // ever loading. Found only by rendering it (04/09).
+    expect(script).toMatch(/dataset\.hasShots = "1"/);
+    expect(script).toMatch(/if \(node\.dataset\.hasShots\)/);
+  });
+
+  it("offers a download that a phone can actually use", () => {
+    // "folder" opens Explorer on the HUB's machine — useless from a phone.
+    expect(script).toMatch(/download=1/);
+    // It must be a navigation, or Content-Disposition is never honoured.
+    expect(script).toMatch(/a\.download = ""/);
+  });
+});

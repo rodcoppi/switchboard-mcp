@@ -2642,6 +2642,44 @@
     .chat-tool-name { color: var(--accent); font-weight: 600; }
     .chat-tool-summary { color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .chat-tool.error .chat-tool-name { color: var(--danger); }
+    /* A file the agent handed over: the attachment card. */
+    .chat-sent-files {
+      border-top: 1px solid var(--border-soft);
+      padding: 9px 10px 10px;
+      display: flex; flex-direction: column; gap: 7px;
+    }
+    .chat-sent-caption {
+      font-family: var(--sans); font-size: var(--fs-sm);
+      color: var(--text-dim); line-height: 1.5;
+    }
+    .chat-sent-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .chat-sent-icon { flex: 0 0 auto; font-size: var(--fs-md); }
+    .chat-sent-name {
+      flex: 1 1 auto; min-width: 0;
+      font-family: var(--mono); font-size: var(--fs-sm); color: var(--text);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .chat-sent-btn { flex: 0 0 auto; font-size: var(--fs-xs); }
+    .chat-sent-btn:hover { border-color: var(--accent); color: var(--accent); }
+    .chat-sent-preview {
+      max-height: 200px; max-width: 100%;
+      border: 1px solid var(--border); border-radius: var(--radius-sm);
+      cursor: zoom-in; background: var(--bg-inset);
+    }
+
+    /* Tool images sit OUTSIDE .chat-tool-body, so they show without opening
+       the chip — seeing what the agent saw is the point. */
+    .chat-tool-shots {
+      display: flex; flex-wrap: wrap; gap: 6px;
+      padding: 8px 10px 9px;
+      border-top: 1px solid var(--border-soft);
+    }
+    .chat-tool-shots img {
+      max-height: 168px; max-width: 100%;
+      border: 1px solid var(--border); border-radius: var(--radius-sm);
+      cursor: zoom-in; background: var(--bg-inset);
+    }
+    .chat-tool-shots img:hover { border-color: var(--accent-line); }
     .chat-tool-body { display: none; border-top: 1px solid var(--border-soft); }
     .chat-tool.open .chat-tool-body { display: block; }
     /* Each input/result pre is wrapped so a copy button can float over it. */
@@ -2835,7 +2873,8 @@
       padding: 8px 0 24px;
     }
     .preview-blocked .preview-status { padding-bottom: 4px; }
-    .preview-open, .preview-browser, .preview-reveal { border-color: var(--border); color: var(--text); }
+    .preview-open, .preview-browser, .preview-reveal, .preview-download { border-color: var(--border); color: var(--text); }
+    .preview-download:hover:not(:disabled) { background: var(--accent-wash); border-color: var(--accent-line); }
     .preview-open:hover:not(:disabled), .preview-browser:hover:not(:disabled),
     .preview-reveal:hover:not(:disabled) { background: var(--accent-wash); }
     /* Header furniture on both preview surfaces (lightbox head + inline dock
@@ -7772,7 +7811,12 @@
         run = [];
       };
       for (const node of [...thread.children]) {
-        if (node.classList.contains("chat-tool") && !node.dataset.grouped) {
+        if (node.dataset.hasShots) {
+          // A card showing an image stays out in the open, and ends the run:
+          // folding the cards around it would leave a picture stranded between
+          // two grey boxes.
+          flush(true);
+        } else if (node.classList.contains("chat-tool") && !node.dataset.grouped) {
           run.push(node);
         } else if (!node.classList.contains("chat-tool-group")) {
           flush(true); // a non-action node closes the run
@@ -9022,8 +9066,128 @@
       // … then its result, diff-coloured for edits.
       if (it.result) body.appendChild(buildToolPre(null, it.result, it.name));
       chip.append(head, body);
+      // Images the tool returned — a screenshot, a page it rendered, a picture
+      // it was handed. These go OUTSIDE the collapsible body on purpose: the
+      // whole point is seeing what the agent just saw, and a picture behind a
+      // disclosure triangle is a picture nobody looks at.
+      // Files the agent HANDED OVER (SendUserFile) — an attachment card with
+      // the agent's own caption and a download that works from a phone.
+      const handed = buildSentFiles(it);
+      if (handed) {
+        chip.appendChild(handed);
+        chip.dataset.hasShots = "1"; // same reason as images: never fold it away
+      }
+      const shots = buildToolShots(it);
+      if (shots) {
+        chip.appendChild(shots);
+        // Runs of tool cards get folded into a collapsed "N actions" group,
+        // and a collapsed group is display:none — which not only hides the
+        // picture but stops the lazy <img> from ever loading. A result the
+        // operator can SEE is not filler to fold away.
+        chip.dataset.hasShots = "1";
+      }
       wireDisclosure(head, chip, `Show ${it.name} action details`);
       return chip;
+    }
+
+    /**
+     * The strip of images a tool_result carried, fetched one at a time.
+     *
+     * The transcript holds these as ~200 KB of base64 each and a busy
+     * conversation has hundreds, so the chat stream carries only references
+     * and each <img> pulls its own bytes — lazily, so scrolling past a hundred
+     * screenshots costs nothing until they come into view.
+     */
+    function buildToolShots(it) {
+      const images = Array.isArray(it.images) ? it.images : [];
+      if (!images.length || !screenState.name) return null;
+      const strip = el("div", "chat-thumbs chat-tool-shots");
+      for (const img of images.slice(0, THUMBS_PER_MESSAGE)) {
+        const url =
+          `/api/agents/${encodeURIComponent(screenState.name)}/transcript/image` +
+          `?uuid=${encodeURIComponent(img.uuid)}&i=${img.index}`;
+        const node = el("img");
+        node.loading = "lazy";
+        node.src = url;
+        node.alt = `image returned by ${it.name}`;
+        node.title = `${it.name} — ${formatBytes(img.bytes)} · click to open full size`;
+        node.addEventListener("error", () => {
+          node.remove();
+          if (!strip.childElementCount) strip.remove();
+        });
+        node.addEventListener("click", (ev) => {
+          ev.stopPropagation(); // the chip's disclosure must not swallow it
+          window.open(url, "_blank", "noopener");
+        });
+        strip.appendChild(node);
+      }
+      return strip.childElementCount ? strip : null;
+    }
+
+    /**
+     * The attachment card for a SendUserFile call.
+     *
+     * "open" hands the file to the app on the HUB'S machine, which is useless
+     * from a phone, so download leads and open is the quieter second — the
+     * reverse of the preview panel, where you are sitting at the machine.
+     */
+    function buildSentFiles(it) {
+      const files = Array.isArray(it.files) ? it.files : [];
+      if (!files.length) return null;
+      const box = el("div", "chat-sent-files");
+      if (it.caption) box.appendChild(el("div", "chat-sent-caption", it.caption));
+      for (const f of files) {
+        const row = el("div", "chat-sent-row");
+        const isImage = THUMB_EXT.test(f.path);
+        row.append(
+          el("span", "chat-sent-icon", isImage ? "🖼" : "📎"),
+          el("span", "chat-sent-name", f.name),
+        );
+        const raw = `/api/files/raw?path=${encodeURIComponent(f.path)}`;
+
+        const dl = el("button", "btn chat-sent-btn", "download");
+        dl.type = "button";
+        dl.title = `Download ${f.name} to this device`;
+        dl.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          const a = document.createElement("a");
+          a.href = `${raw}&download=1`;
+          a.download = "";
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+        });
+
+        const view = el("button", "btn chat-sent-btn", "view");
+        view.type = "button";
+        view.title = "Open it in a browser tab";
+        view.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          window.open(raw, "_blank", "noopener");
+        });
+
+        row.append(dl, view);
+        box.appendChild(row);
+        // An image sent this way shows itself, rather than being a filename.
+        if (isImage) {
+          const img = el("img", "chat-sent-preview");
+          img.loading = "lazy";
+          img.src = raw;
+          img.alt = f.name;
+          img.addEventListener("error", () => img.remove());
+          img.addEventListener("click", (ev) => { ev.stopPropagation(); window.open(raw, "_blank", "noopener"); });
+          box.appendChild(img);
+        }
+      }
+      return box;
+    }
+
+    /** Bytes as something a tooltip can say. */
+    function formatBytes(n) {
+      if (!Number.isFinite(n) || n <= 0) return "unknown size";
+      if (n < 1024) return `${n} B`;
+      if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+      return `${(n / (1024 * 1024)).toFixed(1)} MB`;
     }
 
     /**
@@ -9428,6 +9592,28 @@
         : "Show this file in its folder (Windows Explorer)";
       reveal.textContent = folderOnly ? "folder ↗" : "folder";
       reveal.onclick = realPath === null ? null : () => revealInFolder(realPath, reveal);
+
+      // "folder" opens Explorer ON THE HUB'S MACHINE — from a phone that is a
+      // window nobody is looking at. Download is the one that works from
+      // anywhere, so it is offered wherever the bytes can be served.
+      const download = $("#preview-download");
+      if (download) {
+        download.hidden = realPath === null || folderOnly;
+        download.onclick = download.hidden
+          ? null
+          : () => {
+              const url = `/api/files/raw?path=${encodeURIComponent(realPath)}&download=1`;
+              // A plain anchor click: this must be a NAVIGATION so the browser
+              // honours Content-Disposition. fetch() would just buffer bytes
+              // into memory and drop them.
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = "";
+              document.body.appendChild(a);
+              a.click();
+              a.remove();
+            };
+      }
     }
 
     /** Windows Explorer opened on the file's folder with the file selected. */
@@ -12003,6 +12189,8 @@
         <span class="preview-actions">
           <button class="btn preview-browser" id="preview-browser" type="button" hidden
             title="Open this file in a browser tab — an .html opens as the site, an image at full size">browser</button>
+          <button class="btn preview-download" id="preview-download" type="button" hidden
+            title="Download this file to this device">download</button>
           <button class="btn preview-reveal" id="preview-reveal" type="button" hidden
             title="Show this file in its folder (Windows Explorer)">folder</button>
         </span>

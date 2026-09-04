@@ -63,6 +63,42 @@ export interface ToolItem {
   result?: string;
   isError?: boolean;
   ts?: string;
+  /**
+   * Images the tool handed back — a screenshot, a rendered page, a photo the
+   * agent was asked to look at. REFERENCES, never the bytes: these arrive as
+   * base64 in the transcript at ~200 KB each and a single conversation here
+   * holds hundreds, so inlining them would put 60 MB of data URL into a chat
+   * payload. The dashboard fetches each one from the transcript on demand.
+   */
+  images?: ToolImage[];
+  /**
+   * Files the agent SENT, via the SendUserFile tool — the same mechanism the
+   * Claude app uses to put an attachment in the conversation. Without this the
+   * chip read "SendUserFile" and nothing else, and the file it was handing
+   * over was invisible.
+   */
+  files?: SentFile[];
+  /** The agent's own one-line note about what it is sending. */
+  caption?: string;
+}
+
+/** A file the agent deliberately handed to the operator. */
+export interface SentFile {
+  /** Absolute path on the hub's machine. */
+  path: string;
+  /** Basename, for the label. */
+  name: string;
+}
+
+/** Where to find one image inside the transcript, and what it is. */
+export interface ToolImage {
+  /** The JSONL record's own uuid — stable, and unique per line. */
+  uuid: string;
+  /** Which image within that record (a tool may return several). */
+  index: number;
+  mediaType: string;
+  /** Decoded size, for the UI to decide whether to lazy-load. */
+  bytes: number;
 }
 export type ChatItem = UserItem | AssistantItem | ToolItem | ThinkingItem | MarkerItem;
 
@@ -151,6 +187,65 @@ function resultToText(content: unknown): string {
   return "";
 }
 
+/** Media types worth rendering. Anything else is served as a download. */
+const RENDERABLE_IMAGE = /^image\/(png|jpeg|jpg|gif|webp|avif|bmp|svg\+xml)$/i;
+
+/**
+ * The image blocks inside one tool_result, as references.
+ *
+ * `source.data` is deliberately not read here beyond its length: the point of
+ * this function is to describe the images without carrying them.
+ */
+export function imagesInResult(content: unknown, uuid: string): ToolImage[] {
+  if (!Array.isArray(content) || !uuid) return [];
+  const out: ToolImage[] = [];
+  for (const block of content) {
+    if (!block || typeof block !== "object") continue;
+    const b = block as { type?: unknown; source?: unknown };
+    if (b.type !== "image") continue;
+    const src = b.source as { type?: unknown; media_type?: unknown; data?: unknown } | undefined;
+    if (!src || src.type !== "base64" || typeof src.data !== "string") continue;
+    const mediaType = typeof src.media_type === "string" ? src.media_type : "image/png";
+    if (!RENDERABLE_IMAGE.test(mediaType)) continue;
+    out.push({
+      uuid,
+      index: out.length,
+      mediaType,
+      // base64 carries 3 bytes per 4 characters, less the padding.
+      bytes: Math.max(0, Math.floor((src.data.length * 3) / 4) - (src.data.endsWith("==") ? 2 : src.data.endsWith("=") ? 1 : 0)),
+    });
+  }
+  return out;
+}
+
+/**
+ * The files a SendUserFile call is handing over, or null for any other tool.
+ *
+ * Only absolute paths are accepted: the dashboard turns each one into a
+ * download link, and a relative path would be resolved against something the
+ * agent never meant.
+ */
+export function sentFilesFrom(
+  toolName: string,
+  input: unknown,
+): { files: SentFile[]; caption?: string } | null {
+  if (toolName !== "SendUserFile") return null;
+  if (!input || typeof input !== "object") return null;
+  const raw = (input as { files?: unknown }).files;
+  const list = Array.isArray(raw) ? raw : typeof raw === "string" ? [raw] : [];
+  const files: SentFile[] = [];
+  for (const entry of list) {
+    if (typeof entry !== "string" || !entry.startsWith("/")) continue;
+    const name = entry.split("/").pop() || entry;
+    files.push({ path: entry, name });
+  }
+  if (!files.length) return null;
+  const rawCaption = (input as { caption?: unknown }).caption;
+  const caption =
+    typeof rawCaption === "string" && rawCaption.trim() ? rawCaption.trim().slice(0, 400) : undefined;
+  return { files, caption };
+}
+
 /**
  * Parses conversation JSONL lines into an ordered list of chat items.
  *
@@ -227,6 +322,11 @@ export function parseConversation(lines: string[]): ChatItem[] {
             if (tool) {
               tool.result = resultToText(block.content).slice(0, 20_000);
               tool.isError = block.is_error === true;
+              // A screenshot came back with no text at all until now: the tool
+              // row said "Read" and showed nothing, because resultToText only
+              // ever looked for text blocks.
+              const images = imagesInResult(block.content, typeof rec.uuid === "string" ? rec.uuid : "");
+              if (images.length) tool.images = images;
             }
           } else if (block?.type === "text" && typeof block.text === "string") {
             const text = cleanUserText(block.text);
@@ -249,14 +349,24 @@ export function parseConversation(lines: string[]): ChatItem[] {
         } else if (block?.type === "thinking" && typeof block.thinking === "string" && block.thinking.trim()) {
           items.push({ kind: "thinking", text: block.thinking.trim(), ts });
         } else if (block?.type === "tool_use" && block.id) {
+          const toolName = String(block.name ?? "tool");
           const tool: ToolItem = {
             kind: "tool",
             id: block.id,
-            name: String(block.name ?? "tool"),
-            summary: toolSummary(String(block.name ?? "tool"), block.input),
+            name: toolName,
+            summary: toolSummary(toolName, block.input),
             input: block.input,
             ts,
           };
+          // SendUserFile is how an agent HANDS a file over — the same
+          // mechanism the Claude app renders as an attachment. Pulled apart
+          // here so the dashboard can offer the file instead of printing the
+          // tool's name and dropping it on the floor.
+          const sent = sentFilesFrom(toolName, block.input);
+          if (sent) {
+            tool.files = sent.files;
+            if (sent.caption) tool.caption = sent.caption;
+          }
           toolsById.set(block.id, tool);
           items.push(tool);
         }

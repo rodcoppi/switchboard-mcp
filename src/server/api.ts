@@ -41,6 +41,7 @@ import { PreviewError, rawMime, readPreview, resolveInScope } from "./fileprevie
 import { isOpenable, refusalFor, type FileOpener } from "./fileopen.js";
 import { MAX_STT_BYTES, SttError, type SttProxy } from "./stt.js";
 import { contextUsageFrom, parseConversation, projectDirForCwd } from "./conversation.js";
+import readline from "node:readline";
 import {
   codexUsageSnapshot,
   findCodexRolloutForCwd,
@@ -393,8 +394,23 @@ const AGENT_FILES_SCAN_CAP = 20_000; // entries visited before the walk bails
  * "Downloads". Keep the scope narrow: only the Downloads directories, never a
  * whole Windows profile.
  */
+/**
+ * The user's own drop folders, on both sides of the WSL boundary.
+ *
+ * Downloads and Desktop, because those are where a person keeps the files they
+ * are working WITH rather than the files a project is made OF — an agent asked
+ * to produce a contract or a report puts it in one of them, and then cannot
+ * hand it over: the file scope refused it with a 403 and the attachment in the
+ * chat was a dead link (04/09).
+ *
+ * This widens what the dashboard can serve, so it is worth being plain about
+ * the size of it: os.homedir() is ALREADY in scope in full, and these two add
+ * the Windows-side equivalents. Everything here still goes through
+ * resolveInScope (no traversal out of a root) and, when remote access is
+ * armed, through the password.
+ */
 function downloadRoots(): string[] {
-  const roots = [path.join(os.homedir(), "Downloads")];
+  const roots = [path.join(os.homedir(), "Downloads"), path.join(os.homedir(), "Desktop")];
   let mounts: fs.Dirent[] = [];
   try {
     mounts = fs.readdirSync("/mnt", { withFileTypes: true });
@@ -413,6 +429,10 @@ function downloadRoots(): string[] {
     for (const profile of profiles) {
       if (!profile.isDirectory()) continue;
       roots.push(path.join(users, profile.name, "Downloads"));
+      roots.push(path.join(users, profile.name, "Desktop"));
+      // OneDrive redirects Desktop on a lot of Windows installs, and the
+      // literal path then holds only a placeholder.
+      roots.push(path.join(users, profile.name, "OneDrive", "Desktop"));
     }
   }
   return [...new Set(roots)].filter((root) => {
@@ -1131,6 +1151,26 @@ export function createApiRouter(options: ApiOptions): express.Router {
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Cache-Control", "no-store");
     res.setHeader("Content-Length", String(stat.size));
+    // ?download=1 — "save this" rather than "show this". Without it the
+    // browser renders what it can and downloads only what it cannot, which
+    // means a .md or a .csv an agent just wrote opens as a wall of text in a
+    // tab instead of landing in Downloads where it was wanted.
+    if (req.query.download === "1" || req.query.download === "true") {
+      // The filename goes into a HEADER, so it is stripped to something that
+      // cannot carry one: no quotes, no CR/LF, no path separators.
+      const safeName = path
+        .basename(real)
+        .replace(/[\r\n"\\]/g, "")
+        .replace(/[\u0000-\u001f\u007f]/g, "")
+        .slice(0, 180) || "download";
+      // filename* carries the real UTF-8 name (accents, CJK); the plain
+      // filename is the ASCII fallback for anything that cannot read it.
+      const ascii = safeName.replace(/[^\x20-\x7e]/g, "_");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(safeName)}`,
+      );
+    }
     fs.createReadStream(real)
       .on("error", (err) => {
         log.warn(`[files] raw stream failed for ${real}: ${err.message}`);
@@ -1422,6 +1462,101 @@ export function createApiRouter(options: ApiOptions): express.Router {
 
   // POST /api/agents/:name/mute — body {muted: boolean}. Messages keep being
   // recorded; only nudges stop (Phase 3 dispatcher reads the flag).
+  /**
+   * One image out of the agent's transcript, decoded and served.
+   *
+   * Screenshots and other tool images live in the JSONL as ~200 KB of base64
+   * each, hundreds per conversation. The chat stream carries only a reference
+   * (uuid + index) and the browser asks for the bytes here, once, per image it
+   * actually paints — so opening a conversation full of screenshots costs one
+   * lazy request per visible thumbnail instead of a 60 MB payload.
+   *
+   * The uuid identifies a LINE in that agent's own transcript. It is not a
+   * path, and nothing here joins it to one: the worst a bad uuid can do is
+   * find nothing.
+   */
+  router.get("/api/agents/:name/transcript/image", async (req, res) => {
+    const agent = store.getAgent(req.params.name);
+    if (!agent || !agent.cwd) {
+      res.status(404).json({ ok: false, error: `Unknown agent: "${req.params.name}".` });
+      return;
+    }
+    const uuid = String(req.query.uuid ?? "");
+    // A transcript uuid, and nothing that could be read as anything else.
+    if (!/^[0-9a-fA-F-]{8,64}$/.test(uuid)) {
+      res.status(400).json({ ok: false, error: "Invalid uuid." });
+      return;
+    }
+    const wanted = Math.max(0, Math.min(64, Number(req.query.i ?? 0) | 0));
+
+    let file: string;
+    try {
+      const dir = projectDirForCwd(agent.cwd);
+      const jsonls = fs
+        .readdirSync(dir)
+        .filter((f) => f.endsWith(".jsonl"))
+        .map((f) => path.join(dir, f))
+        .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
+      if (!jsonls.length) throw new Error("no transcript");
+      file = jsonls[0];
+    } catch {
+      res.status(404).json({ ok: false, error: "No transcript for this agent yet." });
+      return;
+    }
+
+    try {
+      const stream = fs.createReadStream(file, { encoding: "utf8" });
+      const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
+      let sent = false;
+      for await (const line of rl) {
+        // A cheap substring test before the expensive parse: these lines are
+        // hundreds of kilobytes and almost none of them are the one.
+        if (!line.includes(uuid)) continue;
+        let rec: { uuid?: unknown; message?: { content?: unknown } };
+        try {
+          rec = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        if (rec.uuid !== uuid) continue;
+        const blocks = Array.isArray(rec.message?.content) ? (rec.message!.content as unknown[]) : [];
+        let seen = 0;
+        for (const outer of blocks) {
+          const inner = (outer as { content?: unknown })?.content;
+          if (!Array.isArray(inner)) continue;
+          for (const block of inner) {
+            const b = block as { type?: unknown; source?: { type?: unknown; media_type?: unknown; data?: unknown } };
+            if (b?.type !== "image" || b.source?.type !== "base64" || typeof b.source.data !== "string") continue;
+            if (seen++ !== wanted) continue;
+            const mediaType = typeof b.source.media_type === "string" ? b.source.media_type : "image/png";
+            const bytes = Buffer.from(b.source.data, "base64");
+            res.setHeader("Content-Type", mediaType);
+            res.setHeader("Content-Length", String(bytes.length));
+            // A transcript line never changes once written.
+            res.setHeader("Cache-Control", "private, max-age=86400, immutable");
+            // Belt and braces on a board that may be answering through a
+            // tunnel: these bytes are DATA, never a document with privileges.
+            res.setHeader("Content-Security-Policy", "sandbox");
+            res.setHeader("X-Content-Type-Options", "nosniff");
+            res.end(bytes);
+            sent = true;
+            break;
+          }
+          if (sent) break;
+        }
+        break;
+      }
+      rl.close();
+      stream.destroy();
+      if (!sent && !res.headersSent) {
+        res.status(404).json({ ok: false, error: "No such image in the transcript." });
+      }
+    } catch (err) {
+      log.warn(`[api] transcript image: ${String(err)}`);
+      if (!res.headersSent) res.status(500).json({ ok: false, error: "Could not read the transcript." });
+    }
+  });
+
   /**
    * The skills this agent can actually invoke, for the composer's "/" menu.
    *
