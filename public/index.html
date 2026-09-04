@@ -1714,6 +1714,36 @@
       margin: 0 auto;
       padding: 5px 18px 7px;
     }
+    .status-pill-btn {
+      cursor: pointer;
+      font-family: var(--mono);
+    }
+    .status-pill-btn:hover {
+      color: var(--accent);
+      border-color: var(--accent-line);
+    }
+    .model-menu {
+      position: fixed;
+      z-index: 60;
+      min-width: 210px;
+      max-height: 60dvh;
+      overflow-y: auto;
+    }
+    .model-menu .agent-menu-item { display: flex; align-items: center; gap: 8px; }
+    .model-name { font-family: var(--mono); }
+    .model-note { color: var(--text-faint); font-family: var(--sans); font-size: var(--fs-xs); }
+    .model-tick { margin-left: auto; color: var(--accent); }
+    .model-menu .agent-menu-item.current .model-name { color: var(--accent); }
+    .model-menu-note {
+      padding: 7px 10px 2px;
+      border-top: 1px solid var(--border-soft);
+      margin-top: 4px;
+      font-family: var(--sans);
+      font-size: var(--fs-xs);
+      color: var(--text-faint);
+      line-height: 1.4;
+    }
+
     .status-pill {
       display: inline-flex;
       align-items: center;
@@ -3695,6 +3725,9 @@
         min-width: 34px;
         min-height: 34px;
       }
+      /* The model pill is a control too — 17px tall is a mouse target, and
+         switching model from a phone is the whole reason it became a button. */
+      .status-pill-btn { min-height: 30px; padding-inline: 12px; }
       .agent-menu button { min-height: 36px; }
       /* Overlays measured against the VISIBLE viewport: with a keyboard open,
          vh still reports the whole screen and the panel runs off the bottom. */
@@ -8198,6 +8231,101 @@
     }
 
     // A short model label from a JSONL model id: "claude-opus-4-8" -> "opus-4-8".
+    /**
+     * The models offered by the pill's menu.
+     *
+     * Aliases, not full ids: `/model opus` is stable across releases while
+     * `claude-opus-4-1-20250805` is a string that expires. "default" is kept
+     * first because it is the way back — a session pinned to a model it should
+     * not be on is fixed by choosing it.
+     */
+    const CLAUDE_MODELS = [
+      { alias: "default", label: "default", note: "whatever the plan picks" },
+      { alias: "opus", label: "opus", note: "most capable" },
+      { alias: "sonnet", label: "sonnet", note: "balanced" },
+      { alias: "fable", label: "fable", note: "" },
+      { alias: "haiku", label: "haiku", note: "fastest" },
+      { alias: "opusplan", label: "opus plan", note: "opus to plan, sonnet to do" },
+    ];
+    const CODEX_MODELS = [
+      { alias: "gpt-5-codex", label: "gpt-5-codex", note: "" },
+      { alias: "gpt-5", label: "gpt-5", note: "" },
+    ];
+
+    /**
+     * The model picker, as a menu the thumb can hit.
+     *
+     * It sends the slash command into the agent's own pane — the same path a
+     * dispatch takes — because the model belongs to the running session, not
+     * to anything Switchboard stores. Nothing here is persisted: the next
+     * assistant turn reports the new model and the pill re-reads it.
+     */
+    function openModelMenu(anchorEl, agent) {
+      closeModelMenu();
+      const isCodex = agentTypeOf(agent) === "codex";
+      const menu = el("div", "agent-menu model-menu");
+      menu.setAttribute("role", "menu");
+
+      const pick = async (alias) => {
+        closeModelMenu();
+        try {
+          await sendChatMessage(agent.name, `/model ${alias}`);
+          toast(`Asked ${displayOf(agent.name)} to switch to ${alias}.`, "ok", 3500);
+        } catch (err) {
+          toast(`Could not switch model: ${err && err.message ? err.message : err}`, "warn");
+        }
+      };
+
+      for (const m of isCodex ? CODEX_MODELS : CLAUDE_MODELS) {
+        const row = el("button", "agent-menu-item", "");
+        row.type = "button";
+        row.appendChild(el("span", "model-name", m.label));
+        if (m.note) row.appendChild(el("span", "model-note", m.note));
+        if (shortModel(screenState.model) && shortModel(screenState.model).includes(m.alias)) {
+          row.classList.add("current");
+          row.appendChild(el("span", "model-tick", "✓"));
+        }
+        row.addEventListener("click", () => pick(m.alias));
+        menu.appendChild(row);
+      }
+
+      // An escape hatch: the alias list cannot know every model this account
+      // has, and being stuck is worse than typing one out.
+      const other = el("button", "agent-menu-item", "other…");
+      other.type = "button";
+      other.addEventListener("click", () => {
+        closeModelMenu();
+        const alias = window.prompt("Model name or alias (e.g. sonnet, opus, or a full id):", "");
+        if (alias && alias.trim()) pick(alias.trim());
+      });
+      menu.appendChild(other);
+
+      // Verified against a live agent (04/09): every one of these answers
+      // "Set model to X AND SAVED AS YOUR DEFAULT FOR NEW SESSIONS". That is
+      // Claude Code's behaviour, not ours, and it is not what "switch this
+      // chat" sounds like — so the menu says it rather than letting the
+      // operator discover it on the next agent they open.
+      const note = el("div", "model-menu-note", "also becomes the default for new sessions");
+      menu.appendChild(note);
+
+      document.body.appendChild(menu);
+      const r = anchorEl.getBoundingClientRect();
+      // Above the pill: it lives in the status bar at the BOTTOM of the chat,
+      // so a menu dropped below it would open off-screen.
+      menu.style.left = `${Math.max(8, Math.min(r.left, window.innerWidth - menu.offsetWidth - 8))}px`;
+      menu.style.top = `${Math.max(8, r.top - menu.offsetHeight - 6)}px`;
+      modelMenuEl = menu;
+      setTimeout(() => document.addEventListener("click", closeModelMenu, { once: true }), 0);
+    }
+
+    let modelMenuEl = null;
+    function closeModelMenu() {
+      if (modelMenuEl) {
+        modelMenuEl.remove();
+        modelMenuEl = null;
+      }
+    }
+
     function shortModel(id) {
       if (!id) return null;
       return id.replace(/^claude-/, "").replace(/-\d{8}$/, "");
@@ -8254,9 +8382,20 @@
       inner.textContent = "";
       const model = shortModel(screenState.model);
       if (model) {
-        const m = el("span", "status-pill", model);
+        // A BUTTON, not a label: "/model" with no argument opens Claude Code's
+        // own picker inside the TUI, which needs arrow keys and Enter — so on
+        // a phone keyboard the model was simply unchangeable (owner, 04/09).
+        // "/model <name>" switches with no picker at all, which is what every
+        // row in this menu sends.
+        const m = el("button", "status-pill status-pill-btn", model);
+        m.type = "button";
         m.style.setProperty("--pill-color", "var(--text-dim)");
-        m.title = `Model: ${screenState.model}`;
+        m.title = `Model: ${screenState.model} — click to switch`;
+        m.setAttribute("aria-haspopup", "menu");
+        m.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          openModelMenu(m, agent);
+        });
         inner.appendChild(m);
       }
       if (agent.permission) {

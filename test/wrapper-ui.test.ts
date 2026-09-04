@@ -1965,3 +1965,45 @@ describe("images and files in the chat", () => {
     expect(script).toMatch(/a\.download = ""/);
   });
 });
+
+/**
+ * Switching model from a phone.
+ *
+ * "/model" with no argument opens Claude Code's own picker INSIDE the TUI,
+ * which needs arrow keys and Enter — so on a phone keyboard the model was
+ * simply unchangeable (owner, 04/09: "quando digito barra model ele vai pro
+ * terminal e não consigo selecionar no teclado do celular").
+ */
+describe("the model pill switches the model", () => {
+  it("sends an argument, which is what skips the interactive picker", () => {
+    // Verified against a live agent: "/model sonnet" answers "Set model to
+    // Sonnet 5" with no picker at all.
+    expect(script).toMatch(/`\/model \$\{alias\}`/);
+    expect(script).toContain("openModelMenu");
+  });
+
+  it("offers aliases rather than dated model ids", () => {
+    // `claude-opus-4-1-20250805` is a string that expires; `opus` is not.
+    expect(script).toMatch(/alias: "opus"/);
+    expect(script).toMatch(/alias: "sonnet"/);
+    expect(script).toMatch(/alias: "fable"/);
+    // "default" is the way BACK from a session pinned to the wrong model.
+    expect(script).toMatch(/alias: "default"/);
+    expect(script).not.toMatch(/alias: "claude-[a-z]+-\d/);
+  });
+
+  it("says that the choice leaks into new sessions", () => {
+    // Claude Code saves it as the default too, which is not what "switch this
+    // chat" sounds like.
+    expect(script).toContain("also becomes the default for new sessions");
+  });
+
+  it("keeps an escape hatch for a model the list does not know", () => {
+    expect(script).toMatch(/"other…"/);
+  });
+
+  it("is a finger-sized target on touch", () => {
+    const touch = (styles.match(/@media \(pointer: coarse\)[\s\S]*?\n    \}/) || [""])[0];
+    expect(touch).toContain(".status-pill-btn");
+  });
+});
