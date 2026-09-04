@@ -1959,6 +1959,18 @@
       flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
       font-family: var(--sans); font-size: var(--fs-sm); color: var(--text-faint);
     }
+    .slash-item__scope {
+      flex: 0 0 auto;
+      margin-left: auto;
+      padding: 1px 5px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-pill);
+      font-family: var(--sans);
+      font-size: 9px;
+      letter-spacing: 0.6px;
+      text-transform: uppercase;
+      color: var(--text-faint);
+    }
     .slash-item.active { background: var(--accent-wash); color: var(--text); }
     .slash-item.active .slash-item__name { color: var(--accent); }
     /* "@" file-mention rows reuse .slash-item; the icon is textContent (📄/📁),
@@ -7087,6 +7099,10 @@
     // =====================================================================
 
     const screenState = { name: null, term: null, fit: null, sse: null, ro: null, mode: "chat", chatSse: null, model: null, context: null, presence: null };
+    // The open agent's skills, for the composer's "/" menu. At script scope
+    // beside screenState because loadSkills() (which openScreen calls) and the
+    // menu itself (wired inside boot) both read it.
+    const skillState = { name: null, items: [] };
 
     // Groups folded away in the rail. Page-local on purpose: which projects you
     // have collapsed right now is a view, not something the hub should store.
@@ -7174,8 +7190,36 @@
       // switching tabs keeps you in the view you chose.
       setScreenMode(screenState.mode || "chat");
 
+      loadSkills(name); // the "/" menu offers what THIS agent can run
+
       renderAgents(); // the rail marks which agent is on screen
       renderTabs();
+    }
+
+    /**
+     * The open agent's skills, for the composer's "/" menu.
+     *
+     * Fetched per agent because the project scope depends on its cwd: the same
+     * "/" in two tabs should not offer the same list when one of them sits in
+     * a repo with skills of its own. Failures are silent on purpose — the menu
+     * still has the built-ins, and a chat that cannot be typed into because a
+     * convenience list failed to load would be a poor trade.
+     */
+    async function loadSkills(name) {
+      skillState.name = name;
+      skillState.items = [];
+      try {
+        const res = await fetch(`/api/agents/${encodeURIComponent(name)}/skills`, {
+          credentials: "same-origin",
+        });
+        if (!res.ok) return;
+        const body = await res.json();
+        // The screen may have moved on while this was in flight.
+        if (skillState.name !== name) return;
+        skillState.items = Array.isArray(body.skills) ? body.skills : [];
+      } catch {
+        /* built-ins only */
+      }
     }
 
     /**
@@ -11217,20 +11261,60 @@
       };
       const SLASH_ALL = Object.keys(SLASH_DESCRIPTIONS);
       const SLASH_HIDDEN = new Set(["exit", "help"]);
+
+      /**
+       * Built-ins plus the agent's own skills.
+       *
+       * This menu used to be SLASH_DESCRIPTIONS and nothing else — a literal
+       * of fourteen Claude Code commands. An operator with seventy skills of
+       * their own typed "/" and saw none of them, because nothing here had
+       * ever looked for them. A skill of the same name as a built-in wins:
+       * that is what the agent will actually run.
+       */
+      function slashSource() {
+        const rows = [];
+        for (const skill of skillState.items) {
+          rows.push({ name: skill.name, desc: skill.description, scope: skill.scope });
+        }
+        const taken = new Set(rows.map((r) => r.name));
+        for (const cmd of SLASH_ALL) {
+          if (SLASH_HIDDEN.has(cmd) || taken.has(cmd)) continue;
+          rows.push({ name: cmd, desc: SLASH_DESCRIPTIONS[cmd], scope: "builtin" });
+        }
+        return rows;
+      }
       const slashMenuEl = $("#slash-menu");
       const slashState = { open: false, items: [], active: 0 };
       function filterSlash(query) {
         const q = query.toLowerCase();
-        const matches = SLASH_ALL.filter((c) => !SLASH_HIDDEN.has(c) && c.toLowerCase().includes(q));
-        return matches.sort((a, b) => SLASH_ALL.indexOf(a) - SLASH_ALL.indexOf(b));
+        const matches = slashSource().filter((row) => row.name.toLowerCase().includes(q));
+        // A name that STARTS with what you typed is what you meant; the rest
+        // are still offered, below. With seventy skills in the list, ranking
+        // stops being a nicety.
+        const rank = (row) => (row.scope === "project" ? 0 : row.scope === "user" ? 1 : 2);
+        return matches.sort((a, b) => {
+          const ap = a.name.toLowerCase().startsWith(q) ? 0 : 1;
+          const bp = b.name.toLowerCase().startsWith(q) ? 0 : 1;
+          if (ap !== bp) return ap - bp;
+          // Then the ones closest to what you are working on. With an empty
+          // query every name "starts with" it, so without this the project's
+          // own skills — the reason the server sorts them first — would be
+          // scattered alphabetically among seventy others.
+          const ar = rank(a), br = rank(b);
+          if (ar !== br) return ar - br;
+          return a.name.localeCompare(b.name);
+        });
       }
       function renderSlashMenu() {
         slashMenuEl.replaceChildren();
-        slashState.items.forEach((cmd, i) => {
+        slashState.items.forEach((item, i) => {
           const row = el("div", "slash-item" + (i === slashState.active ? " active" : ""));
-          row.appendChild(el("span", "slash-item__name", "/" + cmd));
-          if (SLASH_DESCRIPTIONS[cmd]) row.appendChild(el("span", "slash-item__desc", SLASH_DESCRIPTIONS[cmd]));
-          row.addEventListener("mousedown", (e) => { e.preventDefault(); pickSlash(cmd); });
+          row.appendChild(el("span", "slash-item__name", "/" + item.name));
+          if (item.desc) row.appendChild(el("span", "slash-item__desc", item.desc));
+          // A project skill and a global one of the same name do different
+          // things; the badge is how you tell which one you are about to run.
+          if (item.scope === "project") row.appendChild(el("span", "slash-item__scope", "project"));
+          row.addEventListener("mousedown", (e) => { e.preventDefault(); pickSlash(item); });
           row.addEventListener("mouseenter", () => { if (slashState.active !== i) { slashState.active = i; renderSlashMenu(); } });
           if (i === slashState.active) requestAnimationFrame(() => row.scrollIntoView({ block: "nearest" }));
           slashMenuEl.appendChild(row);
@@ -11253,7 +11337,9 @@
         slashMenuEl.hidden = false;
         renderSlashMenu();
       }
-      function pickSlash(cmd) {
+      function pickSlash(item) {
+        const cmd = typeof item === "string" ? item : item && item.name;
+        if (!cmd) return closeSlashMenu();
         chatInput.value = "/" + cmd + " ";
         closeSlashMenu();
         autogrow();

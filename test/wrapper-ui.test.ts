@@ -1909,3 +1909,32 @@ describe("signing out of a remote session", () => {
     expect(script).toMatch(/"\/api\/auth\/logout"[\s\S]{0,120}method:\s*"POST"/);
   });
 });
+
+/**
+ * The "/" menu used to be a literal: fourteen Claude Code built-ins typed into
+ * an object. An operator with seventy-odd skills of their own typed "/" and
+ * saw none of them — nothing here had ever looked for them.
+ */
+describe("the slash menu offers the agent's own skills", () => {
+  it("asks the hub instead of trusting a hard-coded list", () => {
+    expect(script).toMatch(/\/api\/agents\/\$\{encodeURIComponent\(name\)\}\/skills/);
+    // Per agent, because the project scope depends on its cwd.
+    expect(script).toContain("loadSkills");
+  });
+
+  it("merges skills with the built-ins, letting a skill win the name", () => {
+    expect(script).toContain("function slashSource");
+    // A skill named like a built-in is what the agent will actually run, so
+    // offering the built-in's description for it would be a lie.
+    expect(script).toMatch(/taken\.has\(cmd\)/);
+  });
+
+  it("does not let a stale response overwrite a newer screen", () => {
+    // Two tabs opened quickly: the first fetch can land after the second.
+    expect(script).toMatch(/if \(skillState\.name !== name\) return;/);
+  });
+
+  it("ranks the project's own skills above the seventy others", () => {
+    expect(script).toMatch(/scope === "project" \? 0/);
+  });
+});

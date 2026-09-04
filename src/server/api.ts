@@ -30,6 +30,7 @@ import {
 } from "../shared/types.js";
 import type { Logger } from "./log.js";
 import { GROUP_NAME_RE, resolveGroup, type Store } from "./store.js";
+import { discoverSkills } from "./skills.js";
 // Value imports for the instanceof mapping and the /api/fs/dirs path
 // translation below. No runtime cycle: launcher.ts imports this module with
 // `import type` only (erased at compile time).
@@ -1421,6 +1422,30 @@ export function createApiRouter(options: ApiOptions): express.Router {
 
   // POST /api/agents/:name/mute — body {muted: boolean}. Messages keep being
   // recorded; only nudges stop (Phase 3 dispatcher reads the flag).
+  /**
+   * The skills this agent can actually invoke, for the composer's "/" menu.
+   *
+   * The project scope comes from the agent's REGISTERED cwd, looked up here —
+   * never from a path in the request. The dashboard may be answering through a
+   * tunnel, and an endpoint that lists any directory the caller names would be
+   * a filesystem browser wearing a menu's clothes.
+   */
+  router.get("/api/agents/:name/skills", (req, res) => {
+    const name = req.params.name;
+    const agent = store.getAgent(name);
+    if (!agent) {
+      res.status(404).json({ ok: false, error: `Unknown agent: "${name}".` });
+      return;
+    }
+    try {
+      res.json({ ok: true, skills: discoverSkills({ cwd: agent.cwd ?? null }) });
+    } catch (err) {
+      // A menu is a convenience; it must never take the chat down with it.
+      log.warn(`[api] skills: could not read skills for "${name}": ${String(err)}`);
+      res.json({ ok: true, skills: [] });
+    }
+  });
+
   router.post("/api/agents/:name/mute", (req, res) => {
     const name = req.params.name;
     if (!store.getAgent(name)) {
