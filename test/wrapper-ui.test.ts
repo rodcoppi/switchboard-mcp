@@ -1982,14 +1982,23 @@ describe("the model pill switches the model", () => {
     expect(script).toContain("openModelMenu");
   });
 
-  it("offers aliases rather than dated model ids", () => {
-    // `claude-opus-4-1-20250805` is a string that expires; `opus` is not.
+  it("uses aliases for the families that track latest", () => {
+    // `opus`/`sonnet`/`haiku` track the newest of each, which is what you
+    // want; a dated id like `claude-opus-4-1-20250805` would expire.
     expect(script).toMatch(/alias: "opus"/);
     expect(script).toMatch(/alias: "sonnet"/);
-    expect(script).toMatch(/alias: "fable"/);
+    expect(script).toMatch(/alias: "haiku"/);
     // "default" is the way BACK from a session pinned to the wrong model.
     expect(script).toMatch(/alias: "default"/);
-    expect(script).not.toMatch(/alias: "claude-[a-z]+-\d/);
+  });
+
+  it("pins fable to 5.1, because the bare alias drifts", () => {
+    // The owner asked for 5.1 and "/model fable" gave him Fable 5 on an old
+    // session while a fresh agent got 5.1 from the same command — the alias
+    // is not stable across Claude Code versions. `claude-fable-5-1` is
+    // (verified against a live agent, 04/09).
+    expect(script).toMatch(/alias: "claude-fable-5-1"/);
+    expect(script).toMatch(/label: "fable 5\.1"/);
   });
 
   it("says that the choice leaks into new sessions", () => {

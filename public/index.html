@@ -8239,11 +8239,19 @@
      * first because it is the way back — a session pinned to a model it should
      * not be on is fixed by choosing it.
      */
+    // A note on aliases vs pinned ids: `opus`/`sonnet`/`haiku` track the latest
+    // of each family, which is what you want. `fable` does NOT behave the same
+    // — it drifted between Fable 5 and Fable 5.1 depending on how old the
+    // agent's Claude Code is (owner got 5 on an old session, a fresh agent got
+    // 5.1 from the SAME "/model fable"). Since the owner specifically wants
+    // 5.1, that one entry is pinned to the id that always resolves to it,
+    // `claude-fable-5-1` (verified against a live agent, 04/09); `fable-5-1`
+    // is not a thing.
     const CLAUDE_MODELS = [
       { alias: "default", label: "default", note: "whatever the plan picks" },
       { alias: "opus", label: "opus", note: "most capable" },
       { alias: "sonnet", label: "sonnet", note: "balanced" },
-      { alias: "fable", label: "fable", note: "" },
+      { alias: "claude-fable-5-1", label: "fable 5.1", note: "" },
       { alias: "haiku", label: "haiku", note: "fastest" },
       { alias: "opusplan", label: "opus plan", note: "opus to plan, sonnet to do" },
     ];
@@ -8281,7 +8289,13 @@
         row.type = "button";
         row.appendChild(el("span", "model-name", m.label));
         if (m.note) row.appendChild(el("span", "model-note", m.note));
-        if (shortModel(screenState.model) && shortModel(screenState.model).includes(m.alias)) {
+        // Match on the short form of BOTH sides: the current model reads as
+        // e.g. "fable-5-1", the alias may be "claude-fable-5-1" or just
+        // "fable", and either should tick the row it names.
+        const cur = shortModel(screenState.model);
+        const aliasShort = shortModel(m.alias) || m.alias;
+        if (cur && m.alias !== "default" && m.alias !== "opusplan" &&
+            (cur === aliasShort || cur.startsWith(aliasShort + "-") || cur === m.alias)) {
           row.classList.add("current");
           row.appendChild(el("span", "model-tick", "✓"));
         }
