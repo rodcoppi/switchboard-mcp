@@ -2016,3 +2016,35 @@ describe("the model pill switches the model", () => {
     expect(touch).toContain(".status-pill-btn");
   });
 });
+
+/**
+ * Attaching a file from a phone.
+ *
+ * The composer could only take a file by drag or paste — neither of which
+ * exists on a phone — so there was no way to send a photo from one (owner,
+ * 04/09). A paperclip button drives a native <input type=file>, whose picked
+ * files go through the SAME attachFiles path a drop uses.
+ */
+describe("the composer can attach a file", () => {
+  it("has a paperclip and a native file input", () => {
+    expect(html).toMatch(/id="chat-attach"/);
+    // The <input> tag, whatever order its attributes fall in.
+    const tag = (html.match(/<input[^>]*id="chat-file"[^>]*>/) || [""])[0];
+    expect(tag).toContain('type="file"');
+    // multiple, so a batch of photos is one trip.
+    expect(tag).toContain("multiple");
+  });
+
+  it("routes picked files through the same path as a drop", () => {
+    // Not a second, divergent upload path — the drop already resolves origins,
+    // stages small files and references big ones.
+    expect(script).toMatch(/attachBtn\.addEventListener\("click", \(\) => fileInput\.click\(\)\)/);
+    expect(script).toMatch(/fileInput\.files.*attachFiles\(fileInput\.files\)/s);
+  });
+
+  it("resets the input so the same file can be picked twice", () => {
+    // Picking the same file again fires no "change", and the attach would
+    // silently do nothing.
+    expect(script).toMatch(/fileInput\.value = ""/);
+  });
+});

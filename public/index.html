@@ -1925,6 +1925,9 @@
       padding: 2px 2px 8px;
     }
     .composer-thumbs[hidden] { display: none; }
+    .chat-attach { flex: 0 0 auto; }
+    .chat-attach:hover { color: var(--accent); border-color: var(--accent-line); }
+
     .composer-thumb {
       position: relative;
       width: 56px; height: 56px;
@@ -3935,6 +3938,13 @@
                 aria-label="Message this agent"
                 placeholder="Write a dispatch…"></textarea>
               <canvas class="chat-wave" id="chat-wave" hidden aria-hidden="true"></canvas>
+              <!-- The native file picker: on a phone this is the camera / photo
+                   library / files sheet. accept is a HINT, not a wall — a phone
+                   should still let you reach a PDF from here. -->
+              <input type="file" id="chat-file" multiple hidden
+                accept="image/*,.pdf,.txt,.md,.csv,.json" aria-hidden="true" />
+              <button class="btn chat-attach" id="chat-attach" type="button"
+                aria-label="Attach a file or photo" title="Attach a file or photo">📎</button>
               <button class="btn chat-mic" id="chat-mic" type="button"
                 aria-label="Dictate a message" title="Dictate (Chrome speech, pt-BR) — click to start/stop">🎤</button>
               <button class="btn chat-send" id="chat-send" type="submit">Send</button>
@@ -11956,6 +11966,23 @@
       // Whisper proxy — see src/server/stt.ts). Click = record, click again =
       // stop + transcribe; the text lands at the caret position captured when
       // recording started. The button hides where recording isn't possible.
+      // The attach button drives the hidden native file input, whose picked
+      // files go through attachFiles — the SAME path as a drag or a paste, so
+      // an uploaded photo becomes an attachment token + a thumbnail exactly
+      // like a pasted one. This is the only way to attach on a phone, where
+      // there is no drag and no clipboard-image paste.
+      const attachBtn = $("#chat-attach");
+      const fileInput = $("#chat-file");
+      if (attachBtn && fileInput) {
+        attachBtn.addEventListener("click", () => fileInput.click());
+        fileInput.addEventListener("change", () => {
+          if (fileInput.files && fileInput.files.length) attachFiles(fileInput.files);
+          // Reset, or picking the SAME file twice fires no "change" the second
+          // time and the attach silently does nothing.
+          fileInput.value = "";
+        });
+      }
+
       const micBtn = $("#chat-mic");
       if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder)) {
         micBtn.hidden = true;
