@@ -3603,6 +3603,26 @@
     .signout-btn:hover { color: var(--accent); border-color: var(--accent-line); }
     .signout-btn[hidden] { display: none; }
 
+    /* The rail can be closed for room and reopened on demand — most wanted on
+       a phone, where the two columns split a narrow screen, but offered
+       everywhere. State lives on <html> (persisted), so the panel simply takes
+       the width the hidden rail gives up. */
+    .rail-toggle {
+      flex: 0 0 auto;
+      margin-right: 4px;
+      width: 34px; height: 34px;
+      display: inline-flex; align-items: center; justify-content: center;
+      background: var(--bg-elev);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text-dim);
+      font-size: 15px;
+      cursor: pointer;
+    }
+    .rail-toggle:hover { color: var(--text); border-color: var(--accent-line); }
+    html.rail-collapsed .rail-toggle { color: var(--accent); border-color: var(--accent-line); }
+    html.rail-collapsed .sidebar { display: none; }
+
     /* ----------------------------- Responsive --------------------------- */
     /* Measured, not guessed. The Z Fold 8 Ultra's inner screen is 2504x2256
        physical at DPR 3 — 835x752 CSS px unfolded and landscape, 752x835
@@ -3783,6 +3803,9 @@
 </head>
 <body>
   <header class="app-header">
+    <button class="rail-toggle" id="rail-toggle" type="button"
+      aria-label="Hide or show the agent rail" title="Hide/show the agent rail"
+      aria-pressed="false">☰</button>
     <div class="brand"><span class="brand-jack" aria-hidden="true">⇄</span><span class="wordmark">SWITCHBOARD</span></div>
     <div class="hub-status">
       <span class="conn-state" id="conn-state" data-state="connecting" role="status" aria-live="polite">
@@ -11167,6 +11190,33 @@
     }
 
     /**
+     * Close the agent rail, and open it again — a full hide, distinct from the
+     * desktop resizer. Wanted most on a phone, where the two columns share a
+     * narrow screen, so the state is remembered: close it once and the panel
+     * keeps the room until you ask for the rail back.
+     */
+    function setupRailToggle() {
+      const btn = $("#rail-toggle");
+      if (!btn) return;
+      const KEY = "sb.railCollapsed";
+      const apply = (collapsed) => {
+        document.documentElement.classList.toggle("rail-collapsed", collapsed);
+        btn.setAttribute("aria-pressed", String(collapsed));
+        btn.title = collapsed ? "Show the agent rail" : "Hide the agent rail";
+      };
+      let start = false;
+      try { start = localStorage.getItem(KEY) === "true"; } catch { /* private mode */ }
+      apply(start);
+      btn.addEventListener("click", () => {
+        const collapsed = !document.documentElement.classList.contains("rail-collapsed");
+        apply(collapsed);
+        try { localStorage.setItem(KEY, String(collapsed)); } catch { /* private mode */ }
+        // The terminal follows the panel's new width.
+        if (screenState.fit) scheduleScreenFit();
+      });
+    }
+
+    /**
      * Reveals "sign out" only on a hub whose remote gate is armed.
      *
      * A local board has no session to end — the button would promise something
@@ -11200,6 +11250,7 @@
 
     async function boot() {
       initMotionPreference(); // before anything animates, so the banner is honest
+      setupRailToggle();
       setupRemoteSession();
       setupMcpCommand();
       loadUsageCollapsed();

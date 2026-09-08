@@ -2095,3 +2095,24 @@ describe("the agent-screen header fits a phone", () => {
     expect(touch).toMatch(/#screen-window\s*\{\s*display:\s*none/);
   });
 });
+
+/**
+ * Closing the rail and opening it again.
+ *
+ * On a phone the two columns split a narrow screen; the owner asked to be able
+ * to close the agent rail and reopen it on demand. A full hide, distinct from
+ * the desktop resizer, with the state remembered.
+ */
+describe("the rail can be closed and reopened", () => {
+  it("has a toggle button and a collapsed state on <html>", () => {
+    expect(html).toMatch(/id="rail-toggle"/);
+    expect(styles).toMatch(/html\.rail-collapsed \.sidebar\s*\{\s*display:\s*none/);
+  });
+
+  it("remembers the choice and refits the terminal to the new width", () => {
+    expect(script).toContain("setupRailToggle");
+    expect(script).toMatch(/"sb\.railCollapsed"/);
+    // Closing the rail widens the panel; the xterm grid must follow.
+    expect(script).toMatch(/if \(screenState\.fit\) scheduleScreenFit\(\)/);
+  });
+});
