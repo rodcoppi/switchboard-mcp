@@ -3642,13 +3642,12 @@
         border-right: none;
         border-bottom: 1px solid var(--border);
       }
-      /* The usage card is a rigid ~350px block (flex: 0 0 auto). In a rail
-         capped at 44dvh it wins the space fight outright: the agent list is
-         squeezed to nothing and the card spills onto the panel below — which
-         is exactly what the old 42vh breakpoint did, silently. On a screen
-         this narrow the agents ARE the rail; usage is ambient reading that
-         can wait for a wider one. */
-      .usage-card { display: none; }
+      /* The usage card is a rigid ~350px block (flex: 0 0 auto) that, expanded
+         in a rail capped at 44dvh, would squeeze the agent list to nothing and
+         spill onto the panel below. It is no longer HIDDEN (that lost real
+         information the owner wanted) — it starts collapsed to its one-line
+         summary instead (loadUsageCollapsed defaults narrow screens to
+         collapsed), costing one row and expanding on a tap. */
       .wordmark, .hub-metrics { display: none; }
       .mcp-add code { max-width: 24ch; }
     }
@@ -3714,6 +3713,28 @@
          button that is not there. */
       .agent-name-row { padding-right: 116px; }
       .agent-card:not(:has(.reopen-btn)) .agent-name-row { padding-right: 52px; }
+    }
+
+    /* --- The agent-screen header must never overflow a phone ------------- */
+    /* Measured on the unfolded-portrait Fold (752px): the header row —
+       name + VIEW toggle + ENGINE toggle + a long hint + "open window" + ✕ —
+       summed past the panel and pushed "open window" 82px off the right edge,
+       taking the whole page into horizontal scroll and squeezing the hint into
+       a one-word-wide vertical sliver (owner's screenshot, 08/09). The header
+       does not wrap and its hint cannot shrink below its words, so on a narrow
+       screen the row has to shed what a phone does not need. */
+    @media (max-width: 1080px) {
+      .screen-head { flex-wrap: wrap; gap: 8px 10px; padding: 7px 12px; }
+      /* The hint is the sliver: a keyboard tip nobody reads on a touchscreen. */
+      .screen-hint { display: none; }
+      /* The control labels ("view"/"engine") cost a whole line each above a
+         toggle whose two words already say what it is. */
+      .screen-control-label { display: none; }
+    }
+    @media (hover: none) {
+      /* "open window" pops a Windows terminal on the HOST — a window nobody is
+         near when this is open on a phone. Same call as the card's button. */
+      #screen-window { display: none; }
     }
 
     /* --- Coarse pointer: fingertip-sized targets ------------------------- */
@@ -4455,8 +4476,16 @@
       }
     }
     function loadUsageCollapsed() {
-      let collapsed = false;
-      try { collapsed = localStorage.getItem(USAGE_COLLAPSED_KEY) === "true"; } catch { /* private mode */ }
+      let stored = null;
+      try {
+        const v = localStorage.getItem(USAGE_COLLAPSED_KEY);
+        if (v !== null) stored = v === "true";
+      } catch { /* private mode */ }
+      // The rail is short on a phone and the agents are what you opened it for,
+      // so usage starts as its one-line summary there — unless you have already
+      // said otherwise with the caret, which is remembered and wins.
+      const narrow = window.matchMedia("(max-width: 1080px)").matches;
+      const collapsed = stored !== null ? stored : narrow;
       setUsageCollapsed(collapsed, false);
     }
     function usagePeak(limits, field) {

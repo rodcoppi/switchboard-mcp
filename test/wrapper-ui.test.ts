@@ -1862,11 +1862,15 @@ describe("the layout survives a folding phone", () => {
 
   it("does not let the rigid usage card crush the agent list", () => {
     // usage-card is flex: 0 0 auto and ~350px tall. In a rail capped to a
-    // fraction of a phone screen it wins outright: the list goes to zero and
-    // the card spills over the conversation.
+    // fraction of a phone screen it would win outright: the list goes to zero
+    // and the card spills over the conversation. It is NOT hidden (that lost
+    // real info the owner wanted) — it starts collapsed to one line instead,
+    // decided in loadUsageCollapsed, and the sidebar clips as a backstop.
     const stackedBody = stacking.map((b) => b.body).join("\n");
-    expect(stackedBody).toMatch(/\.usage-card\s*\{\s*display:\s*none/);
     expect(stackedBody).toMatch(/\.sidebar\s*\{[^}]*overflow:\s*hidden/);
+    // The collapse default for narrow screens lives in the script.
+    expect(script).toMatch(/matchMedia\("\(max-width: 1080px\)"\)/);
+    expect(script).toMatch(/stored !== null \? stored : narrow/);
   });
 
   it("measures phone-sized panels against the visible viewport", () => {
@@ -2046,5 +2050,48 @@ describe("the composer can attach a file", () => {
     // Picking the same file again fires no "change", and the attach would
     // silently do nothing.
     expect(script).toMatch(/fileInput\.value = ""/);
+  });
+});
+
+/**
+ * The agent-screen header cannot push the page into horizontal scroll.
+ *
+ * On the unfolded-portrait Fold (752px) with the Terminal view and the ENGINE
+ * toggle showing, the header row summed past the panel: "open window" landed
+ * 82px off the right edge, the whole page gained horizontal scroll, and the
+ * hint string was crushed into a one-word-wide vertical sliver down the right
+ * margin (owner's screenshot, 08/09).
+ */
+describe("the agent-screen header fits a phone", () => {
+  function mediaBlocks(): { query: string; body: string }[] {
+    const out: { query: string; body: string }[] = [];
+    const re = /@media([^{]+)\{/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(styles))) {
+      let depth = 1;
+      let i = re.lastIndex;
+      while (i < styles.length && depth > 0) {
+        if (styles[i] === "{") depth++;
+        else if (styles[i] === "}") depth--;
+        i++;
+      }
+      out.push({ query: m[1].trim(), body: styles.slice(re.lastIndex, i - 1) });
+    }
+    return out;
+  }
+  const blocks = mediaBlocks();
+
+  it("lets the header wrap and drops the hint on narrow screens", () => {
+    const narrow = blocks.filter((b) => /max-width:\s*1080px/.test(b.query)).map((b) => b.body).join("\n");
+    expect(narrow).toMatch(/\.screen-head\s*\{[^}]*flex-wrap:\s*wrap/);
+    // The hint is the sliver — gone on a touchscreen, where its keyboard tip
+    // means nothing anyway.
+    expect(narrow).toMatch(/\.screen-hint\s*\{\s*display:\s*none/);
+  });
+
+  it("drops 'open window' on touch, like the card's twin", () => {
+    const touch = blocks.filter((b) => /hover:\s*none/.test(b.query)).map((b) => b.body).join("\n");
+    // It opens a Windows terminal on the host — a window nobody is near.
+    expect(touch).toMatch(/#screen-window\s*\{\s*display:\s*none/);
   });
 });
