@@ -35,8 +35,8 @@ export function codexSessionsDir(env: NodeJS.ProcessEnv = process.env): string {
   return path.join(home, "sessions");
 }
 
-/** Every rollout file under the sessions tree, newest mtime first. */
-function listRollouts(sessionsDir: string): string[] {
+/** Every rollout file under the sessions tree with its mtime, newest first. */
+function listRolloutsWithMtime(sessionsDir: string): { file: string; mtime: number }[] {
   const out: { file: string; mtime: number }[] = [];
   const walk = (dir: string): void => {
     let entries: fs.Dirent[];
@@ -58,7 +58,12 @@ function listRollouts(sessionsDir: string): string[] {
     }
   };
   walk(sessionsDir);
-  return out.sort((a, b) => b.mtime - a.mtime).map((e) => e.file);
+  return out.sort((a, b) => b.mtime - a.mtime);
+}
+
+/** Every rollout file under the sessions tree, newest mtime first. */
+function listRollouts(sessionsDir: string): string[] {
+  return listRolloutsWithMtime(sessionsDir).map((e) => e.file);
 }
 
 /** Reads the HEAD of a file (the start of the session_meta first line). */
@@ -153,30 +158,25 @@ export function codexTokensToday(now: Date, sessionsDir = codexSessionsDir()): C
  * local rollouts — no OpenAI credential or extra network request is needed.
  */
 export function codexUsageSnapshot(now: Date, sessionsDir = codexSessionsDir()): CodexUsageSnapshot {
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, "0");
-  const d = String(now.getDate()).padStart(2, "0");
-  const dayDir = path.join(sessionsDir, String(y), m, d);
+  // "Today's usage" is every rollout WRITTEN today, decided by mtime — NOT by
+  // the date folder it is filed under. Codex files a rollout under the date its
+  // session STARTED and then keeps appending to that same file for days, so a
+  // long-lived session's live rollout sits under an old date directory. Reading
+  // only today's folder made a Codex agent that had been running since an
+  // earlier day report all zeros: nothing new is filed under today, while its
+  // real usage keeps flowing into the old file (bug, 11/09 — a session started
+  // 09-08 was still active, and the 09-11 folder was empty).
+  const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const endOfDay = startOfDay + 24 * 60 * 60 * 1000;
   const acc: CodexTokens = { total: 0, input: 0, output: 0, reasoning: 0 };
-  let files: { name: string; mtime: number }[];
-  try {
-    files = fs.readdirSync(dayDir)
-      .filter((f) => f.startsWith("rollout-") && f.endsWith(".jsonl"))
-      .map((name) => {
-        try {
-          return { name, mtime: fs.statSync(path.join(dayDir, name)).mtimeMs };
-        } catch {
-          return { name, mtime: 0 };
-        }
-      })
-      .sort((a, b) => b.mtime - a.mtime);
-  } catch {
-    return { ...acc, limits: [], planType: null, limitId: null, limitName: null, updatedAt: null };
-  }
+  // Newest first, so the first rollout carrying rate limits is the freshest.
+  const files = listRolloutsWithMtime(sessionsDir).filter(
+    (e) => e.mtime >= startOfDay && e.mtime < endOfDay,
+  );
   let latestRate: RawRateLimits | null = null;
   let latestRateMtime = 0;
   for (const file of files) {
-    const last = lastTokenEvent(path.join(dayDir, file.name));
+    const last = lastTokenEvent(file.file);
     if (last.tokens) {
       acc.total += last.tokens.total;
       acc.input += last.tokens.input;
@@ -246,7 +246,17 @@ function lastTokenEvent(file: string): { tokens: CodexTokens | null; rateLimits:
     return { tokens: null, rateLimits: null };
   }
   let tokens: CodexTokens | null = null;
-  let rateLimits: RawRateLimits | null = null;
+  // Two candidates, because the LAST rate_limits is not always the useful one:
+  // Codex's final few token_count events in a session often carry a rate_limits
+  // whose primary/secondary windows are null (it still has the plan_type, but
+  // no percentages). Taking that one blindly wiped the "Codex X%" bars even
+  // though a slightly earlier event held real windows (bug, 11/09 — the last 3
+  // events were null while 173 before them reported the primary at 99%). So we
+  // keep the freshest WINDOWED one for the bars, and the freshest of any kind
+  // as a fallback so plan_type still comes through when no window exists.
+  let rateWindowed: RawRateLimits | null = null;
+  let rateAny: RawRateLimits | null = null;
+  const hasWindow = (r: RawRateLimits): boolean => r.primary != null || r.secondary != null;
   const lines = text.split("\n");
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i];
@@ -260,7 +270,11 @@ function lastTokenEvent(file: string): { tokens: CodexTokens | null; rateLimits:
         };
       };
       if (rec.payload?.type !== "token_count") continue;
-      if (!rateLimits && rec.payload.rate_limits) rateLimits = rec.payload.rate_limits;
+      const rl = rec.payload.rate_limits;
+      if (rl) {
+        if (!rateAny) rateAny = rl;
+        if (!rateWindowed && hasWindow(rl)) rateWindowed = rl;
+      }
       const u = rec.payload.info?.total_token_usage;
       if (!tokens && u) {
         const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
@@ -271,12 +285,12 @@ function lastTokenEvent(file: string): { tokens: CodexTokens | null; rateLimits:
           reasoning: num(u.reasoning_output_tokens),
         };
       }
-      if (tokens && rateLimits) break;
+      if (tokens && rateWindowed) break;
     } catch {
       /* malformed — keep scanning upward */
     }
   }
-  return { tokens, rateLimits };
+  return { tokens, rateLimits: rateWindowed ?? rateAny };
 }
 
 /** One-line label for a codex tool call ("exec: const p = await …"). */

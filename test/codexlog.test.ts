@@ -147,9 +147,83 @@ describe("codexTokensToday", () => {
     const tc = (total: number, input: number, output: number, reasoning: number) =>
       JSON.stringify({ type: "response_item", payload: { type: "token_count", info: { total_token_usage: { input_tokens: input, output_tokens: output, reasoning_output_tokens: reasoning, total_tokens: total } } } });
     // rollout A: two token_counts — the LAST (cumulative) is what counts
-    fs.writeFileSync(path.join(day, "rollout-a.jsonl"), tc(100, 60, 30, 10) + "\n" + tc(300, 180, 90, 30) + "\n");
-    fs.writeFileSync(path.join(day, "rollout-b.jsonl"), tc(50, 30, 15, 5) + "\n");
+    const a = path.join(day, "rollout-a.jsonl");
+    const b = path.join(day, "rollout-b.jsonl");
+    fs.writeFileSync(a, tc(100, 60, 30, 10) + "\n" + tc(300, 180, 90, 30) + "\n");
+    fs.writeFileSync(b, tc(50, 30, 15, 5) + "\n");
+    // "Today" is decided by mtime now, not the date folder, so the fixtures
+    // are stamped to `now`'s day rather than left at the real wall clock.
+    const stamp = new Date(2026, 6, 17, 3, 0, 0);
+    fs.utimesSync(a, stamp, stamp);
+    fs.utimesSync(b, stamp, stamp);
     expect(codexTokensToday(now, root)).toEqual({ total: 350, input: 210, output: 105, reasoning: 35 });
+  });
+
+  it("counts a long-lived rollout filed under an OLDER date but still active today", async () => {
+    // The real bug: Codex files a rollout under the day the session STARTED and
+    // keeps appending to it. A session started days ago but written to today
+    // must count as today's usage — reading only today's date folder reported
+    // all zeros (11/09).
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "sb-ctok3-"));
+    dirs.push(root);
+    const now = new Date(2026, 8, 11, 15, 0, 0); // 2026-09-11 local
+    const startDay = path.join(root, "2026", "09", "08"); // filed on the 8th
+    fs.mkdirSync(startDay, { recursive: true });
+    const file = path.join(startDay, "rollout-2026-09-08T06-51-08.jsonl");
+    const tc = (total: number) => line({
+      type: "event_msg",
+      payload: {
+        type: "token_count",
+        info: { total_token_usage: { input_tokens: total - 20, output_tokens: 15, reasoning_output_tokens: 5, total_tokens: total } },
+        rate_limits: { limit_id: "premium", plan_type: "plus", primary: { used_percent: 99, window_minutes: 300, resets_at: 1_789_154_966 }, secondary: null },
+      },
+    });
+    fs.writeFileSync(file, tc(500) + "\n" + tc(900) + "\n");
+    // …but its mtime is TODAY (still being written).
+    const today = new Date(2026, 8, 11, 14, 43, 0);
+    fs.utimesSync(file, today, today);
+
+    const usage = codexUsageSnapshot(now, root);
+    expect(usage.total).toBe(900);
+    expect(usage.planType).toBe("plus");
+    expect(usage.limits).toEqual([
+      { id: "primary", usedPercent: 99, windowMinutes: 300, resetsAt: new Date(1_789_154_966_000).toISOString() },
+    ]);
+  });
+
+  it("keeps the freshest WINDOWED rate limit when the last events report null windows", async () => {
+    // Codex's final token_count events in a session often carry a rate_limits
+    // with null primary/secondary; taking the very last wiped the % bars even
+    // though earlier events held real windows (11/09: last 3 null, 173 before
+    // them at 99%).
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "sb-cnull-"));
+    dirs.push(root);
+    const now = new Date(2026, 6, 17, 12, 0, 0);
+    const day = path.join(root, "2026", "07", "17");
+    fs.mkdirSync(day, { recursive: true });
+    const windowed = line({
+      type: "event_msg",
+      payload: { type: "token_count", info: { total_token_usage: { input_tokens: 80, output_tokens: 15, reasoning_output_tokens: 5, total_tokens: 100 } },
+        rate_limits: { limit_id: "premium", plan_type: "plus", primary: { used_percent: 42, window_minutes: 300, resets_at: 1_785_000_000 }, secondary: null } },
+    });
+    const nulled = line({
+      type: "event_msg",
+      payload: { type: "token_count", info: { total_token_usage: { input_tokens: 80, output_tokens: 15, reasoning_output_tokens: 5, total_tokens: 100 } },
+        rate_limits: { limit_id: "premium", plan_type: "plus", primary: null, secondary: null } },
+    });
+    const file = path.join(day, "rollout-x.jsonl");
+    // windowed first, then three null events (the tail).
+    fs.writeFileSync(file, [windowed, nulled, nulled, nulled].join("\n") + "\n");
+    const stamp = new Date(2026, 6, 17, 11, 0, 0);
+    fs.utimesSync(file, stamp, stamp);
+
+    const usage = codexUsageSnapshot(now, root);
+    // plan_type survives (it is in the null events too), and the 42% window is
+    // recovered rather than blanked.
+    expect(usage.planType).toBe("plus");
+    expect(usage.limits).toEqual([
+      { id: "primary", usedPercent: 42, windowMinutes: 300, resetsAt: new Date(1_785_000_000_000).toISOString() },
+    ]);
   });
 
   it("returns zeros when today's folder is absent", async () => {
