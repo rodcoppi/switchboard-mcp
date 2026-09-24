@@ -25,6 +25,11 @@
   <!-- Inline favicon to avoid a /favicon.ico 404 in the hub logs. The mark is
        the "⇄" of the header and of the Windows shortcut icon (assets/switchboard.ico,
        drawn by scripts/make-icon.mjs) — same shape, same amber, one product. -->
+  <!-- Installable: on the phone the board opens from the home screen as an
+       app, with no URL bar eating the height. -->
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <meta name="theme-color" content="#09090b" />
+  <link rel="apple-touch-icon" href="/icon-192.png" />
   <link
     rel="icon"
     href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3.5' fill='%230e141d'/%3E%3Cpath d='M2.6 6.2h8.1V4.3L14 7.1l-3.3 2.8V8H2.6z' fill='%23ffbf5e'/%3E%3Cpath d='M13.4 11.6H5.3v1.9L2 10.7 5.3 7.9v1.9h8.1z' fill='%23f5a623'/%3E%3C/svg%3E"
@@ -1625,6 +1630,7 @@
        of Windows terminal windows — the rail on the left is already the tab
        bar, so the screen simply takes over the main panel. */
     .screen {
+      position: relative; /* anchors the "jump to latest" button */
       flex: 1 1 auto;
       display: flex;
       flex-direction: column;
@@ -1632,6 +1638,25 @@
       background: var(--bg-inset);
     }
     .screen[hidden] { display: none; }
+    /* Back to the newest message after scrolling up — on a phone the only other
+       way down is a long swipe. Positioned over the bottom edge of the chat by
+       placeJumpButton(). */
+    .chat-jump {
+      position: absolute;
+      right: 22px;
+      z-index: 6;
+      width: 38px; height: 38px;
+      display: inline-flex; align-items: center; justify-content: center;
+      border-radius: 50%;
+      border: 1px solid var(--border);
+      background: var(--bg-elev);
+      color: var(--text);
+      font-size: 17px;
+      box-shadow: var(--shadow-popover);
+      cursor: pointer;
+    }
+    .chat-jump:hover { border-color: var(--accent-line); color: var(--accent); }
+    .chat-jump[hidden] { display: none; }
     .screen-head {
       flex: 0 0 auto;
       display: flex;
@@ -2110,6 +2135,16 @@
       border-top: 1px solid var(--border-soft);
       border-bottom: 1px solid var(--border-soft);
       background: var(--bg);
+    }
+    /* Long transcripts: the browser skips layout and paint for turns scrolled
+       out of view (from the cousin's app, measured there as the biggest cheap
+       win on a phone). `auto` in the intrinsic size remembers each turn's real
+       height once rendered, so scrolling back up does not jump. */
+    .chat-thread > .chat-turn,
+    .chat-thread > .chat-tool,
+    .chat-thread > .chat-tool-group {
+      content-visibility: auto;
+      contain-intrinsic-size: auto 140px;
     }
     .chat-turn {
       position: relative;
@@ -3944,6 +3979,8 @@
         </div>
         <!-- Chat view: rendered conversation. -->
         <div class="screen-chat" id="screen-chat"></div>
+        <button class="chat-jump" id="chat-jump" type="button" hidden
+          aria-label="Jump to the latest message" title="Jump to the latest message">↓</button>
         <!-- Chat composer: type to the agent. The text is sent into its pane
              (send-keys, through the pane guard), so the agent answers as if you
              typed in the terminal — and the reply shows up here, rendered,
@@ -4328,6 +4365,68 @@
       );
     }
 
+    // --- system notifications -------------------------------------------------
+    // An agent finishing a turn or stopping on a question, told to the OS —
+    // taken from the cousin's app, which notifies the same two moments. Two
+    // rules keep it from being noise: nothing about the screen you are looking
+    // at while the page is visible (you saw it live), and one notification per
+    // agent at a time (the tag replaces the previous one instead of stacking).
+    //
+    // It goes through the service worker: Android Chrome rejects a page's
+    // `new Notification()` outright, which is why the cousin's exact code would
+    // not work on the owner's phone. Page-only fallback for desktop browsers.
+    let swRegistration = null;
+    function setupServiceWorker() {
+      if (!("serviceWorker" in navigator)) return;
+      navigator.serviceWorker.register("/sw.js").then(
+        (reg) => { swRegistration = reg; },
+        () => { /* http on a LAN IP, private mode: no worker, no notifications */ },
+      );
+      // A tapped notification lands here: open that agent's screen.
+      navigator.serviceWorker.addEventListener("message", (ev) => {
+        const data = ev.data || {};
+        if (data.type === "open-agent" && data.agent && state.agents.has(data.agent)) openScreen(data.agent);
+      });
+      // Permission can only be asked from a gesture on a phone — so the first
+      // tap anywhere asks, once, and only if the question is still open.
+      if ("Notification" in window && Notification.permission === "default") {
+        document.addEventListener(
+          "pointerdown",
+          () => {
+            try {
+              Notification.requestPermission().catch(() => {});
+            } catch { /* old callback-style API: ignore */ }
+          },
+          { once: true, capture: true },
+        );
+      }
+    }
+    function notifyAgent(name, what) {
+      if (!("Notification" in window) || Notification.permission !== "granted") return;
+      if (!document.hidden && screenState.name === name) return; // watching it
+      const title = `${displayOf(name)} ${what}`;
+      const opts = {
+        body: "Tap to open its screen.",
+        tag: `sb-agent-${name}`,
+        renotify: true,
+        icon: "/icon-192.png",
+        badge: "/icon-192.png",
+        data: { agent: name },
+      };
+      if (swRegistration && swRegistration.showNotification) {
+        swRegistration.showNotification(title, opts).catch(() => {});
+        return;
+      }
+      try {
+        const n = new Notification(title, opts);
+        n.onclick = () => {
+          window.focus();
+          if (state.agents.has(name)) openScreen(name);
+          n.close();
+        };
+      } catch { /* phones without a worker: nothing more we can do */ }
+    }
+
     // --- agent state merge ------------------------------------------------
     // GET /api/agents carries unreadCount; the SSE agent_updated payload is a
     // PublicAgent and does NOT — so we PRESERVE the previous unreadCount when a
@@ -4353,6 +4452,16 @@
         screenState.name !== incoming.name
       ) {
         markUnseen(incoming.name);
+      }
+      // The same two moments, as a SYSTEM notification — the only way to learn
+      // about them with the phone in your pocket. Only live transitions count
+      // (no prev = first sight, not news).
+      if (prev && incoming.status === "online") {
+        if (!prev.blocked && incoming.blocked) {
+          notifyAgent(incoming.name, "is waiting on a question");
+        } else if (prev.activity === "working" && incoming.activity === "idle" && !incoming.blocked) {
+          notifyAgent(incoming.name, "finished — your turn");
+        }
       }
       state.agents.set(incoming.name, { ...prev, ...incoming, unreadCount });
     }
@@ -4576,6 +4685,9 @@
       };
     }
     function usageWindowLabel(minutes) {
+      // A Codex window can arrive without a duration (the rollout fallback);
+      // `null % 1440 === 0` would have called it a "0d window".
+      if (!Number.isFinite(minutes) || minutes <= 0) return "window";
       if (minutes === 300) return "5h window";
       if (minutes === 10_080) return "weekly";
       if (minutes % 1_440 === 0) return `${minutes / 1_440}d window`;
@@ -8494,7 +8606,11 @@
       const ctx = screenState.context;
       if (ctx && ctx.used > 0) {
         const pct = Math.min(100, Math.round((ctx.used / ctx.window) * 100));
-        const pill = el("span", "status-pill context", `${fmtTokens(ctx.used)} · ${pct}%`);
+        // A button: tapping it offers /compact. Through the slash menu,
+        // /compact flipped you to the terminal (it is a CLI command); from here
+        // it is sent straight to the pane and you stay in the chat.
+        const pill = el("button", "status-pill status-pill-btn context", `${fmtTokens(ctx.used)} · ${pct}%`);
+        pill.type = "button";
         pill.style.setProperty("--pill-color", contextColor(pct));
         const bar = el("span", "ctx-bar");
         const fill = el("span", "ctx-fill");
@@ -8504,8 +8620,25 @@
         pill.appendChild(bar);
         pill.title =
           `Context: ${ctx.used.toLocaleString()} of ${ctx.window.toLocaleString()} tokens (${pct}%). ` +
-          `Counts everything re-sent each turn — prompt, cached conversation and the last reply. ` +
-          `Claude Code compacts on its own near the top; /clear starts fresh.`;
+          `Counts what is re-sent each turn — prompt and cached conversation. ` +
+          `Tap to compact now; it also compacts on its own near the top.`;
+        pill.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          showConfirmDialog(
+            `Compact ${displayOf(agent.name)}'s context?`,
+            `Sends /compact: the conversation so far is summarised to free the window (${pct}% used). ` +
+              `Detail from earlier turns is lost; the agent keeps working from the summary.`,
+            "compact now",
+            async () => {
+              try {
+                await sendChatMessage(agent.name, "/compact");
+                toast(`Compacting ${displayOf(agent.name)}… the gauge drops on its next turn.`, "ok", 4500);
+              } catch (err) {
+                toast(`Could not compact: ${err && err.message ? err.message : err}`, "warn");
+              }
+            },
+          );
+        });
         inner.appendChild(pill);
       }
       if (agent.goalActive) {
@@ -11197,6 +11330,41 @@
     }
 
     /**
+     * "Jump to latest": a ↓ over the bottom edge of the chat while you are
+     * scrolled well away from the newest message (from the cousin's app). The
+     * chat already sticks to the bottom when you are near it; this is the way
+     * back once you are not.
+     */
+    function setupChatJump() {
+      const view = $("#screen-chat");
+      const btn = $("#chat-jump");
+      if (!view || !btn) return;
+      const place = () => {
+        const gap = view.scrollHeight - view.scrollTop - view.clientHeight;
+        const show = view.offsetParent !== null && view.clientHeight > 0 && gap > 400;
+        btn.hidden = !show;
+        if (show) btn.style.top = `${view.offsetTop + view.clientHeight - 38 - 14}px`;
+      };
+      view.addEventListener("scroll", place, { passive: true });
+      new ResizeObserver(place).observe(view);
+      // Not a smooth scroll: off-screen turns are content-visibility
+      // placeholders, so the thread GROWS as it scrolls past them and a smooth
+      // scroll aims at a bottom that keeps moving (it stopped 8,000px short on
+      // a long transcript). Jump, then re-check for a few frames until it
+      // settles on the real bottom.
+      btn.addEventListener("click", () => {
+        let tries = 0;
+        const settle = () => {
+          view.scrollTop = view.scrollHeight;
+          const gap = view.scrollHeight - view.scrollTop - view.clientHeight;
+          if (gap > 2 && ++tries < 12) requestAnimationFrame(settle);
+          else place();
+        };
+        settle();
+      });
+    }
+
+    /**
      * Close the agent rail, and open it again — a full hide, distinct from the
      * desktop resizer. Wanted most on a phone, where the two columns share a
      * narrow screen, so the state is remembered: close it once and the panel
@@ -11258,6 +11426,8 @@
     async function boot() {
       initMotionPreference(); // before anything animates, so the banner is honest
       setupRailToggle();
+      setupChatJump();
+      setupServiceWorker();
       setupRemoteSession();
       setupMcpCommand();
       loadUsageCollapsed();
@@ -12533,6 +12703,13 @@
       renderAgents();
       renderFilterBar();
       renderFeed();
+      // /?agent=<name> — a notification tapped while the app was closed opens
+      // straight onto that agent. The param is dropped so a reload is plain.
+      const deepAgent = new URLSearchParams(location.search).get("agent");
+      if (deepAgent) {
+        history.replaceState(null, "", location.pathname);
+        if (state.agents.has(deepAgent)) openScreen(deepAgent);
+      }
 
       connectSse();
 

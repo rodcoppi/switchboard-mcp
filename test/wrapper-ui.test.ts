@@ -2170,3 +2170,57 @@ describe("the composer, per agent and safe to paste into", () => {
     expect(script).toContain("Folders can't be attached");
   });
 });
+
+/**
+ * Phone polish ported from the cousin's app (23/09): installable, notifying,
+ * cheaper on long chats, with a way back to the newest message.
+ */
+describe("the board as a phone app", () => {
+  const publicDir = path.join(process.cwd(), "public");
+
+  it("links a manifest with standalone display and a maskable icon", () => {
+    expect(html).toMatch(/<link rel="manifest" href="\/manifest\.webmanifest"/);
+    const manifest = JSON.parse(fs.readFileSync(path.join(publicDir, "manifest.webmanifest"), "utf8"));
+    expect(manifest.display).toBe("standalone");
+    expect(manifest.icons.some((i: { purpose?: string }) => i.purpose === "maskable")).toBe(true);
+    for (const icon of manifest.icons) {
+      expect(fs.existsSync(path.join(publicDir, icon.src.replace(/^\//, "")))).toBe(true);
+    }
+  });
+
+  it("ships a service worker that caches nothing", () => {
+    const sw = fs.readFileSync(path.join(publicDir, "sw.js"), "utf8");
+    // Live state behind a password must never be served from a cache.
+    expect(sw).not.toMatch(/caches\.open|cache\.put|respondWith/);
+    expect(sw).toContain("notificationclick");
+  });
+
+  it("notifies through the service worker, never about the screen you watch", () => {
+    // Android Chrome rejects a page's `new Notification()`.
+    expect(script).toContain("swRegistration.showNotification(title, opts)");
+    expect(script).toContain('if (!document.hidden && screenState.name === name) return;');
+    // One per agent: the tag replaces instead of stacking.
+    expect(script).toMatch(/tag: `sb-agent-\$\{name\}`/);
+  });
+
+  it("skips layout for off-screen turns but keeps their height", () => {
+    expect(styles).toMatch(/content-visibility: auto;\s*contain-intrinsic-size: auto 140px;/);
+  });
+
+  it("jumps to the real bottom, not a smooth scroll that the growing thread outruns", () => {
+    const fn = script.match(/function setupChatJump[\s\S]*?\n    }/)?.[0] ?? "";
+    expect(fn).toContain("requestAnimationFrame(settle)");
+    expect(fn).not.toContain('behavior: "smooth"');
+  });
+
+  it("offers /compact from the context pill, behind a confirmation", () => {
+    expect(script).toMatch(/showConfirmDialog\(\s*`Compact \$\{displayOf\(agent\.name\)\}'s context\?`/);
+    expect(script).toContain('sendChatMessage(agent.name, "/compact")');
+  });
+
+  it("labels a Codex window that has no duration", () => {
+    const label = embeddedFunction<(m: unknown) => string>("usageWindowLabel");
+    expect(label(null)).toBe("window");
+    expect(label(300)).toBe("5h window");
+  });
+});

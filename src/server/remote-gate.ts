@@ -46,6 +46,12 @@ function isExempt(pathname: string): boolean {
   // The health probe answers a flat "is the hub up", with no data in it, and
   // the CLI leans on it to decide whether to auto-start the hub.
   if (pathname === "/api/health") return true;
+  // The installable-app shell: the manifest, its icons and the service worker.
+  // Browsers fetch the manifest WITHOUT cookies, so gating it meant a phone
+  // behind the tunnel could never offer "install app". None of these carry any
+  // data — they are the same static files for everyone.
+  if (pathname === "/manifest.webmanifest" || pathname === "/sw.js") return true;
+  if (/^\/icon-(192|512|maskable-512)\.png$/.test(pathname)) return true;
   return false;
 }
 

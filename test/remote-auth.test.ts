@@ -418,3 +418,25 @@ describe("the gate, on a running hub", () => {
     expect(res.status).toBe(401);
   });
 });
+
+describe("the installable-app shell passes the armed gate", () => {
+  let hub: Hub;
+  afterEach(async () => {
+    await hub?.close();
+  });
+
+  it("serves manifest, worker and icons without a session — and nothing else", async () => {
+    // Browsers fetch the manifest WITHOUT cookies; gating it meant a phone
+    // behind the tunnel could never offer "install app".
+    saveRemoteAuth(dir, { ...emptyRecord(), enabled: true, ...hashPassword("a reasonable passphrase") });
+    hub = await startHub({ baseDir: dir, port: 0, quiet: true, onMessage: () => "queued_offline" });
+    const url = (p: string) => `http://127.0.0.1:${hub.port}${p}`;
+    for (const open of ["/manifest.webmanifest", "/sw.js", "/icon-192.png", "/icon-maskable-512.png"]) {
+      expect((await fetch(url(open))).status, open).toBe(200);
+    }
+    // The exemption is exact: lookalikes and the data stay behind the gate.
+    for (const closed of ["/api/agents", "/icon-evil.png", "/sw.js.map", "/"]) {
+      expect((await fetch(url(closed))).status, closed).toBe(401);
+    }
+  });
+});

@@ -57,8 +57,12 @@ describe("readCodexRateLimits", () => {
   it("times out and KILLS a server that ignores SIGTERM", async () => {
     const pidFile = path.join(os.tmpdir(), `sb-fake-codex-${process.pid}.pid`);
     const started = Date.now();
-    expect(await readCodexRateLimits({ ...fake("hang", pidFile), timeoutMs: 300 })).toBeNull();
-    expect(Date.now() - started).toBeLessThan(2_000);
+    // 1.5 s, not 300 ms: under a loaded full-suite run the fake had not even
+    // finished starting (and written its pid) when a 300 ms timeout fired, so
+    // the pid file this test reads next did not exist yet — an intermittent
+    // failure of the test, not of the timeout.
+    expect(await readCodexRateLimits({ ...fake("hang", pidFile), timeoutMs: 1_500 })).toBeNull();
+    expect(Date.now() - started).toBeLessThan(4_000);
     const pid = Number(fs.readFileSync(pidFile, "utf8"));
     fs.rmSync(pidFile, { force: true });
     // SIGTERM is ignored; the SIGKILL escalation lands ~1s later.
