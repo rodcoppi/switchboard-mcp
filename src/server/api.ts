@@ -2085,9 +2085,10 @@ export function createApiRouter(options: ApiOptions): express.Router {
           const rawLines = complete.split("\n");
           const parsed = parser(rawLines);
           // How full the window is, refreshed from the same bytes we just read
-          // (never a second pass over the file). Only claude stamps `usage`; a
-          // codex rollout yields null and the dashboard shows no gauge.
-          const context = isCodex ? null : contextUsageFrom(rawLines);
+          // (never a second pass over the file). Claude stamps `usage` on each
+          // assistant message; a codex rollout's token_count carries the last
+          // request size and the active window (codexContextFrom, same shape).
+          const context = contextUsageFrom(rawLines, isCodex ? "codex" : "claude");
           if (context) lastContext = context;
           // The initial dump is capped to the most recent turns: a long project
           // has thousands, and sending them all made the page render ~40k DOM
@@ -2395,28 +2396,36 @@ export function createApiRouter(options: ApiOptions): express.Router {
     });
   });
 
-  // Claude plan windows come from its OAuth endpoint; Codex plan windows come
-  // from the newest local token_count event. Both are cached here because the
-  // underlying sources are append-only logs / a rate-limited network probe.
+  // Claude plan windows come from its OAuth endpoint. Codex plan windows come
+  // LIVE from the account via `codex app-server` (codex-ratelimits.ts, cached
+  // 60s), falling back to the newest local token_count event when that read
+  // fails; today's Codex tokens always come from the rollouts. No Codex binary
+  // on PATH → no Codex section at all. The live module is loaded on demand so
+  // this route stays self-contained.
   let codexCache: { at: number; usage: CodexUsageSnapshot } | null = null;
-  const codexUsage = (): CodexUsageSnapshot | null => {
-    const hasCodex = store.listAgents().some((a) => resolveAgentType(a.agentType) === "codex");
-    if (!hasCodex) return null;
+  let codexLive: ReturnType<typeof import("./codex-ratelimits.js").createCodexRateLimitsCache> | null = null;
+  const codexUsage = async (): Promise<CodexUsageSnapshot | null> => {
+    const live = await import("./codex-ratelimits.js");
+    if (!live.codexInstalled()) return null;
     if (!codexCache || Date.now() - codexCache.at > 30_000) {
       codexCache = { at: Date.now(), usage: codexUsageSnapshot(new Date()) };
     }
-    return codexCache.usage;
+    codexLive ??= live.createCodexRateLimitsCache();
+    return live.mergeCodexUsage(codexCache.usage, await codexLive());
   };
 
   router.get("/api/usage", async (_req, res) => {
-    const claude = usage ? await usage.getSnapshot() : {
-      limits: [], updatedAt: null, stale: true, status: "unavailable" as const, retryAt: null,
-    };
+    const [claude, codex] = await Promise.all([
+      usage ? usage.getSnapshot() : Promise.resolve({
+        limits: [], updatedAt: null, stale: true, status: "unavailable" as const, retryAt: null,
+      }),
+      codexUsage().catch(() => null),
+    ]);
     res.json({
       // Keep `limits` for old dashboards; new ones also consume freshness.
       limits: claude.limits,
       claude,
-      codex: codexUsage(),
+      codex,
     });
   });
 

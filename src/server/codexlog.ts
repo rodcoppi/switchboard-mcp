@@ -127,7 +127,8 @@ export interface CodexTokens {
 export interface CodexUsageLimit {
   id: "primary" | "secondary";
   usedPercent: number;
-  windowMinutes: number;
+  /** Window length; null when the event did not carry it (percent + reset suffice). */
+  windowMinutes: number | null;
   resetsAt: string;
 }
 
@@ -141,21 +142,25 @@ export interface CodexUsageSnapshot extends CodexTokens {
 }
 
 /**
- * Sum of Codex tokens spent TODAY — Codex has no usage-limit API (it's OpenAI),
- * but its rollouts carry token_count events whose info.total_token_usage is the
- * running total for that session. Summing the LAST token_count of each of the
- * day's rollouts gives "tokens across today's Codex sessions". `now` picks the
- * date folder (YYYY/MM/DD); a missing folder → zeros.
+ * Codex tokens spent TODAY — Codex has no usage-limit API (it's OpenAI), but
+ * its rollouts carry token_count events whose info.total_token_usage is the
+ * running total for that session. See codexUsageSnapshot for how "today" is
+ * cut out of a session that started on an earlier day.
  */
 export function codexTokensToday(now: Date, sessionsDir = codexSessionsDir()): CodexTokens {
   const { total, input, output, reasoning } = codexUsageSnapshot(now, sessionsDir);
   return { total, input, output, reasoning };
 }
 
+/** How much of a big rollout is read from the end before falling back to all of it. */
+const TAIL_BYTES = 256 * 1024;
+/** How many of the newest rollouts are searched for a windowed rate limit. */
+const RATE_SEARCH_FILES = 10;
+
 /**
  * Today's token detail plus the NEWEST Codex plan windows. The latter are the
- * useful answer to “how much Codex do I have left?” and are already present in
- * local rollouts — no OpenAI credential or extra network request is needed.
+ * fallback answer to “how much Codex do I have left?” when the live read
+ * (codex-ratelimits.ts) is unavailable — no OpenAI credential needed.
  */
 export function codexUsageSnapshot(now: Date, sessionsDir = codexSessionsDir()): CodexUsageSnapshot {
   // "Today's usage" is every rollout WRITTEN today, decided by mtime — NOT by
@@ -166,34 +171,45 @@ export function codexUsageSnapshot(now: Date, sessionsDir = codexSessionsDir()):
   // earlier day report all zeros: nothing new is filed under today, while its
   // real usage keeps flowing into the old file (bug, 11/09 — a session started
   // 09-08 was still active, and the 09-11 folder was empty).
+  //
+  // And a rollout written today is not ALL today's usage: its cumulative total
+  // includes every earlier day of that session. Summing the raw last total
+  // overcounted a multi-day session by its whole history, so each file
+  // contributes (last total) − (last total stamped before local midnight).
   const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   const endOfDay = startOfDay + 24 * 60 * 60 * 1000;
   const acc: CodexTokens = { total: 0, input: 0, output: 0, reasoning: 0 };
-  // Newest first, so the first rollout carrying rate limits is the freshest.
-  const files = listRolloutsWithMtime(sessionsDir).filter(
-    (e) => e.mtime >= startOfDay && e.mtime < endOfDay,
-  );
+  const all = listRolloutsWithMtime(sessionsDir); // newest first
+  for (const file of all) {
+    if (file.mtime < startOfDay || file.mtime >= endOfDay) continue;
+    const today = tokensTodayOf(file.file, startOfDay);
+    acc.total += today.total;
+    acc.input += today.input;
+    acc.output += today.output;
+    acc.reasoning += today.reasoning;
+  }
+  // Plan windows come from the newest rollout of ANY date: they describe the
+  // account, not the day, and an idle day must not blank the bars. A window
+  // whose reset has passed is reported as 0% (see normalizeCodexLimits).
   let latestRate: RawRateLimits | null = null;
   let latestRateMtime = 0;
-  for (const file of files) {
-    const last = lastTokenEvent(file.file);
-    if (last.tokens) {
-      acc.total += last.tokens.total;
-      acc.input += last.tokens.input;
-      acc.output += last.tokens.output;
-      acc.reasoning += last.tokens.reasoning;
-    }
-    if (!latestRate && last.rateLimits) {
-      latestRate = last.rateLimits;
+  let anyRate: RawRateLimits | null = null;
+  for (const file of all.slice(0, RATE_SEARCH_FILES)) {
+    const rl = rateLimitsOf(file.file);
+    if (!anyRate && rl.any) anyRate = rl.any;
+    if (rl.windowed) {
+      latestRate = rl.windowed;
       latestRateMtime = file.mtime;
+      break;
     }
   }
+  const rate = latestRate ?? anyRate;
   return {
     ...acc,
-    limits: latestRate ? normalizeCodexLimits(latestRate) : [],
-    planType: typeof latestRate?.plan_type === "string" ? latestRate.plan_type : null,
-    limitId: typeof latestRate?.limit_id === "string" ? latestRate.limit_id : null,
-    limitName: typeof latestRate?.limit_name === "string" ? latestRate.limit_name : null,
+    limits: latestRate ? normalizeCodexLimits(latestRate, now.getTime()) : [],
+    planType: typeof rate?.plan_type === "string" ? rate.plan_type : null,
+    limitId: typeof rate?.limit_id === "string" ? rate.limit_id : null,
+    limitName: typeof rate?.limit_name === "string" ? rate.limit_name : null,
     updatedAt: latestRateMtime > 0 ? new Date(latestRateMtime).toISOString() : null,
   };
 }
@@ -212,50 +228,95 @@ interface RawRateLimits {
   plan_type?: unknown;
 }
 
-function normalizeCodexLimits(raw: RawRateLimits): CodexUsageLimit[] {
+/**
+ * A window needs only a finite used_percent and a parseable resets_at; the
+ * duration is optional. A window whose reset is already behind `nowMs` has
+ * rolled over since the event was written, so it reads 0% — a rollout from
+ * yesterday otherwise keeps shouting "99%" at a fresh window.
+ */
+export function normalizeCodexLimits(raw: RawRateLimits, nowMs = Date.now()): CodexUsageLimit[] {
   const out: CodexUsageLimit[] = [];
   for (const id of ["primary", "secondary"] as const) {
     const win = raw[id];
     if (!win) continue;
-    if (
-      typeof win.used_percent !== "number" || !Number.isFinite(win.used_percent) ||
-      typeof win.window_minutes !== "number" || !Number.isFinite(win.window_minutes)
-    ) continue;
+    if (typeof win.used_percent !== "number" || !Number.isFinite(win.used_percent)) continue;
     const epoch = typeof win.resets_at === "number"
       ? win.resets_at * 1000
       : typeof win.resets_at === "string"
         ? Date.parse(win.resets_at)
         : NaN;
     if (!Number.isFinite(epoch)) continue;
+    const mins = win.window_minutes;
     out.push({
       id,
-      usedPercent: win.used_percent,
-      windowMinutes: win.window_minutes,
+      usedPercent: epoch <= nowMs ? 0 : win.used_percent,
+      windowMinutes: typeof mins === "number" && Number.isFinite(mins) && mins > 0 ? mins : null,
       resetsAt: new Date(epoch).toISOString(),
     });
   }
   return out;
 }
 
-/** Last cumulative tokens and newest rate_limits carried by a rollout. */
-function lastTokenEvent(file: string): { tokens: CodexTokens | null; rateLimits: RawRateLimits | null } {
-  let text: string;
+/**
+ * The end of a file: at most `maxBytes`, with the (probably cut) first line
+ * dropped when the read did not start at 0. `whole` tells the caller whether
+ * nothing was left unread.
+ */
+function readTail(file: string, maxBytes = TAIL_BYTES): { text: string; whole: boolean } | null {
+  let fd: number;
   try {
-    text = fs.readFileSync(file, "utf8");
+    fd = fs.openSync(file, "r");
   } catch {
-    return { tokens: null, rateLimits: null };
+    return null;
   }
-  let tokens: CodexTokens | null = null;
-  // Two candidates, because the LAST rate_limits is not always the useful one:
-  // Codex's final few token_count events in a session often carry a rate_limits
-  // whose primary/secondary windows are null (it still has the plan_type, but
-  // no percentages). Taking that one blindly wiped the "Codex X%" bars even
-  // though a slightly earlier event held real windows (bug, 11/09 — the last 3
-  // events were null while 173 before them reported the primary at 99%). So we
-  // keep the freshest WINDOWED one for the bars, and the freshest of any kind
-  // as a fallback so plan_type still comes through when no window exists.
-  let rateWindowed: RawRateLimits | null = null;
-  let rateAny: RawRateLimits | null = null;
+  try {
+    const size = fs.fstatSync(fd).size;
+    const start = Math.max(0, size - maxBytes);
+    const buf = Buffer.alloc(size - start);
+    const n = fs.readSync(fd, buf, 0, buf.length, start);
+    let text = buf.toString("utf8", 0, n);
+    if (start > 0) {
+      const nl = text.indexOf("\n");
+      text = nl === -1 ? "" : text.slice(nl + 1);
+    }
+    return { text, whole: start === 0 };
+  } catch {
+    return null;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function readWhole(file: string): string | null {
+  try {
+    return fs.readFileSync(file, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+interface TokenScan {
+  /** Newest cumulative total in the text. */
+  last: CodexTokens | null;
+  /** Newest cumulative total stamped BEFORE the cutoff (the day's baseline). */
+  before: CodexTokens | null;
+  windowed: RawRateLimits | null;
+  any: RawRateLimits | null;
+}
+
+const ZERO: CodexTokens = { total: 0, input: 0, output: 0, reasoning: 0 };
+
+/** Walks token_count lines newest-first; `cutoff` is local midnight in ms. */
+function scanTokenCounts(text: string, cutoff: number): TokenScan {
+  const scan: TokenScan = { last: null, before: null, windowed: null, any: null };
+  // Two rate candidates, because the LAST rate_limits is not always the useful
+  // one: Codex's final few token_count events in a session often carry a
+  // rate_limits whose primary/secondary windows are null (it still has the
+  // plan_type, but no percentages). Taking that one blindly wiped the "Codex
+  // X%" bars even though a slightly earlier event held real windows (bug,
+  // 11/09 — the last 3 events were null while 173 before them reported the
+  // primary at 99%). So we keep the freshest WINDOWED one for the bars, and the
+  // freshest of any kind as a fallback so plan_type still comes through.
   const hasWindow = (r: RawRateLimits): boolean => r.primary != null || r.secondary != null;
   const lines = text.split("\n");
   for (let i = lines.length - 1; i >= 0; i--) {
@@ -263,34 +324,94 @@ function lastTokenEvent(file: string): { tokens: CodexTokens | null; rateLimits:
     if (!line.includes('"token_count"')) continue;
     try {
       const rec = JSON.parse(line) as {
+        timestamp?: unknown;
         payload?: {
           type?: string;
-          info?: { total_token_usage?: Record<string, unknown> };
-          rate_limits?: RawRateLimits;
+          info?: { total_token_usage?: Record<string, unknown> } | null;
+          rate_limits?: RawRateLimits | null;
         };
       };
       if (rec.payload?.type !== "token_count") continue;
       const rl = rec.payload.rate_limits;
       if (rl) {
-        if (!rateAny) rateAny = rl;
-        if (!rateWindowed && hasWindow(rl)) rateWindowed = rl;
+        if (!scan.any) scan.any = rl;
+        if (!scan.windowed && hasWindow(rl)) scan.windowed = rl;
       }
       const u = rec.payload.info?.total_token_usage;
-      if (!tokens && u) {
+      if (u) {
         const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
-        tokens = {
+        const tokens = {
           total: num(u.total_tokens),
           input: num(u.input_tokens),
           output: num(u.output_tokens),
           reasoning: num(u.reasoning_output_tokens),
         };
+        if (!scan.last) scan.last = tokens;
+        const ts = typeof rec.timestamp === "string" ? Date.parse(rec.timestamp) : NaN;
+        if (!scan.before && Number.isFinite(ts) && ts < cutoff) scan.before = tokens;
       }
-      if (tokens && rateWindowed) break;
+      if (scan.last && scan.before && scan.windowed) break;
     } catch {
       /* malformed — keep scanning upward */
     }
   }
-  return { tokens, rateLimits: rateWindowed ?? rateAny };
+  return scan;
+}
+
+/** Timestamp of the rollout's first line (session start); NaN when unknown. */
+function sessionStartOf(file: string): number {
+  const head = firstChunk(file, 512);
+  const m = head?.match(/^\{"timestamp"\s*:\s*"([^"]+)"/);
+  return m ? Date.parse(m[1]) : NaN;
+}
+
+/**
+ * One rollout's tokens spent since `startOfDay`. Reads only the tail when it
+ * can: the baseline is either inside the tail, or provably zero because the
+ * session itself started today. Otherwise (a session spanning midnight whose
+ * last pre-midnight event is far back) the whole file is read once.
+ */
+function tokensTodayOf(file: string, startOfDay: number): CodexTokens {
+  const tail = readTail(file);
+  if (!tail) return ZERO;
+  let scan = scanTokenCounts(tail.text, startOfDay);
+  if (!scan.last) {
+    if (tail.whole) return ZERO;
+    const text = readWhole(file);
+    if (text === null) return ZERO;
+    scan = scanTokenCounts(text, startOfDay);
+    if (!scan.last) return ZERO;
+  } else if (!scan.before && !tail.whole) {
+    const started = sessionStartOf(file);
+    if (!(Number.isFinite(started) && started >= startOfDay)) {
+      const text = readWhole(file);
+      if (text !== null) scan = scanTokenCounts(text, startOfDay);
+    }
+  }
+  const last = scan.last ?? ZERO;
+  const base = scan.before ?? ZERO;
+  const d = (a: number, b: number): number => Math.max(0, a - b);
+  return {
+    total: d(last.total, base.total),
+    input: d(last.input, base.input),
+    output: d(last.output, base.output),
+    reasoning: d(last.reasoning, base.reasoning),
+  };
+}
+
+/** Freshest windowed / any rate_limits in a rollout, tail first. */
+function rateLimitsOf(file: string): { windowed: RawRateLimits | null; any: RawRateLimits | null } {
+  const tail = readTail(file);
+  if (!tail) return { windowed: null, any: null };
+  let scan = scanTokenCounts(tail.text, -Infinity);
+  if (!scan.windowed && !tail.whole) {
+    const text = readWhole(file);
+    if (text !== null) {
+      const full = scanTokenCounts(text, -Infinity);
+      scan = { ...full, any: scan.any ?? full.any };
+    }
+  }
+  return { windowed: scan.windowed, any: scan.any };
 }
 
 /** One-line label for a codex tool call ("exec: const p = await …"). */

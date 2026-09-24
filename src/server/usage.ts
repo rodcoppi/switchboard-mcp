@@ -57,6 +57,8 @@ export interface UsageProbeOptions {
   endpoint?: string;
   cacheMs?: number;
   fetchFn?: typeof fetch;
+  /** Abort the OAuth request after this long (default 10s). */
+  fetchTimeoutMs?: number;
   /** Optional durable last-good cache. Production places it in ~/.switchboard. */
   cachePath?: string;
 }
@@ -68,6 +70,7 @@ export function createUsageProbe(options: UsageProbeOptions): UsageProbe {
   const endpoint = options.endpoint ?? USAGE_ENDPOINT;
   const cacheMs = options.cacheMs ?? USAGE_CACHE_MS;
   const fetchFn = options.fetchFn ?? fetch;
+  const fetchTimeoutMs = options.fetchTimeoutMs ?? 10_000;
   const cachePath = options.cachePath;
 
   interface CacheState {
@@ -119,6 +122,10 @@ export function createUsageProbe(options: UsageProbeOptions): UsageProbe {
     if (!token) return { limits: [], status: "unauthorized", retryAt: null };
     const res = await fetchFn(endpoint, {
       headers: { Authorization: `Bearer ${token}`, "anthropic-beta": "oauth-2025-04-20" },
+      // Without a deadline a stalled connection hangs for undici's default
+      // (~300s), and every /api/usage poll waits behind it. An abort throws,
+      // which refresh() already turns into "unavailable" + last-good bars.
+      signal: AbortSignal.timeout(fetchTimeoutMs),
     });
     if (res.status === 429) {
       const retryAt = retryAtFromHeader(res.headers?.get?.("retry-after") ?? null);

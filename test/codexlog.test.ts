@@ -269,6 +269,105 @@ describe("codexTokensToday", () => {
   });
 });
 
+describe("codexUsageSnapshot — today's slice and fresh windows", () => {
+  const dirs: string[] = [];
+  afterEach(() => { for (const d of dirs.splice(0)) fs.rmSync(d, { recursive: true, force: true }); });
+  const mkRoot = (): string => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "sb-cday-"));
+    dirs.push(root);
+    return root;
+  };
+  const tc = (ts: Date | null, total: number, rate?: unknown) => line({
+    ...(ts ? { timestamp: ts.toISOString() } : {}),
+    type: "event_msg",
+    payload: {
+      type: "token_count",
+      info: { total_token_usage: { input_tokens: total - 10, output_tokens: 10, reasoning_output_tokens: 2, total_tokens: total } },
+      ...(rate ? { rate_limits: rate } : {}),
+    },
+  });
+
+  it("counts only what a multi-day rollout spent since local midnight", () => {
+    // Cumulative totals: 1000 by yesterday evening, 1600 now. Today = 600,
+    // not the session's whole history.
+    const root = mkRoot();
+    const dir = path.join(root, "2026", "09", "20");
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, "rollout-2026-09-20T10-00-00-x.jsonl");
+    fs.writeFileSync(file, [
+      line({ timestamp: new Date(2026, 8, 20, 10).toISOString(), type: "session_meta", payload: { cwd: "/x" } }),
+      tc(new Date(2026, 8, 22, 20, 0), 400),
+      tc(new Date(2026, 8, 22, 23, 50), 1_000),
+      tc(new Date(2026, 8, 23, 9, 0), 1_250),
+      tc(new Date(2026, 8, 23, 11, 0), 1_600),
+    ].join("\n") + "\n");
+    const now = new Date(2026, 8, 23, 12, 0);
+    fs.utimesSync(file, now, now);
+    const u = codexUsageSnapshot(now, root);
+    expect(u.total).toBe(600);
+    expect(u.output).toBe(0);
+  });
+
+  it("finds the pre-midnight baseline in a BIG file (beyond the 256KB tail)", () => {
+    const root = mkRoot();
+    const dir = path.join(root, "2026", "09", "20");
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, "rollout-big.jsonl");
+    const filler = line({ type: "response_item", payload: { type: "message", content: "x".repeat(1_000) } });
+    fs.writeFileSync(file, [
+      line({ timestamp: new Date(2026, 8, 20, 10).toISOString(), type: "session_meta", payload: { cwd: "/x" } }),
+      tc(new Date(2026, 8, 22, 23, 0), 5_000),
+      ...Array(400).fill(filler), // ~400KB between the baseline and today's events
+      tc(new Date(2026, 8, 23, 8, 0), 7_000),
+    ].join("\n") + "\n");
+    const now = new Date(2026, 8, 23, 12, 0);
+    fs.utimesSync(file, now, now);
+    expect(codexUsageSnapshot(now, root).total).toBe(2_000);
+  });
+
+  it("a big rollout that STARTED today counts from zero (its baseline is provably 0)", () => {
+    const root = mkRoot();
+    const dir = path.join(root, "2026", "09", "23");
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, "rollout-today.jsonl");
+    const filler = line({ type: "response_item", payload: { type: "message", content: "x".repeat(1_000) } });
+    fs.writeFileSync(file, [
+      line({ timestamp: new Date(2026, 8, 23, 1).toISOString(), type: "session_meta", payload: { cwd: "/x" } }),
+      tc(new Date(2026, 8, 23, 2, 0), 100),
+      ...Array(400).fill(filler),
+      tc(new Date(2026, 8, 23, 8, 0), 900),
+    ].join("\n") + "\n");
+    const now = new Date(2026, 8, 23, 12, 0);
+    fs.utimesSync(file, now, now);
+    expect(codexUsageSnapshot(now, root).total).toBe(900);
+  });
+
+  it("takes plan windows from the newest rollout of ANY date, and a past reset reads 0%", () => {
+    // Nothing was written today, yet the bars must still show the account.
+    const root = mkRoot();
+    const dir = path.join(root, "2026", "09", "20");
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, "rollout-old.jsonl");
+    const now = new Date(2026, 8, 23, 12, 0);
+    const past = Math.floor(now.getTime() / 1000) - 3_600; // the 5h window already rolled over
+    const future = Math.floor(now.getTime() / 1000) + 86_400;
+    fs.writeFileSync(file, tc(new Date(2026, 8, 20, 11), 50, {
+      limit_id: "codex", plan_type: "plus",
+      primary: { used_percent: 99, window_minutes: 300, resets_at: past },
+      secondary: { used_percent: 31, resets_at: future }, // no window_minutes: still kept
+    }) + "\n");
+    const then = new Date(2026, 8, 20, 11);
+    fs.utimesSync(file, then, then);
+    const u = codexUsageSnapshot(now, root);
+    expect(u.total).toBe(0); // not today's
+    expect(u.planType).toBe("plus");
+    expect(u.limits).toEqual([
+      { id: "primary", usedPercent: 0, windowMinutes: 300, resetsAt: new Date(past * 1000).toISOString() },
+      { id: "secondary", usedPercent: 31, windowMinutes: null, resetsAt: new Date(future * 1000).toISOString() },
+    ]);
+  });
+});
+
 describe("codex CLI 26.x: the conversation moved into item_completed", () => {
   it("reads AgentMessage/UserMessage items (the old flat events are gone)", () => {
     // Codex 26.x stopped emitting event_msg/agent_message and now wraps every

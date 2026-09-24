@@ -117,6 +117,35 @@ describe("createUsageProbe", () => {
     await expect(probe.getLimits()).resolves.toEqual([]);
   });
 
+  it("aborts a stalled fetch and keeps serving the last-good bars", async () => {
+    const credentialsPath = credsFile("t");
+    let calls = 0;
+    let sawSignal = false;
+    const probe = createUsageProbe({
+      log: silentLog,
+      credentialsPath,
+      cacheMs: 0,
+      fetchTimeoutMs: 50,
+      fetchFn: (async (_url: string, init: RequestInit) => {
+        calls++;
+        if (calls === 1) return okResponse([{ kind: "session", group: "session", percent: 33, resets_at: "t" }]);
+        // A connection that never answers: only the abort signal ends it.
+        sawSignal = init.signal instanceof AbortSignal;
+        return new Promise((_resolve, reject) => {
+          init.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+        });
+      }) as unknown as typeof fetch,
+    });
+    expect((await probe.getSnapshot()).status).toBe("ok");
+    const started = Date.now();
+    const stalled = await probe.getSnapshot();
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(sawSignal).toBe(true);
+    expect(stalled.status).toBe("unavailable");
+    expect(stalled.stale).toBe(true);
+    expect(stalled.limits[0].percent).toBe(33);
+  });
+
   it("caches within the TTL", async () => {
     let calls = 0;
     const probe = createUsageProbe({
