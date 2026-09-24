@@ -1129,6 +1129,13 @@
     /* Flip: a low card's menu opens UPWARD (set by the kebab handler when the
        space below can't hold it). */
     .agent-menu.drop-up { top: auto; bottom: calc(100% + 5px); transform-origin: bottom right; }
+    .agent-menu.floating {
+      position: fixed;
+      right: auto;
+      bottom: auto;
+      z-index: 200;
+      overflow-y: auto;
+    }
     .agent-menu:not([hidden]) {
       padding: 5px;
       background: var(--bg-elev-2);
@@ -1154,8 +1161,15 @@
       white-space: nowrap;
       background: transparent;
       color: var(--text-dim);
+      /* Stated here because some items are ALSO .nudge-btn / .mute-toggle /
+         .rename-btn / .remove-btn (hooks for their own behaviour), and that
+         small mono button style made those rows the odd ones out. */
+      font-family: var(--sans);
+      font-size: var(--fs-md);
+      line-height: 1.35;
     }
     .agent-menu .agent-menu-item:hover { background: var(--bg-hover); color: var(--text); border: none; }
+
     .agent-menu .agent-menu-item .mi-icon {
       flex: 0 0 auto;
       width: 16px;
@@ -1457,8 +1471,17 @@
       display: flex;
       align-items: center;
       gap: 4px;
-      flex-wrap: wrap;
+      /* One swipeable line at every width. Wrapping put the last group on a
+         second row even on a desktop (the head grew by a line per group). */
+      flex-wrap: nowrap;
+      overflow-x: auto;
+      scrollbar-width: none;
+      min-width: 0;
     }
+    .group-tabs::-webkit-scrollbar { display: none; }
+    .group-tabs > * { flex: 0 0 auto; white-space: nowrap; }
+    /* The caption keeps to one line and yields its room first. */
+    .feed-head .sub { flex: 0 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .group-tab {
       padding: 4px 9px;
       border: 0;
@@ -1950,8 +1973,37 @@
       padding: 2px 2px 8px;
     }
     .composer-thumbs[hidden] { display: none; }
-    .chat-attach { flex: 0 0 auto; }
-    .chat-attach:hover { color: var(--accent); border-color: var(--accent-line); }
+    /* The composer's controls share ONE fixed height and sit on the bottom
+       edge. Three of them used align-self: stretch, so they grew with every
+       line of text while the paperclip (added later without it) stayed small
+       and low — a row of mismatched buttons (owner's screenshot, 23/09). */
+    .chat-composer-row > .btn {
+      flex: none;
+      align-self: flex-end;
+      height: 38px;
+      min-height: 38px;
+      /* No display here: it would outrank .chat-stop's display:none (and the
+         [hidden] rules) and pin the stop button on screen. */
+      align-items: center;
+      justify-content: center;
+      line-height: 1;
+    }
+    .chat-attach, .chat-mic, .chat-send { display: inline-flex; }
+    .chat-mic[hidden] { display: none; }
+    /* Icon buttons (attach, mic): square and quiet until hovered. */
+    .chat-attach, .chat-mic {
+      width: 38px;
+      min-width: 38px;
+      padding: 0;
+      font-size: 15px;
+      border-color: transparent;
+      background: transparent;
+    }
+    .chat-attach:hover, .chat-mic:hover:not(:disabled) {
+      border-color: var(--border);
+      background: var(--bg-hover);
+      color: var(--text);
+    }
 
     .composer-thumb {
       position: relative;
@@ -2060,9 +2112,7 @@
        the textarea has no drop handler (it had one, and it double-attached). */
     #chat-composer.drop-target .chat-composer-inner { border-style: dashed; border-color: var(--accent); background: var(--accent-wash); }
     .chat-send {
-      flex: none;
-      align-self: stretch;
-      min-width: 64px;
+      min-width: 72px;
       padding: 0 14px;
       border-color: var(--accent-line);
       background: var(--accent-wash);
@@ -2076,13 +2126,10 @@
     /* Interrupt the open agent mid-turn — a danger square beside send, shown
        only while that agent is working. */
     .chat-stop {
-      flex: none;
-      align-self: stretch;
       display: none;
-      align-items: center;
-      justify-content: center;
-      min-width: 40px;
-      padding: 0 14px;
+      width: 38px;
+      min-width: 38px;
+      padding: 0;
       color: var(--danger);
       border-color: var(--danger);
       font-size: 12px;
@@ -2091,19 +2138,7 @@
     .chat-stop.visible { display: inline-flex; }
     .chat-stop:hover { background: var(--danger); border-color: var(--danger); color: #fff; }
     /* Dictation mic — quiet beside send; red and breathing while recording. */
-    .chat-mic {
-      flex: none;
-      align-self: stretch;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      min-width: 40px;
-      padding: 0 12px;
-      font-size: 13px;
-      line-height: 1;
-      border-color: transparent;
-    }
-    .chat-mic:hover:not(:disabled) { border-color: var(--border); background: var(--bg-hover); }
+    .chat-mic { font-size: 14px; }
     .chat-mic[hidden] { display: none; }
     /* Live waveform while dictating — your voice, visibly arriving (the
        watchdog's analyser drawn as marching bars, voice-note style). */
@@ -3682,6 +3717,9 @@
         width: min(var(--sidebar-w), 34vw);
         min-width: 212px;
       }
+      /* In a ~256px rail the "AGENTS" label pushed "+ agent" onto a second
+         line; the count pill beside it already says what the list is. */
+      .sidebar-head .eyebrow { display: none; }
       /* Uptime and version are ambient trivia. The online count is not. */
       .hub-metrics .metric:not(:first-child) { display: none; }
       .mcp-add code { max-width: 30ch; }
@@ -3708,6 +3746,9 @@
          collapsed), costing one row and expanding on a tap. */
       .wordmark, .hub-metrics { display: none; }
       .mcp-add code { max-width: 24ch; }
+      html.screen-open:not(.rail-peek) .sidebar { display: none; }
+      /* Peeking, the rail is the picker: give it the room. */
+      html.screen-open.rail-peek .sidebar { max-height: 70dvh; }
     }
 
     /* --- Narrow: the transcript header stops eating the transcript ------- */
@@ -3790,6 +3831,9 @@
       .screen-control-label { display: none; }
     }
     @media (hover: none) {
+      /* Enter / Shift Enter / Esc hints on a phone describe a keyboard it does
+         not have, and cost the composer a whole line. */
+      .composer-keys { display: none; }
       /* "open window" pops a Windows terminal on the HOST — a window nobody is
          near when this is open on a phone. Same call as the card's button. */
       #screen-window { display: none; }
@@ -4777,7 +4821,12 @@
         if (usageClaude.stale || limits.length === 0) {
           let message = "Usage temporarily unavailable";
           if (usageClaude.status === "rate_limited" && usageClaude.retryAt) {
-            message = `${limits.length ? "Last known · " : "Endpoint cooling down · "}retry in ${untilText(usageClaude.retryAt)}`;
+            // "retry in now" read like a stuck state; past the retry time the
+            // next poll is simply on its way.
+            const wait = untilText(usageClaude.retryAt);
+            message = `${limits.length ? "Last known · " : "Endpoint cooling down · "}${
+              wait === "now" ? "refreshing…" : `retry in ${wait}`
+            }`;
           } else if (usageClaude.status === "unauthorized") {
             message = "Open Claude once to refresh its sign-in";
           } else if (limits.length && usageClaude.updatedAt) {
@@ -6056,7 +6105,7 @@
       // the rebuild destroyed it mid-typing, which read as "it lets me start
       // typing and then kicks me out". The input only exists while editing —
       // Enter/Esc/blur all remove it, so the rail never stays frozen.
-      if (container.querySelector(".agent-menu:not([hidden]), .agent-rename-input")) return;
+      if (container.querySelector(".agent-rename-input") || document.querySelector(".agent-menu:not([hidden])")) return;
       // NOTHING TO DO IS THE COMMON CASE, and rebuilding anyway is what killed
       // the faces. Wiping the container REMOVES every card from the document,
       // and removing a node cancels its running CSS animations — so with 31
@@ -6831,16 +6880,13 @@
         // fell past the viewport / the rail's scrollport and looked truncated).
         // Measured with the menu already visible; falls back to drop-down when
         // above doesn't fit either.
-        if (!menu.hidden) {
-          menu.classList.remove("drop-up");
-          const menuH = menu.getBoundingClientRect().height;
-          const br = kebab.getBoundingClientRect();
-          const port = kebab.closest(".sidebar, aside")?.getBoundingClientRect() ??
-            { top: 0, bottom: window.innerHeight };
-          const fitsBelow = br.bottom + 5 + menuH <= Math.min(port.bottom, window.innerHeight);
-          const fitsAbove = br.top - 5 - menuH >= Math.max(port.top, 0);
-          if (!fitsBelow && fitsAbove) menu.classList.add("drop-up");
-        }
+        // The menu FLOATS over the page while open: moved to <body> and
+        // positioned against the viewport. Anchored inside the card it was
+        // clipped by the rail's own scroll box (half the menu vanished behind
+        // the usage card) and the cards below — each a stacking context of its
+        // own — painted their buttons ON TOP of it (owner's screenshots,
+        // 23/09). closeMenus() puts it back home.
+        if (!menu.hidden) floatMenu(menu, kebab, menuWrap);
       });
       menuWrap.append(kebab, menu);
 
@@ -6873,13 +6919,65 @@
     }
 
     /** One menu open at a time; outside click / Esc closes (wired once below). */
+    /** Lifts an open menu out to <body> and places it beside `anchor`. */
+    function floatMenu(menu, anchor, home) {
+      menu.__home = home;
+      menu.classList.remove("drop-up");
+      menu.classList.add("floating");
+      document.body.appendChild(menu);
+      menu.style.maxHeight = "";
+      const pad = 8;
+      const br = anchor.getBoundingClientRect();
+      // Layout size, not getBoundingClientRect: the menu's entrance animation
+      // starts scaled down, and a mid-animation rect said a 650px menu fit
+      // below when it ran 100px off the bottom.
+      const mr = { width: menu.offsetWidth, height: menu.offsetHeight };
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      // Right edges aligned with the kebab, kept on screen.
+      const left = Math.max(pad, Math.min(br.right - mr.width, vw - mr.width - pad));
+      let top;
+      if (br.bottom + 5 + mr.height <= vh - pad) top = br.bottom + 5;          // below
+      else if (br.top - 5 - mr.height >= pad) top = br.top - 5 - mr.height;   // above
+      else {
+        // Neither fits (a phone in landscape): as tall as the screen allows,
+        // scrolling inside.
+        top = pad;
+        menu.style.maxHeight = `${vh - pad * 2}px`;
+      }
+      // Whatever the branch, the menu stays on screen (an anchor scrolled
+      // partly out of the rail would otherwise drag it past an edge).
+      if (!menu.style.maxHeight) top = Math.max(pad, Math.min(top, vh - pad - mr.height));
+      menu.style.left = `${Math.round(left)}px`;
+      menu.style.top = `${Math.round(top)}px`;
+    }
+
     function closeMenus() {
       document.querySelectorAll(".agent-menu").forEach((m) => {
         m.hidden = true;
+        if (m.classList.contains("floating")) {
+          m.classList.remove("floating");
+          m.style.left = m.style.top = m.style.maxHeight = "";
+          // Back into its card — or gone, if the rail was rebuilt meanwhile.
+          if (m.__home && m.__home.isConnected) m.__home.appendChild(m);
+          else m.remove();
+        }
       });
       document.querySelectorAll(".agent-card.menu-open").forEach((c) => c.classList.remove("menu-open"));
     }
     document.addEventListener("click", closeMenus);
+    // A tap outside also closes it, caught in the CAPTURE phase: parts of the
+    // page stop the click from bubbling, and a floating menu left open there
+    // stayed on screen over the chat.
+    document.addEventListener(
+      "pointerdown",
+      (ev) => {
+        const t = ev.target;
+        if (t instanceof Element && t.closest(".agent-menu, .menu-btn")) return;
+        if (document.querySelector(".agent-menu:not([hidden])")) closeMenus();
+      },
+      true,
+    );
     document.addEventListener("keydown", (ev) => {
       if (ev.key === "Escape") closeMenus();
     });
@@ -7423,6 +7521,11 @@
       if (screenState.name === name) return;
       closeScreen({ keepTabs: true });
       screenState.name = name;
+      // On a folded phone the stacked rail took most of the screen from the
+      // conversation (~110px of chat was left). With an agent open the rail
+      // steps aside there; ☰ brings it back to switch (see setupRailToggle).
+      document.documentElement.classList.add("screen-open");
+      document.documentElement.classList.remove("rail-peek");
       if (draftHooks.restore) draftHooks.restore(name);
       clearUnseen(name); // opening its screen IS reading it
       if (!openTabs.includes(name)) openTabs.push(name);
@@ -7437,7 +7540,9 @@
       $("#screen-name").title = name; // the kebab id stays one hover away
       $("#composer-target").textContent = displayOf(name);
       $("#composer-target").title = name;
-      $("#chat-input").placeholder = "Write a dispatch… (drag or paste files)";
+      $("#chat-input").placeholder = window.matchMedia("(hover: hover)").matches
+        ? "Write a dispatch… (drag or paste files)"
+        : "Write a dispatch…";
 
       // Default to the CHAT casca. The mode is remembered across agents so
       // switching tabs keeps you in the view you chose.
@@ -7879,6 +7984,7 @@
       const had = screenState.name;
       screenState.name = null;
       screenState.presence = null;
+      document.documentElement.classList.remove("screen-open", "rail-peek");
       $("#screen").hidden = true;
       // Mid-switch: openScreen is about to show the next agent, so leaving
       // Messages visible for that instant would just flash the transcript.
@@ -11382,8 +11488,17 @@
       let start = false;
       try { start = localStorage.getItem(KEY) === "true"; } catch { /* private mode */ }
       apply(start);
+      const narrow = window.matchMedia("(max-width: 640px)");
       btn.addEventListener("click", () => {
-        const collapsed = !document.documentElement.classList.contains("rail-collapsed");
+        const root = document.documentElement;
+        // Folded phone with an agent open: the rail is already out of the way,
+        // so ☰ PEEKS it (to pick another agent) without touching the saved
+        // desktop preference. Picking an agent closes the peek.
+        if (narrow.matches && root.classList.contains("screen-open")) {
+          root.classList.toggle("rail-peek");
+          return;
+        }
+        const collapsed = !root.classList.contains("rail-collapsed");
         apply(collapsed);
         try { localStorage.setItem(KEY, String(collapsed)); } catch { /* private mode */ }
         // The terminal follows the panel's new width.
@@ -11537,8 +11652,10 @@
       // screenshot, with no source path) is staged through POST /api/uploads.
       // Says that files can be dropped or pasted — nothing did before, and the
       // cousin's app gets half its "it just works" from saying so.
+      // (…and only where a mouse can drag; a phone gets the 📎 instead.)
+      const canDrag = window.matchMedia("(hover: hover)").matches;
       const chatPlaceholder = () =>
-        screenState.name ? "Write a dispatch… (drag or paste files)" : "Write a message…";
+        screenState.name ? (canDrag ? "Write a dispatch… (drag or paste files)" : "Write a dispatch…") : "Write a message…";
       const attachments = new Map(); // "[📎 name]" -> absolute path on the hub
       let uploading = 0;
       const attachToken = (name) => `[📎 ${name}]`;

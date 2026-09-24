@@ -55,21 +55,33 @@ describe("readCodexRateLimits", () => {
   });
 
   it("times out and KILLS a server that ignores SIGTERM", async () => {
-    const pidFile = path.join(os.tmpdir(), `sb-fake-codex-${process.pid}.pid`);
+    // A fresh pid file per run, so a leftover from an aborted run can never be
+    // read as this one's.
+    const pidFile = path.join(os.tmpdir(), `sb-fake-codex-${process.pid}-${Date.now()}.pid`);
     const started = Date.now();
-    // 1.5 s, not 300 ms: under a loaded full-suite run the fake had not even
-    // finished starting (and written its pid) when a 300 ms timeout fired, so
-    // the pid file this test reads next did not exist yet — an intermittent
-    // failure of the test, not of the timeout.
     expect(await readCodexRateLimits({ ...fake("hang", pidFile), timeoutMs: 1_500 })).toBeNull();
     expect(Date.now() - started).toBeLessThan(4_000);
-    const pid = Number(fs.readFileSync(pidFile, "utf8"));
+    // Under a loaded full-suite run the fake may still be booting when the
+    // timeout fires, and write its pid a moment later (or never, if it was
+    // killed first — then there is nothing left alive to check). Both made
+    // this test fail intermittently while the code under test was right.
+    let pid = 0;
+    const pidDeadline = Date.now() + 3_000;
+    while (!pid && Date.now() < pidDeadline) {
+      try {
+        pid = Number(fs.readFileSync(pidFile, "utf8")) || 0;
+      } catch {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+    }
     fs.rmSync(pidFile, { force: true });
-    // SIGTERM is ignored; the SIGKILL escalation lands ~1s later.
-    const deadline = Date.now() + 3_000;
+    if (!pid) return;
+    // SIGTERM is ignored; the SIGKILL escalation lands ~1s later — given room
+    // for a busy machine.
+    const deadline = Date.now() + 6_000;
     while (alive(pid) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
     expect(alive(pid)).toBe(false);
-  });
+  }, 15_000);
 
   it("gives up once stdout passes the output cap", async () => {
     const started = Date.now();

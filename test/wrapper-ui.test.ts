@@ -220,7 +220,9 @@ describe("wrapper wake loading state", () => {
   it("the rail rebuild spares an open menu AND an active rename input", () => {
     // The activity poll re-renders every ~2.5s; a rebuild mid-typing
     // destroyed the rename/nickname input ("it kicks me out").
-    expect(html).toContain('querySelector(".agent-menu:not([hidden]), .agent-rename-input")');
+    // (The open-menu check looks at the whole document now: an open menu
+    // floats in <body>, outside the rail.)
+    expect(html).toContain('container.querySelector(".agent-rename-input") || document.querySelector(".agent-menu:not([hidden])")');
   });
 });
 
@@ -2222,5 +2224,63 @@ describe("the board as a phone app", () => {
     const label = embeddedFunction<(m: unknown) => string>("usageWindowLabel");
     expect(label(null)).toBe("window");
     expect(label(300)).toBe("5h window");
+  });
+});
+
+/**
+ * UI pass after the owner's screenshot of the composer (23/09): buttons that
+ * grew with the text, a paperclip smaller than its neighbours, and the rest of
+ * what the same look at every screen turned up.
+ */
+describe("the UI pass", () => {
+  it("gives every composer control one fixed height, bottom-aligned", () => {
+    const rule = styles.match(/\.chat-composer-row > \.btn \{[\s\S]*?\}/)?.[0] ?? "";
+    expect(rule).toContain("height: 38px");
+    expect(rule).toContain("align-self: flex-end");
+    // Stretching is what made them grow with each line of text.
+    expect(styles).not.toMatch(/\.chat-(send|stop|mic) \{[^}]*align-self: stretch/);
+    // And the shared rule must not set display, or it pins the stop button on
+    // (its own comment explains that, so comments are stripped first).
+    expect(rule.replace(/\/\*[\s\S]*?\*\//g, "")).not.toMatch(/display:/);
+  });
+
+  it("floats the agent menu over the page and puts it back on close", () => {
+    expect(script).toContain("function floatMenu(menu, anchor, home)");
+    expect(script).toContain("document.body.appendChild(menu)");
+    // Measured by layout, not by a rect taken mid entrance-animation.
+    expect(script).toContain("{ width: menu.offsetWidth, height: menu.offsetHeight }");
+    expect(script).toContain("m.__home.appendChild(m)");
+    expect(styles).toMatch(/\.agent-menu\.floating \{[^}]*position: fixed/);
+  });
+
+  it("closes an open menu on a tap anywhere, even where clicks stop bubbling", () => {
+    expect(script).toMatch(/"pointerdown",[\s\S]{0,300}closeMenus\(\);[\s\S]{0,40}true,/);
+  });
+
+  it("gives every menu row the same type, whatever hook class it carries", () => {
+    const rule = styles.match(/\.agent-menu \.agent-menu-item \{[\s\S]*?\}/)?.[0] ?? "";
+    expect(rule).toContain("font-family: var(--sans)");
+    expect(rule).toContain("font-size: var(--fs-md)");
+  });
+
+  it("keeps group tabs on one swipeable line at every width", () => {
+    const rule = styles.match(/\n    \.group-tabs \{[\s\S]*?\}/)?.[0] ?? "";
+    expect(rule).toContain("flex-wrap: nowrap");
+    expect(rule).toContain("overflow-x: auto");
+  });
+
+  it("gives the conversation the folded screen when an agent is open", () => {
+    // The stacked rail left ~110px of chat on a 412px phone.
+    expect(styles).toMatch(/html\.screen-open:not\(\.rail-peek\) \.sidebar \{ display: none; \}/);
+    expect(script).toContain('root.classList.toggle("rail-peek")');
+  });
+
+  it("drops keyboard hints and the drag hint on a touch screen", () => {
+    expect(styles).toMatch(/@media \(hover: none\) \{[\s\S]{0,300}\.composer-keys \{ display: none; \}/);
+    expect(script).toContain('window.matchMedia("(hover: hover)").matches');
+  });
+
+  it("says 'refreshing' instead of 'retry in now'", () => {
+    expect(script).toContain('wait === "now" ? "refreshing…"');
   });
 });
