@@ -384,29 +384,71 @@ export function parseConversation(lines: string[]): ChatItem[] {
 // ---------------------------------------------------------------------------
 
 export interface ContextUsage {
-  /** Tokens that will be re-sent on the next turn (prompt + cache + last output). */
+  /** Tokens the next request will carry (prompt + cache; output excluded). */
   used: number;
-  /** The model's context window — see the inference note in contextUsageFrom. */
+  /** The model's context window — see contextWindowFor. */
   window: number;
   model: string | null;
+}
+
+/** The window assumed for a model nobody mapped (tokens). */
+export const DEFAULT_CONTEXT_WINDOW = 200_000;
+const LONG_CONTEXT_WINDOW = 1_000_000;
+
+/**
+ * Model families that run with the 1M window. Ported from the claudinei
+ * reference table and checked against the ids this machine's transcripts
+ * actually record in message.model: claude-opus-5, claude-opus-5-5,
+ * claude-opus-4-6/7/8, claude-fable-5, claude-fable-5-1, claude-sonnet-5,
+ * claude-sonnet-4-6, and the explicit "claude-opus-5[1m]" variant.
+ *
+ * Outside this list the answer is the conservative 200k (Haiku, Opus 4.5 and
+ * older): underestimating shows the gauge fuller than it is — never emptier.
+ */
+const LONG_CONTEXT: RegExp[] = [
+  /^(fable|mythos)$/,
+  /(fable|mythos)-\d/,
+  /^opus$/, /opus[-_ ]?5\b/, /opus[-_ ]?4[-_.]?[678]\b/,
+  /^sonnet$/, /sonnet[-_ ]?5\b/, /sonnet[-_ ]?4[-_.]?6\b/,
+];
+
+/**
+ * A model id's context window. The CLI's "[1m]" suffix is the 1M window
+ * switched on explicitly and wins outright; Haiku is checked before the long
+ * families because it is current-generation yet 200k.
+ */
+export function contextWindowFor(model: string | null | undefined): number {
+  const m = (model ?? "").trim().toLowerCase();
+  if (!m) return DEFAULT_CONTEXT_WINDOW;
+  if (m.includes("[1m]")) return LONG_CONTEXT_WINDOW;
+  if (m.includes("haiku")) return DEFAULT_CONTEXT_WINDOW;
+  return LONG_CONTEXT.some((re) => re.test(m)) ? LONG_CONTEXT_WINDOW : DEFAULT_CONTEXT_WINDOW;
 }
 
 /**
  * Reads the most recent `usage` out of transcript lines, newest first.
  *
- * `used` sums the four parts that make up what the next request carries:
- * fresh input, freshly cached input, cache reads, and the output just
- * produced. Cache reads dominate in a long session and are the whole point —
- * they are the conversation itself, not an optimisation detail.
+ * `used` = fresh input + freshly cached input + cache reads — what that
+ * request carried, i.e. the whole conversation up to it. Cache reads dominate
+ * in a long session and are the whole point. Output tokens are EXCLUDED, to
+ * match the Claude CLI's own meter (and the reference implementation): the
+ * reply is counted once it comes back as input on the next turn.
  *
- * The WINDOW is inferred rather than read: the transcript records the model as
- * "claude-opus-5" whether it runs with the 200k window or the 1M one, and the
- * distinction is invisible there. A session already past 200k is provably on
- * the large window; anything else is assumed standard. Wrong only in one
- * direction (a 1M session under 200k reads as "nearly full" instead of "barely
- * started"), and it corrects itself the moment it crosses.
+ * Sidechain lines (subagent transcripts, isSidechain:true) are skipped: their
+ * usage describes the subagent's own window, not this conversation's.
+ *
+ * The window comes from the model id (contextWindowFor). A session whose use
+ * already exceeds that is provably on a bigger window, so it is bumped to 1M
+ * rather than shown past 100%.
+ *
+ * `engine: "codex"` reads a Codex rollout instead (codexContextFrom), so a
+ * caller holding either kind of transcript has one entry point.
  */
-export function contextUsageFrom(lines: readonly string[]): ContextUsage | null {
+export function contextUsageFrom(
+  lines: readonly string[],
+  engine: "claude" | "codex" = "claude",
+): ContextUsage | null {
+  if (engine === "codex") return codexContextFrom(lines);
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i];
     if (!line || !line.includes('"usage"')) continue;
@@ -416,6 +458,7 @@ export function contextUsageFrom(lines: readonly string[]): ContextUsage | null 
     } catch {
       continue; // a corrupt line is skipped, never fatal (store's rule)
     }
+    if (rec.isSidechain === true) continue;
     const message = rec.message as Record<string, unknown> | undefined;
     const usage = message?.usage as Record<string, unknown> | undefined;
     if (!usage) continue;
@@ -426,11 +469,56 @@ export function contextUsageFrom(lines: readonly string[]): ContextUsage | null 
     const used =
       n("input_tokens") +
       n("cache_creation_input_tokens") +
-      n("cache_read_input_tokens") +
-      n("output_tokens");
+      n("cache_read_input_tokens");
     if (used <= 0) continue;
     const model = typeof message?.model === "string" ? (message.model as string) : null;
-    return { used, window: used > 200_000 ? 1_000_000 : 200_000, model };
+    const byModel = contextWindowFor(model);
+    return { used, window: used > byModel ? Math.max(byModel, LONG_CONTEXT_WINDOW) : byModel, model };
   }
   return null;
+}
+
+/**
+ * The same reading for a Codex rollout. Codex's token_count events say it
+ * outright — no table needed (verified on real rollouts, codex-cli 0.154.0):
+ *   {type:"event_msg", payload:{type:"token_count", info:{
+ *     last_token_usage:{total_tokens, ...}, model_context_window: 258400 }}}
+ * `last_token_usage.total_tokens` is the last request's size (the conversation
+ * as it stood), and `model_context_window` is the session's ACTIVE window
+ * (which can be smaller than the model's published maximum). No window → null:
+ * the gauge hides rather than borrowing Claude's numbers. The model is taken
+ * from the newest turn_context line when one is in the same batch.
+ */
+export function codexContextFrom(lines: readonly string[]): ContextUsage | null {
+  let found: { used: number; window: number } | null = null;
+  let model: string | null = null;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    if (!line) continue;
+    const isCount = !found && line.includes('"token_count"');
+    const isTurn = found && line.includes('"turn_context"');
+    if (!isCount && !isTurn) continue;
+    let rec: { type?: unknown; payload?: Record<string, unknown> };
+    try {
+      rec = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const p = rec.payload;
+    if (!p || typeof p !== "object") continue;
+    if (isCount) {
+      if (p.type !== "token_count") continue;
+      const info = p.info as Record<string, unknown> | null | undefined;
+      const win = info?.model_context_window;
+      const last = info?.last_token_usage as Record<string, unknown> | undefined;
+      const used = last?.total_tokens;
+      if (typeof win !== "number" || !Number.isFinite(win) || win <= 0) continue;
+      if (typeof used !== "number" || !Number.isFinite(used) || used <= 0) continue;
+      found = { used, window: win };
+    } else if (rec.type === "turn_context" && typeof p.model === "string") {
+      model = p.model;
+      break;
+    }
+  }
+  return found ? { ...found, model } : null;
 }

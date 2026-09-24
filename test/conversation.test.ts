@@ -5,7 +5,9 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  codexContextFrom,
   contextUsageFrom,
+  contextWindowFor,
   cleanUserText,
   parseConversation,
   projectDirForCwd,
@@ -174,11 +176,12 @@ describe("parseConversation", () => {
 describe("contextUsageFrom — how full the window is", () => {
   // Claude Code stamps `usage` on every assistant message; the LAST one
   // describes what carries into the next turn. Cache reads dominate a long
-  // session and ARE the conversation, so they count.
-  const line = (usage: Record<string, unknown>, model = "claude-opus-5") =>
-    JSON.stringify({ type: "assistant", message: { model, usage } });
+  // session and ARE the conversation, so they count. Output does not — the
+  // CLI's own meter leaves it out, and so do we.
+  const line = (usage: Record<string, unknown>, model = "claude-opus-5", extra: Record<string, unknown> = {}) =>
+    JSON.stringify({ type: "assistant", ...extra, message: { model, usage } });
 
-  it("sums prompt + cache + output from the most recent stamp", () => {
+  it("sums prompt + cache from the most recent stamp, excluding output", () => {
     const usage = contextUsageFrom([
       line({ input_tokens: 5, cache_read_input_tokens: 100, output_tokens: 10 }),
       line({
@@ -188,31 +191,107 @@ describe("contextUsageFrom — how full the window is", () => {
         output_tokens: 640,
       }),
     ]);
-    expect(usage).toEqual({ used: 293_309, window: 1_000_000, model: "claude-opus-5" });
+    expect(usage).toEqual({ used: 292_669, window: 1_000_000, model: "claude-opus-5" });
   });
 
-  it("a session under 200k is read as the standard window", () => {
+  it("takes the window from the model, not from how full the session is", () => {
+    // Opus 5 runs with 1M even while it is still under 200k — the old guess
+    // (">200k means 1M") showed a fresh 1M session as nearly full.
     expect(contextUsageFrom([line({ cache_read_input_tokens: 40_000, output_tokens: 500 })])).toEqual({
-      used: 40_500,
-      window: 200_000,
+      used: 40_000,
+      window: 1_000_000,
       model: "claude-opus-5",
     });
+    expect(contextUsageFrom([line({ cache_read_input_tokens: 40_000 }, "claude-haiku-4-5")])?.window).toBe(200_000);
+  });
+
+  it("an unmapped model past 200k is bumped to 1M rather than shown over 100%", () => {
+    expect(contextUsageFrom([line({ cache_read_input_tokens: 300_000 }, "claude-mystery-1")])?.window).toBe(1_000_000);
+    expect(contextUsageFrom([line({ cache_read_input_tokens: 30_000 }, "claude-mystery-1")])?.window).toBe(200_000);
+  });
+
+  it("skips sidechain (subagent) stamps", () => {
+    expect(
+      contextUsageFrom([
+        line({ cache_read_input_tokens: 70_000 }),
+        line({ cache_read_input_tokens: 5 }, "claude-haiku-4-5", { isSidechain: true }),
+      ]),
+    ).toEqual({ used: 70_000, window: 1_000_000, model: "claude-opus-5" });
   });
 
   it("skips corrupt lines and lines without usage, and never throws", () => {
     expect(
       contextUsageFrom([
-        line({ cache_read_input_tokens: 10 }),
+        line({ cache_read_input_tokens: 10 }, "claude-opus-4-5"),
         '{"broken": ',
         JSON.stringify({ type: "user", message: { content: "hi" } }),
       ]),
-    ).toEqual({ used: 10, window: 200_000, model: "claude-opus-5" });
+    ).toEqual({ used: 10, window: 200_000, model: "claude-opus-4-5" });
   });
 
   it("no usage anywhere → null (the dashboard then shows no gauge)", () => {
     expect(contextUsageFrom([])).toBeNull();
     expect(contextUsageFrom(['{"type":"user"}'])).toBeNull();
-    // A zero-token stamp is not a reading either.
-    expect(contextUsageFrom([line({ input_tokens: 0, output_tokens: 0 })])).toBeNull();
+    // A zero-token stamp is not a reading either (output alone is not context).
+    expect(contextUsageFrom([line({ input_tokens: 0, output_tokens: 50 })])).toBeNull();
+  });
+});
+
+describe("contextWindowFor — the model table", () => {
+  it("maps the ids this machine's transcripts actually record", () => {
+    for (const m of [
+      "claude-opus-5", "claude-opus-5-5", "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6",
+      "claude-fable-5", "claude-fable-5-1", "claude-sonnet-5", "claude-sonnet-4-6", "claude-opus-5[1m]",
+      "opus", "sonnet", "fable",
+    ]) {
+      expect(contextWindowFor(m), m).toBe(1_000_000);
+    }
+    for (const m of ["claude-haiku-4-5", "claude-opus-4-5", "claude-opus-4-1", "claude-sonnet-4-5", "", null, undefined]) {
+      expect(contextWindowFor(m), String(m)).toBe(200_000);
+    }
+  });
+
+  it("the [1m] suffix wins even on an otherwise-200k model", () => {
+    expect(contextWindowFor("claude-sonnet-4-5[1m]")).toBe(1_000_000);
+  });
+});
+
+describe("codexContextFrom — the Codex gauge", () => {
+  // Shapes from a real rollout (codex-cli 0.154.0).
+  const count = (last: number, window: number | null) =>
+    JSON.stringify({
+      type: "event_msg",
+      payload: {
+        type: "token_count",
+        info: {
+          total_token_usage: { total_tokens: 977_431 },
+          last_token_usage: { input_tokens: last - 553, output_tokens: 553, total_tokens: last },
+          ...(window === null ? {} : { model_context_window: window }),
+        },
+      },
+    });
+  const turn = (model: string) => JSON.stringify({ type: "turn_context", payload: { model, cwd: "/x" } });
+
+  it("reads the last request size against the session's active window", () => {
+    expect(codexContextFrom([turn("gpt-6-astra"), count(50_000, 258_400), count(92_449, 258_400)])).toEqual({
+      used: 92_449,
+      window: 258_400,
+      model: "gpt-6-astra",
+    });
+  });
+
+  it("is reachable through contextUsageFrom(lines, \"codex\") with the same shape", () => {
+    const lines = [count(1_000, 258_400)];
+    expect(contextUsageFrom(lines, "codex")).toEqual({ used: 1_000, window: 258_400, model: null });
+    // The claude reader finds nothing in a rollout.
+    expect(contextUsageFrom(lines)).toBeNull();
+  });
+
+  it("no window → null (never borrows Claude's numbers); info:null is skipped", () => {
+    expect(codexContextFrom([count(1_000, null)])).toBeNull();
+    expect(
+      codexContextFrom([count(2_000, 258_400), JSON.stringify({ type: "event_msg", payload: { type: "token_count", info: null } })]),
+    ).toEqual({ used: 2_000, window: 258_400, model: null });
+    expect(codexContextFrom(["{bad", ""])).toBeNull();
   });
 });
