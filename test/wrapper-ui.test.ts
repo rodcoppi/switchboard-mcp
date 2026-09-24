@@ -544,9 +544,20 @@ describe("drop origin resolution", () => {
   });
 
   it("staged tokens get whitespace seams — no welded a.xlsm/home/… runs", () => {
+    // Every token (pending placeholder and final) goes in through insertAtCaret.
+    const insert = script.match(/function insertAtCaret[\s\S]*?\n      }/)?.[0] ?? "";
+    expect(insert).toContain("const before = at > 0");
+    expect(insert).toContain("before + text + after");
     const src = script.match(/async function attachFiles[\s\S]*?\n      }/)?.[0] ?? "";
-    expect(src).toContain("const before = at > 0");
-    expect(src).toContain("before + tok + after");
+    expect(src).toContain("insertAtCaret(pending)");
+  });
+
+  it("shows a token at once and resolves the files in parallel", () => {
+    // Serial, invisible resolution made five screenshots take ~12 s to show
+    // anything (compared against the cousin's app, 23/09).
+    const src = script.match(/async function attachFiles[\s\S]*?\n      }/)?.[0] ?? "";
+    expect(src).toContain("Promise.all(jobs.map(");
+    expect(src.indexOf("insertAtCaret(pending)")).toBeLessThan(src.indexOf("Promise.all("));
   });
 });
 
@@ -2114,5 +2125,48 @@ describe("the rail can be closed and reopened", () => {
     expect(script).toMatch(/"sb\.railCollapsed"/);
     // Closing the rail widens the panel; the xterm grid must follow.
     expect(script).toMatch(/if \(screenState\.fit\) scheduleScreenFit\(\)/);
+  });
+});
+
+/**
+ * From the comparison with the cousin's app (23/09): the composer bugs that
+ * the side-by-side exposed.
+ */
+describe("the composer, per agent and safe to paste into", () => {
+  it("only reads pasted text as paths when EVERY line is a path", () => {
+    // A log with one /home/… line in it used to become that one attachment,
+    // and the rest of the paste was thrown away.
+    const src = script.match(/function pathsFromTransfer[\s\S]*?\n      }/)?.[0] ?? "";
+    expect(src).toMatch(/lines\.every\(\(l\) => localFileTarget\(l\)\)/);
+  });
+
+  it("keeps one draft per agent, attachments included, and drops it on send", () => {
+    expect(script).toContain('const DRAFTS_KEY = "sb.drafts"');
+    // The token→path map travels with the text, or a restored token is sent
+    // literally with no path behind it.
+    expect(script).toMatch(/att: \[\.\.\.attachments\]/);
+    // openScreen swaps the composer to the opened agent's own draft.
+    const open = script.match(/function openScreen\(name\)[\s\S]*?\n    }/)?.[0] ?? "";
+    expect(open).toContain("draftHooks.restore(name)");
+    expect(script).toContain("draftHooks.clear(name)");
+  });
+
+  it("keeps ↑ history per agent and across reloads", () => {
+    expect(script).toContain('const HISTORY_KEY = "sb.sentHistory"');
+    expect(script).toMatch(/historyByAgent\[name\] = list\.slice\(-30\)/);
+  });
+
+  it("never acts on keys from a keyboard still composing a word", () => {
+    // Gboard / voice typing report their keys mid-composition; that Enter
+    // sent half a word.
+    expect(script).toContain("if (ev.isComposing || ev.keyCode === 229) return;");
+  });
+
+  it("quotes an attachment path that contains whitespace", () => {
+    expect(script).toMatch(/join\(\/\\s\/\.test\(p\) \? `"\$\{p\}"` : p\)/);
+  });
+
+  it("names a dropped folder instead of failing on it", () => {
+    expect(script).toContain("Folders can't be attached");
   });
 });

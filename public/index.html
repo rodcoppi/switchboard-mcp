@@ -2394,8 +2394,11 @@
     #screen-chat.drop-target,
     #chat-composer.drop-target,
     #screen-term-wrap.drop-target {
-      outline: 2px dashed var(--border-strong);
+      /* Accent, not grey: a zinc outline on a zinc panel did not read as "drop
+         here", so a drop felt like a gamble. */
+      outline: 2px dashed var(--accent);
       outline-offset: -6px;
+      background: color-mix(in srgb, var(--accent) 5%, transparent);
     }
     .nudge-quotes { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
     .nudge-quote {
@@ -3980,7 +3983,7 @@
             <div class="chat-composer-row">
               <textarea id="chat-input" name="message" rows="1" autocomplete="off"
                 aria-label="Message this agent"
-                placeholder="Write a dispatch…"></textarea>
+                placeholder="Write a dispatch… (drag or paste files)"></textarea>
               <canvas class="chat-wave" id="chat-wave" hidden aria-hidden="true"></canvas>
               <!-- The native file picker: on a phone this is the camera / photo
                    library / files sheet. accept is a HINT, not a wall — a phone
@@ -7237,6 +7240,9 @@
     // beside screenState because loadSkills() (which openScreen calls) and the
     // menu itself (wired inside boot) both read it.
     const skillState = { name: null, items: [] };
+    // Per-agent composer drafts. The composer (and its attachment map) lives
+    // inside boot(); openScreen lives out here — boot fills these in.
+    const draftHooks = { restore: null, clear: null };
 
     // Groups folded away in the rail. Page-local on purpose: which projects you
     // have collapsed right now is a view, not something the hub should store.
@@ -7305,6 +7311,7 @@
       if (screenState.name === name) return;
       closeScreen({ keepTabs: true });
       screenState.name = name;
+      if (draftHooks.restore) draftHooks.restore(name);
       clearUnseen(name); // opening its screen IS reading it
       if (!openTabs.includes(name)) openTabs.push(name);
 
@@ -7318,7 +7325,7 @@
       $("#screen-name").title = name; // the kebab id stays one hover away
       $("#composer-target").textContent = displayOf(name);
       $("#composer-target").title = name;
-      $("#chat-input").placeholder = "Write a dispatch…";
+      $("#chat-input").placeholder = "Write a dispatch… (drag or paste files)";
 
       // Default to the CHAT casca. The mode is remembered across agents so
       // switching tabs keeps you in the view you chose.
@@ -11358,7 +11365,10 @@
       // In that case the composer references the ORIGINAL absolute path — no
       // duplicate in ~/.switchboard. Only an in-memory clipboard image (a real
       // screenshot, with no source path) is staged through POST /api/uploads.
-      const chatPlaceholder = () => screenState.name ? "Write a dispatch…" : "Write a message…";
+      // Says that files can be dropped or pasted — nothing did before, and the
+      // cousin's app gets half its "it just works" from saying so.
+      const chatPlaceholder = () =>
+        screenState.name ? "Write a dispatch… (drag or paste files)" : "Write a message…";
       const attachments = new Map(); // "[📎 name]" -> absolute path on the hub
       let uploading = 0;
       const attachToken = (name) => `[📎 ${name}]`;
@@ -11373,11 +11383,24 @@
       function pathsFromTransfer(data) {
         if (!data) return [];
         const raw = [];
-        for (const type of ["text/uri-list", "text/plain"]) {
+        const flavour = (type) => {
           try {
-            const value = data.getData(type);
-            if (value) raw.push(...value.split(/\r?\n/));
-          } catch { /* the browser may gate one clipboard flavour */ }
+            return data.getData(type) || "";
+          } catch {
+            return ""; // the browser may gate one clipboard flavour
+          }
+        };
+        const uriList = flavour("text/uri-list");
+        if (uriList) raw.push(...uriList.split(/\r?\n/));
+        // Plain text counts as paths only when EVERY line of it is one. It
+        // used to be mined line by line: paste a log or a `find` listing with
+        // a single /home/… line in it and that path became an attachment while
+        // the rest of the paste was thrown away (found comparing with the
+        // cousin's app, 23/09, which only takes files from a paste).
+        const plain = flavour("text/plain");
+        if (plain) {
+          const lines = plain.split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
+          if (lines.length && lines.every((l) => localFileTarget(l))) raw.push(...lines);
         }
         for (const file of Array.from(data.files || [])) {
           // Electron exposes File.path; browsers generally do not. Honour it
@@ -11469,7 +11492,7 @@
         uploading += delta;
         const busy = uploading > 0;
         $("#chat-send").disabled = busy;
-        chatInput.placeholder = busy ? "Staging screenshot…" : chatPlaceholder();
+        chatInput.placeholder = busy ? "Attaching…" : chatPlaceholder();
       }
 
       async function uploadFile(file, name) {
@@ -11539,53 +11562,100 @@
         }
       }
 
+      /** Types `text` at the caret with whitespace seams, so two tokens never
+       *  weld into one unreadable "a.xlsm/home/…" run. */
+      function insertAtCaret(text) {
+        const v = chatInput.value;
+        const at = Math.min(chatInput.selectionStart ?? v.length, v.length);
+        const before = at > 0 && !/\s/.test(v[at - 1]) ? " " : "";
+        const after = at < v.length && !/\s/.test(v[at]) ? " " : "";
+        chatInput.value = v.slice(0, at) + before + text + after + v.slice(at);
+        const caret = at + before.length + text.length + after.length;
+        chatInput.setSelectionRange(caret, caret);
+        chatInput.dispatchEvent(new Event("input")); // autogrow + menus + draft
+      }
+
+      /** Swaps a pending placeholder for its final token (or removes it). */
+      function settlePending(pending, final) {
+        if (!chatInput.value.includes(pending)) return; // the operator deleted it
+        const caret = chatInput.selectionStart ?? chatInput.value.length;
+        const at = chatInput.value.indexOf(pending);
+        let next = chatInput.value.split(pending).join(final);
+        if (!final) next = next.replace(/[ \t]{2,}/g, " ");
+        chatInput.value = next;
+        const shift = caret > at ? final.length - pending.length : 0;
+        const pos = Math.max(0, Math.min(next.length, caret + shift));
+        chatInput.setSelectionRange(pos, pos);
+        chatInput.dispatchEvent(new Event("input"));
+      }
+
+      /**
+       * Attaches files that arrived as BYTES (a drop from Explorer, a paste, the
+       * 📎 picker) — the browser hides where they live.
+       *
+       * The contract (owner, twice): REFERENCE the original — an agent asked to
+       * edit a dropped spreadsheet must edit THAT file, not a copy — and never
+       * duplicate a heavy one; only a small file with no original anywhere
+       * (a pasted screenshot) is staged. What changed (23/09, comparing with the
+       * cousin's app, whose drop "just works") is the waiting: files used to be
+       * handled one at a time with NOTHING on screen, each paying up to 2.5 s of
+       * origin search, so five screenshots meant ~12 s of a composer that seemed
+       * to ignore the drop. Now a placeholder token lands at the caret the
+       * instant the files do, and every file resolves in parallel.
+       */
       async function attachFiles(files) {
         const list = Array.from(files || []);
         if (!list.length) return;
-        for (const file of list) {
+        const stamp = new Date().toTimeString().slice(0, 8).replace(/:/g, "");
+        const jobs = list.map((file, i) => {
+          const name = file.name && file.name !== "image.png"
+            ? file.name
+            : `pasted-${stamp}${list.length > 1 ? `-${i + 1}` : ""}.png`;
+          const pending = attachToken(`${name} …`);
+          insertAtCaret(pending);
+          return { file, name, pending };
+        });
+        await Promise.all(jobs.map(async ({ file, name, pending }) => {
           setUploading(+1);
+          let held = true;
+          const release = () => {
+            if (held) {
+              held = false;
+              setUploading(-1);
+            }
+          };
           try {
-            // The real terminal's drag contract: REFERENCE the original.
-            // Dropping a 2 GB video links the video where it lives — it does
-            // not grow a twin inside ~/.switchboard.
-            const origin = await resolveDropOrigin(file);
-            if (origin) {
-              insertPathAttachments([origin]);
-              toast(`Using the original: ${origin}`, "ok", 4500);
-              continue;
+            let filePath = await resolveDropOrigin(file);
+            let how = "original";
+            if (!filePath && file.size > STAGE_MAX_BYTES) {
+              // Heavy and nowhere to be found: point at it once, no copy made.
+              // The native dialog can sit behind the browser for minutes, and
+              // Send must not stay disabled while it does.
+              release();
+              filePath = await askForFile(file.name, fmtBytes(file.size));
+              how = "picked";
+            } else if (!filePath) {
+              const saved = await uploadFile(file, name);
+              filePath = saved.path;
+              how = "staged";
             }
-            // No original found. A heavy file is NEVER copied and NEVER
-            // refused — the operator points at it once in the native dialog
-            // and the composer references it where it lives.
-            if (file.size > STAGE_MAX_BYTES) {
-              const picked = await askForFile(file.name, fmtBytes(file.size));
-              if (picked) insertPathAttachments([picked]);
-              continue;
+            if (!filePath) {
+              settlePending(pending, "");
+              return;
             }
-            // No origin anywhere (pasted screenshot, attachment dragged
-            // straight out of a mail app): stage a small copy for 24h.
-            const stamp = new Date().toTimeString().slice(0, 8).replace(/:/g, "");
-            const name = file.name && file.name !== "image.png" ? file.name : `pasted-${stamp}.png`;
-            const saved = await uploadFile(file, name);
-            const tok = uniqueAttachToken(saved.name);
-            attachments.set(tok, saved.path);
-            const v = chatInput.value;
-            const at = Math.min(chatInput.selectionStart ?? v.length, v.length);
-            // Whitespace seams, like insertPathAttachments: two dropped files
-            // must never weld into one unreadable "a.xlsm/home/…" run.
-            const before = at > 0 && !/\s/.test(v[at - 1]) ? " " : "";
-            const after = at < v.length && !/\s/.test(v[at]) ? " " : "";
-            chatInput.value = v.slice(0, at) + before + tok + after + v.slice(at);
-            const caret = at + before.length + tok.length + after.length;
-            chatInput.setSelectionRange(caret, caret);
-            chatInput.dispatchEvent(new Event("input")); // autogrow + menus
-            toast(`${saved.name} staged for 24h (no original found to reference).`, "ok", 4500);
+            const label = how === "staged" ? name : filePath.split(/[\\/]/).filter(Boolean).pop() || name;
+            const tok = uniqueAttachToken(label);
+            attachments.set(tok, filePath);
+            settlePending(pending, tok);
+            if (how === "original") toast(`Using the original: ${filePath}`, "ok", 4500);
+            if (how === "staged") toast(`${name} staged for 24h (no original found to reference).`, "ok", 4500);
           } catch (err) {
+            settlePending(pending, "");
             toast(`Attachment failed: ${err && err.message ? err.message : err}`, "warn");
           } finally {
-            setUploading(-1);
+            release();
           }
-        }
+        }));
         chatInput.focus();
       }
 
@@ -11634,9 +11704,33 @@
           insertPathAttachments(paths);
           return;
         }
-        if (ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files.length) {
-          attachFiles(ev.dataTransfer.files);
+        const dt = ev.dataTransfer;
+        if (dt && dt.files && dt.files.length) {
+          // A folder arrives as a 0-byte File with no type, and used to die
+          // three steps later as "Attachment failed: Failed to fetch". Say what
+          // works instead.
+          const items = Array.from(dt.items || []);
+          const isDir = (i) => {
+            try {
+              const entry = i.webkitGetAsEntry && i.webkitGetAsEntry();
+              return !!(entry && entry.isDirectory);
+            } catch {
+              return false;
+            }
+          };
+          if (items.some(isDir)) {
+            toast("Folders can't be attached — paste the folder's path instead.", "warn", 5000);
+            const files = Array.from(dt.files).filter((_, i) => !items[i] || !isDir(items[i]));
+            if (files.length) attachFiles(files);
+            return;
+          }
+          attachFiles(dt.files);
+          return;
         }
+        // No files, no local paths: a link or text dragged from a web page. The
+        // agents can read a URL themselves, so type it rather than drop it.
+        const text = dt ? (dt.getData("text/uri-list") || dt.getData("text/plain") || "").trim() : "";
+        if (text) insertAtCaret(text.split(/\r?\n/).filter((l) => l && !l.startsWith("#")).join(" "));
       }
 
       async function terminalDrop(ev) {
@@ -11949,21 +12043,90 @@
       chatInput.addEventListener("blur", () => closeAgentRefMenu());
       // ---- end "%" agent-reference autocomplete ----------------------------
 
-      // Shell-style history of the operator's own sends (↑ recalls, ↓ steps back).
-      const sentHistory = [];
+      // Shell-style history of the operator's own sends (↑ recalls, ↓ steps back),
+      // PER AGENT and persisted. It was one in-memory list for the whole board:
+      // a reload emptied it, and ↑ on one agent recalled what you had sent to
+      // another (found comparing with the cousin's app, 23/09).
+      const HISTORY_KEY = "sb.sentHistory";
+      const loadStore = (key) => {
+        try {
+          const v = JSON.parse(localStorage.getItem(key) || "{}");
+          return v && typeof v === "object" && !Array.isArray(v) ? v : {};
+        } catch {
+          return {};
+        }
+      };
+      const saveStore = (key, value) => {
+        try {
+          localStorage.setItem(key, JSON.stringify(value));
+        } catch { /* private mode / quota: history is a convenience */ }
+      };
+      const historyByAgent = loadStore(HISTORY_KEY);
+      const sentHistoryOf = () => {
+        const list = screenState.name ? historyByAgent[screenState.name] : null;
+        return Array.isArray(list) ? list : [];
+      };
       let histIdx = -1; // -1 = not navigating
       const loadHist = (i) => {
         histIdx = i;
-        chatInput.value = i < 0 ? "" : sentHistory[i];
+        chatInput.value = i < 0 ? "" : sentHistoryOf()[i];
         autogrow();
         chatInput.setSelectionRange(chatInput.value.length, chatInput.value.length);
       };
       const pushSent = (text) => {
-        sentHistory.push(text);
-        if (sentHistory.length > 30) sentHistory.shift();
+        const name = screenState.name;
+        if (!name) return;
+        const list = sentHistoryOf().filter((t) => t !== text);
+        list.push(text);
+        historyByAgent[name] = list.slice(-30);
+        saveStore(HISTORY_KEY, historyByAgent);
         histIdx = -1;
       };
+
+      // One draft per agent, persisted. The composer is ONE textarea shared by
+      // every agent, and nothing used to swap it: text typed for one agent was
+      // still sitting there after you opened another — one careless Enter from
+      // sending it to the wrong agent — and a reload (or Android reclaiming a
+      // background tab) lost it. The attachment map travels with the text, or a
+      // restored "[📎 x]" token would be sent literally with no path behind it.
+      const DRAFTS_KEY = "sb.drafts";
+      const drafts = loadStore(DRAFTS_KEY);
+      let draftOwner = null;
+      const saveDraft = () => {
+        const name = draftOwner;
+        if (!name) return;
+        const text = chatInput.value;
+        if (text.trim()) {
+          drafts[name] = { text, att: [...attachments].filter(([tok]) => text.includes(tok)) };
+        } else {
+          delete drafts[name];
+        }
+        saveStore(DRAFTS_KEY, drafts);
+      };
+      draftHooks.restore = (name) => {
+        draftOwner = name;
+        histIdx = -1;
+        attachments.clear();
+        const d = name ? drafts[name] : null;
+        chatInput.value = d && typeof d.text === "string" ? d.text : "";
+        for (const pair of (d && Array.isArray(d.att) ? d.att : [])) {
+          if (Array.isArray(pair) && pair.length === 2) attachments.set(pair[0], pair[1]);
+        }
+        renderComposerThumbs();
+        autogrow();
+      };
+      draftHooks.clear = (name) => {
+        delete drafts[name];
+        saveStore(DRAFTS_KEY, drafts);
+      };
+      chatInput.addEventListener("input", saveDraft);
+      // The screen may already be open (a restored tab) before this ran.
+      if (screenState.name) draftHooks.restore(screenState.name);
+
       chatInput.addEventListener("keydown", (ev) => {
+        // An IME / Gboard / voice keyboard still COMPOSING a word reports its
+        // keys too; acting on that Enter sends a half-finished word.
+        if (ev.isComposing || ev.keyCode === 229) return;
         // The slash menu, when open, owns Enter/Tab/arrows/Esc — before the rest.
         if (slashKeydown(ev)) return;
         if (mentionKeydown(ev)) return;
@@ -11983,6 +12146,7 @@
           }
           return;
         }
+        const sentHistory = sentHistoryOf();
         if (ev.key === "ArrowUp" && sentHistory.length && (histIdx >= 0 || (chatInput.value === "" || chatInput.selectionStart === 0))) {
           ev.preventDefault();
           loadHist(histIdx < 0 ? sentHistory.length - 1 : Math.max(0, histIdx - 1));
@@ -12000,7 +12164,9 @@
         // Expand each [📎 name] token to its absolute path — normally the
         // original file; only pathless clipboard screenshots use staging.
         let raw = chatInput.value;
-        for (const [tok, p] of attachments) raw = raw.split(tok).join(p);
+        // A path with a space ("Captura de tela 2026-09-23.png") typed bare
+        // into the agent's prompt reads as several words; quote it.
+        for (const [tok, p] of attachments) raw = raw.split(tok).join(/\s/.test(p) ? `"${p}"` : p);
         const text = raw.trim();
         if (!name || text === "") return;
         // Only the CLI's OWN commands live on the terminal screen (their output
@@ -12020,6 +12186,7 @@
           await sendChatMessage(name, text);
           chatInput.value = "";
           attachments.clear();
+          draftHooks.clear(name);
           renderComposerThumbs();
           autogrow();
           if (isSlash) {

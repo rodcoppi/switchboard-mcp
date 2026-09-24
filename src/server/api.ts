@@ -1057,6 +1057,12 @@ export function createApiRouter(options: ApiOptions): express.Router {
       ),
       os.homedir(),
       ...downloadRoots(),
+      // The drop-origin search (resolveDropOrigin) looks in these, so a
+      // screenshot dragged in from Pictures resolves to its original there —
+      // and then its composer thumbnail 403'd here and silently vanished,
+      // because this list stopped at Downloads/Desktop (23/09). Whatever the
+      // resolver will reference, the dashboard must be able to show.
+      ...personalRoots(),
     ];
   }
 
