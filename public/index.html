@@ -8200,6 +8200,7 @@
       if (meta) meta.appendChild(el("span", "chat-sending", "sending…"));
       pend.appendChild(turn);
       view.scrollTop = view.scrollHeight;
+      return turn;
     }
 
     /**
@@ -12467,7 +12468,7 @@
         // won't log it (so won't mirror it back) until it finishes, and a chat
         // where your own message vanishes for 30s reads as broken. The optimistic
         // bubble is reconciled away when the real one arrives from the log.
-        if (!isSlash) echoUserMessage(text);
+        const echo = isSlash ? null : echoUserMessage(text);
         pushSent(text);
         try {
           await sendChatMessage(name, text);
@@ -12481,6 +12482,10 @@
             setScreenMode("terminal");
           }
         } catch (err) {
+          // The optimistic bubble said "sending…" forever after a failure, so a
+          // message that never left looked sent. It goes; the text is still in
+          // the composer to retry.
+          if (echo) echo.remove();
           toast(`Could not send: ${err && err.message ? err.message : err}`, "warn");
         } finally {
           chatInput.disabled = false;

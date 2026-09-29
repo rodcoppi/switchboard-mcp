@@ -15,6 +15,7 @@ import {
   createTmux,
   defaultExec,
   isSafePaneCommand,
+  SEND_KEYS_HEX_CHUNK,
   type ExecFn,
   type ExecResult,
 } from "../src/server/tmux.js";
@@ -386,5 +387,33 @@ describe.skipIf(!hasTmux)("defaultExec: sanitized error (real tmux)", () => {
     expect(String(err!.stack ?? "")).not.toContain(secretArg);
     // Still diagnosable: subcommand + tmux's own stderr.
     expect(err!.message).toMatch(/^tmux send-keys failed: /);
+  });
+});
+
+describe("sendKeysHex splits a long message into commands tmux accepts", () => {
+  // Past ~5 KB a single `send-keys -H` died with "command too long" — the
+  // tmux client caps one command's argv at ~16 KB and each byte is an
+  // argument. A long message from the dashboard just never arrived (29/09).
+  it("sends 10 KB as several commands, in order, bytes intact", async () => {
+    const { exec, calls } = fakeExec();
+    const tmux = createTmux({ exec });
+    const text = Buffer.from("acentuação — ".repeat(700)); // multibyte, ~10 KB
+    await tmux.sendKeysHex("sb-alpha", text);
+    const sends = calls.filter((c) => c.args[0] === "send-keys");
+    expect(sends.length).toBe(Math.ceil(text.length / SEND_KEYS_HEX_CHUNK));
+    for (const c of sends) {
+      const hex = c.args.slice(c.args.indexOf("-H") + 1);
+      expect(hex.length).toBeLessThanOrEqual(SEND_KEYS_HEX_CHUNK);
+      // Well inside the ~16 KB command cap.
+      expect(hex.join("\0").length).toBeLessThan(8 * 1024);
+    }
+    const joined = Buffer.from(sends.flatMap((c) => c.args.slice(c.args.indexOf("-H") + 1)).join(""), "hex");
+    expect(joined.equals(text)).toBe(true);
+  });
+
+  it("keeps a short message to a single command", async () => {
+    const { exec, calls } = fakeExec();
+    await createTmux({ exec }).sendKeysHex("sb-alpha", Buffer.from("hi\r"));
+    expect(calls.filter((c) => c.args[0] === "send-keys")).toHaveLength(1);
   });
 });

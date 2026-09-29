@@ -49,6 +49,10 @@ export type ExecFn = (file: string, args: string[]) => Promise<ExecResult>;
 
 const execFileAsync = promisify(execFile);
 
+/** Bytes per `send-keys -H` call: 2048 × 3 bytes of argv ≈ 6 KB, well inside
+ *  the ~16 KB the tmux client can hand the server in one command. */
+export const SEND_KEYS_HEX_CHUNK = 2048;
+
 /**
  * Default executor: execFile with an args ARRAY (P9), "tmux" from PATH.
  *
@@ -437,8 +441,17 @@ export function createTmux(options: TmuxOptions = {}): Tmux {
   async function sendKeysHex(session: string, bytes: Buffer): Promise<void> {
     assertValidSession(session);
     if (bytes.length === 0) return;
+    // In CHUNKS. The tmux client packs a command's whole argv into one message
+    // to the server, capped at ~16 KB, and every byte here is its own argument
+    // ("xx\0" = 3 bytes) — so anything past ~5 KB died with "command too long"
+    // and a long message from the dashboard simply never arrived (owner,
+    // 29/09: "o wrapper não envia msg grande"). Chunks are sent one after the
+    // other, awaited, so the bytes reach the pane in order; splitting a UTF-8
+    // sequence across two is harmless, the pane receives one byte stream.
     const hex = [...bytes].map((b) => b.toString(16).padStart(2, "0"));
-    await exec("tmux", ["send-keys", "-t", paneTarget(session), "-H", ...hex]);
+    for (let i = 0; i < hex.length; i += SEND_KEYS_HEX_CHUNK) {
+      await exec("tmux", ["send-keys", "-t", paneTarget(session), "-H", ...hex.slice(i, i + SEND_KEYS_HEX_CHUNK)]);
+    }
   }
 
   function attachControlClient(session: string, handlers: ControlClientHandlers): ControlClient {
