@@ -1335,7 +1335,8 @@ describe("the shape switcher actually switches", () => {
     // Comments stripped: the code explains WHY it does not call renderAgents,
     // and that sentence would otherwise fail the check it is documenting.
     const code = src.replace(/^\s*\/\/.*$/gm, "");
-    expect(code).toContain("paintBlobFace(");
+    // The faces engine morphs the live face in place.
+    expect(code).toContain("entry.face.setShape(next)");
     expect(code).not.toMatch(/renderAgents\(\)/);
   });
 
@@ -1662,7 +1663,7 @@ describe("faces: proportion, motion and reaction", () => {
     const at = script.indexOf("portrait.addEventListener");
     expect(at).toBeGreaterThan(-1);
     const handler = script.slice(at, at + 400);
-    expect(handler).toContain("bl-poke");
+    expect(handler).toContain('react("poke")');
     expect(handler).not.toContain("stopPropagation"); // the card still opens
     expect(handler).not.toContain("preventDefault");
   });
@@ -2282,5 +2283,35 @@ describe("the UI pass", () => {
 
   it("says 'refreshing' instead of 'retry in now'", () => {
     expect(script).toContain('wait === "now" ? "refreshing…"');
+  });
+});
+
+/**
+ * The dashboard's faces come from the JavaScript engine (public/faces/faces.js),
+ * tuned first in /faces-lab.html and applied on the owner's "go" (29/09).
+ */
+describe("the rail wears the faces engine", () => {
+  it("loads the engine and keeps one live face per agent across rebuilds", () => {
+    expect(script).toContain('import("/faces/faces.js")');
+    expect(script).toContain("const faceHosts = new Map()");
+    // The card gets the persisted host, not a fresh node each poll.
+    expect(script).toContain("portrait.appendChild(agentFaceHost(agent, blobState))");
+  });
+
+  it("colours the body with the agent's own pick, never the state", () => {
+    const fn = script.match(/function agentFaceHost[\s\S]*?\n    }/)?.[0] ?? "";
+    expect(fn).toContain("chatColor(agent.name) || Faces.DEFAULT_COLOR");
+    // A colour picked in the ⋯ menu lands on the face at once.
+    expect(script).toMatch(/entry\.face\.setColor\(color \|\| Faces\.DEFAULT_COLOR\)/);
+  });
+
+  it("turns state changes into reactions", () => {
+    const fn = script.match(/function faceReactionFor[\s\S]*?\n    }/)?.[0] ?? "";
+    expect(fn).toContain('return "cheer"');
+    expect(fn).toContain('if (to === "asking") return "perk"');
+  });
+
+  it("follows the dashboard's own reduced-motion override", () => {
+    expect(script).toContain("Faces.forceMotion(");
   });
 });

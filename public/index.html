@@ -785,6 +785,12 @@
     }
     .agent-portrait .agent-logo { width: 13px; height: 13px; opacity: 0.86; }
     /* Carrying a face, the frame would be a box around a box: drop it. */
+    /* The engine draws the body at ~72% of its box, leaving room for accents
+       ("!", "zzz", sparkles). In the 26px portrait that made a ~19px creature,
+       smaller than the old faces, so the host overflows the portrait by 6px a
+       side: a ~27px body, and the card's layout does not move. */
+    .sb-face-host { display: block; width: 100%; height: 100%; }
+    .agent-portrait.blob > .sb-face-host { width: 38px; height: 38px; margin: -6px; flex: none; }
     .agent-portrait.blob {
       border: 0;
       background: none;
@@ -5513,6 +5519,78 @@
       );
     }
 
+    // ---- faces: the JavaScript engine (public/faces/faces.js) ---------------
+    // Built and tuned on its own in /faces-lab.html first (owner: "fazer todas
+    // as animações em javascript e depois aplicar"). Springs instead of CSS
+    // keyframes, so a state change is a journey, not a cut; reactions stack
+    // on top; and the body is the AGENT's colour — chosen in its ⋯ menu, never
+    // changed by a state, which only moves its intensity and adds accents.
+    let Faces = null;
+    import("/faces/faces.js").then(
+      (mod) => {
+        Faces = mod;
+        Faces.forceMotion(document.documentElement.classList.contains("force-motion"));
+        lastRailSignature = ""; // the rail was drawn without faces: draw it again
+        renderAgents();
+      },
+      (err) => console.warn("[switchboard] faces engine failed to load", err),
+    );
+
+    /**
+     * One live face per agent, kept across rail rebuilds: the rail wipes its
+     * cards on every poll, but the face's host element is simply moved into the
+     * new card, so its springs, blink rhythm and running reaction carry on.
+     */
+    const faceHosts = new Map(); // name -> { host, face, state }
+
+    /**
+     * What a CHANGE of state does, beyond the new pose — ported from the old
+     * engine's transition table. The pose is the state; this is the moment.
+     */
+    function faceReactionFor(from, to) {
+      if (to === "asking") return "perk";
+      if (to === "error") return "startle";
+      if (to === "reply" && ["working", "speaking", "thinking"].includes(from)) return "cheer";
+      if ((to === "working" || to === "speaking") && ["idle", "reply"].includes(from)) return "bounce";
+      if ((to === "idle" || to === "working") && ["offline", "launching"].includes(from)) return "cheer";
+      return null;
+    }
+
+    /** The face host for an agent's card, created once, updated every render. */
+    function agentFaceHost(agent, stateKey) {
+      if (!Faces) return el("span", "sb-face-host");
+      let entry = faceHosts.get(agent.name);
+      const color = chatColor(agent.name) || Faces.DEFAULT_COLOR;
+      const shape = blobShapeOf(agent.name);
+      if (!entry) {
+        const host = el("span", "sb-face-host");
+        const face = Faces.createFace(host, { color, shape, state: stateKey, seed: agent.name, follow: "pointer" });
+        entry = { host, face, state: stateKey };
+        faceHosts.set(agent.name, entry);
+        return host;
+      }
+      entry.face.setColor(color);
+      entry.face.setShape(shape);
+      if (entry.state !== stateKey) {
+        const from = entry.state;
+        entry.state = stateKey;
+        entry.face.setState(stateKey);
+        const reaction = faceReactionFor(from, stateKey);
+        if (reaction) entry.face.react(reaction);
+      }
+      return entry.host;
+    }
+
+    /** Agents that are gone take their face with them. */
+    function pruneFaces() {
+      for (const [name, entry] of faceHosts) {
+        if (!state.agents.has(name)) {
+          entry.face.destroy();
+          faceHosts.delete(name);
+        }
+      }
+    }
+
     /** The face for an agent: built once, repainted from then on. */
     function blobFaceFor(name, stateKey, size, shapeName, variant) {
       const cached = blobNodes.get(name);
@@ -5595,6 +5673,7 @@
     function initMotionPreference() {
       const forced = localStorage.getItem(MOTION_KEY) === "1";
       if (forced) document.documentElement.classList.add("force-motion");
+      if (Faces) Faces.forceMotion(forced);
       const query = window.matchMedia("(prefers-reduced-motion: reduce)");
       const announce = () => {
         if (!query.matches || forced || sessionStorage.getItem("sb.motionToldOnce")) return;
@@ -5606,6 +5685,7 @@
           () => {
             localStorage.setItem(MOTION_KEY, "1");
             document.documentElement.classList.add("force-motion");
+            if (Faces) Faces.forceMotion(true);
             toast("Motion on — the faces are alive again.", "ok");
           },
           16000,
@@ -5809,6 +5889,11 @@
     function setChatColor(name, color) {
       if (color) localStorage.setItem("sb.chatColor." + name, color);
       else localStorage.removeItem("sb.chatColor." + name);
+      // The face first, directly: renderAgents() refuses to run while a menu
+      // is open, and the colour should land the moment it is picked.
+      const entry = faceHosts.get(name);
+      if (entry && Faces) entry.face.setColor(color || Faces.DEFAULT_COLOR);
+      lastRailSignature = "";
       renderAgents();
     }
 
@@ -6117,6 +6202,7 @@
       const signature = railSignature();
       if (signature === lastRailSignature && container.firstChild) return;
       lastRailSignature = signature;
+      pruneFaces();
       container.textContent = "";
       // The filter box needs no such guard: it lives in .sidebar-head, OUTSIDE
       // the container wiped above, and its text is state — so neither the poll
@@ -6372,15 +6458,13 @@
       const blobState = blobStateOf(agent);
       const portrait = el("span", "agent-portrait blob");
       portrait.title = `${AGENT_TYPE_TITLES[type]} · ${BLOB_LABEL[blobState] || blobState}`;
-      portrait.appendChild(
-        blobFaceFor(agent.name, blobState, BLOB_RAIL_SIZE, blobShapeOf(agent.name), blobVariantOf(agent.name, blobState)),
-      );
-      // Poke, from the study: the face answers a click before the card does.
-      // It does NOT stop the event — the click still opens the agent, which is
-      // what a click on a card is for.
+      portrait.appendChild(agentFaceHost(agent, blobState));
+      // Poke: the face answers a click before the card does. It does NOT stop
+      // the event — the click still opens the agent, which is what a click on
+      // a card is for.
       portrait.addEventListener("click", () => {
-        const entry = blobNodes.get(agent.name);
-        if (entry) playBlobReaction(entry.node, { body: ["bl-poke", "bl-startle"], dur: 420 });
+        const entry = faceHosts.get(agent.name);
+        if (entry) entry.face.react("poke");
       });
       const badge = el("span", "blob-engine");
       badge.appendChild(agentLogo(type));
@@ -6561,11 +6645,8 @@
             // did nothing at all — you clicked and the shape never changed.
             // Repaint just this face, which is the only thing that changed,
             // and the menu stays open so you can keep cycling.
-            const entry = blobNodes.get(agent.name);
-            if (entry) {
-              const st = entry.node.dataset.blobState || "idle";
-              paintBlobFace(entry.node, st, entry.size, next, blobVariantOf(agent.name, st));
-            }
+            const entry = faceHosts.get(agent.name);
+            if (entry) entry.face.setShape(next); // morphs in place
           },
         ),
       );
@@ -6636,7 +6717,7 @@
         menuItem(
           "colour-btn",
           chatColor(agent.name) ? "recolour…" : "colour…",
-          `Give "${agent.name}" a cable colour in the rail`,
+          `Give "${agent.name}" its colour — the face's body and the cable in the rail`,
           (item) => {
             openColorPicker(
               item,

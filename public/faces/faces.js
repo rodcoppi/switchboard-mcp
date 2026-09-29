@@ -309,6 +309,15 @@ const ACCENT_NAMES = ["blush", "sweat", "bang", "question", "sparkle", "zzz", "d
 // --------------------------------------------------------------------------
 
 const live = new Set();
+// Idle quirks are rationed across ALL faces: one at a time, with a gap. A
+// rail of twenty-four creatures each doing its own thing is a screensaver;
+// one of them now and then is life (the old engine's rule, kept).
+let lastQuirkAt = -Infinity;
+let quirkGap = 2.2; // seconds between quirks anywhere on the page
+/** Seconds between idle quirks across every face on the page. */
+export function setQuirkGap(seconds) {
+  quirkGap = Math.max(0, Number(seconds) || 0);
+}
 let rafId = 0;
 let lastT = 0;
 let motionForced = false;
@@ -684,7 +693,12 @@ export function createFace(host, options = {}) {
       // quirks
       if (moving && expr.quirks) {
         nextQuirk -= dt;
-        if (nextQuirk <= 0) {
+        const nowS = performance.now() / 1000;
+        // Lost the turn to another face: retry after a random wait, so the
+        // first face in the list does not win every time.
+        if (nextQuirk <= 0 && nowS - lastQuirkAt < quirkGap) nextQuirk = 0.5 + rand() * 3;
+        if (nextQuirk <= 0 && nowS - lastQuirkAt >= quirkGap) {
+          lastQuirkAt = nowS;
           const q = pickQuirk();
           lastQuirk = q;
           QUIRKS[q]();
