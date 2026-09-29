@@ -455,8 +455,11 @@ export function createFace(host, options = {}) {
   let state = EXPRESSIONS[options.state] ? options.state : "idle";
   let expr = EXPRESSIONS[state];
   let overrides = []; // {until, eye:{…}, accents:[…], gaze:{x,y}}
-  let yaw = 0; // 3D turn, radians; a spin runs it round a full turn
-  let spinFrom = 0, spinT = 1, spinDur = 0.9;
+  // A 3D spin: a full turn (spinAng 0→±2π) about an axis lying in the screen
+  // plane at angle spinAxis. Each spin draws its axis and direction at random
+  // — sideways, a forward or backward flip, a diagonal roll — because one axis
+  // every time read as a tic, not as life (owner, 29/09).
+  let spinAng = 0, spinTo = 0, spinT = 1, spinDur = 0.9, spinAxis = Math.PI / 2;
   let nextBlink = 1 + rand() * 3;
   let nextQuirk = 3 + rand() * 5;
   let nextDart = 0;
@@ -517,9 +520,20 @@ export function createFace(host, options = {}) {
       override(0.7, { eye: { w: 14, h: 29 } });
     },
     spin() {
-      spinFrom = yaw;
+      // axis angle: π/2 = vertical axis (turns sideways), 0 = horizontal axis
+      // (flips over), and the diagonals in between; plus a random direction.
+      const AXES = [[Math.PI / 2, 4], [0, 3], [Math.PI / 4, 2], [(3 * Math.PI) / 4, 2]];
+      let r = rand() * AXES.reduce((a, [, w]) => a + w, 0);
+      spinAxis = AXES[0][0];
+      for (const [ax, w] of AXES) {
+        if ((r -= w) <= 0) {
+          spinAxis = ax + (rand() - 0.5) * 0.35; // never exactly the same line
+          break;
+        }
+      }
+      spinTo = (rand() < 0.5 ? -1 : 1) * TAU;
       spinT = 0;
-      spinDur = 0.95;
+      spinDur = 0.8 + rand() * 0.35;
       sp.sy.kick(1.2);
     },
     nod() {
@@ -704,11 +718,26 @@ export function createFace(host, options = {}) {
       // spin (a full 3D turn), tweened rather than sprung
       if (spinT < 1) {
         spinT = Math.min(1, spinT + dt / spinDur);
-        yaw = spinFrom + easeInOut(spinT) * TAU;
-        if (spinT >= 1) yaw = 0;
+        spinAng = easeInOut(spinT) * spinTo;
+        if (spinT >= 1) spinAng = 0;
       }
-      const turn = Math.sin(yaw); // -1..1, for the highlight
-      const facing = Math.cos(yaw);
+      // Rotation axis (in the screen plane) and the direction the surface
+      // travels across it.
+      const axX = Math.cos(spinAxis), axY = Math.sin(spinAxis);
+      const mvX = -axY, mvY = axX;
+      const cosA = Math.cos(spinAng), sinA = Math.sin(spinAng);
+      const facing = cosA;
+      /** Rodrigues: a point on the body's surface, turned by the spin. */
+      const turn3 = (x, y, z) => {
+        const dot = axX * x + axY * y;
+        // axis × v, with the axis (axX, axY, 0)
+        const cx = axY * z, cy = -axX * z, cz = axX * y - axY * x;
+        return [
+          x * cosA + cx * sinA + axX * dot * (1 - cosA),
+          y * cosA + cy * sinA + axY * dot * (1 - cosA),
+          z * cosA + cz * sinA,
+        ];
+      };
 
       // ---- body geometry
       if (shapeT < 1) shapeT = Math.min(1, shapeT + dt * 3);
@@ -752,7 +781,8 @@ export function createFace(host, options = {}) {
       stopMid.setAttribute("stop-color", css(c));
       stopLo.setAttribute("stop-color", css(mix(c, BLACK, 0.3)));
       // the highlight slides as it turns — the cheapest honest 3D cue
-      grad.setAttribute("cx", (0.36 - turn * 0.28).toFixed(3));
+      grad.setAttribute("cx", (0.36 + mvX * sinA * 0.28).toFixed(3));
+      grad.setAttribute("cy", (0.3 + mvY * sinA * 0.28).toFixed(3));
       const glowA = clamp((intensity - 1) * 3.2, 0, 0.55);
       glow.setAttribute("opacity", glowA.toFixed(3));
       glowIn.setAttribute("stop-color", css(c));
@@ -763,8 +793,12 @@ export function createFace(host, options = {}) {
       // Eye colour follows the CHOSEN colour, not this frame's intensity: a
       // dimmed (asleep, booting) face flipping to white eyes looked like a
       // different creature.
-      const dark = luminance(baseRGB) > 0.2;
-      const eyeFill = dark ? "#0b0b0f" : "#f4f4f5";
+      // Always BLACK eyes — they are the creature's face, and a light eye on
+      // a dark body swallowed the white glint (owner, 29/09). On a dark body
+      // the black eye gets a light rim instead, so it still reads.
+      const eyeFill = "#0b0b0f";
+      const darkBody = luminance(baseRGB) < 0.12;
+      const eyeRim = darkBody ? css(mix(baseRGB, WHITE, 0.6)) : eyeFill;
       const gap = sp.gap.x;
       const ew = Math.max(sp.eyeW.x, 3);
       const eh = Math.max(sp.eyeH.x, 2);
@@ -772,24 +806,36 @@ export function createFace(host, options = {}) {
       const minPx = 2.4 * (100 / pxSize);
       const baseY = CY + sp.eyeY.x + sp.gazeY.x * 4.5;
       const thick = Math.max(4.2, minPx * 1.3);
+      const RS = R * 0.95; // the sphere the eyes sit on
+      const moveDeg = (Math.atan2(mvY, mvX) * 180) / Math.PI;
       for (const [side, eye, glint, blush] of [[-1, eyeL, glintL, blushL], [1, eyeR, glintR, blushR]]) {
-        const ang = yaw + side * Math.asin(clamp(gap / 2 / (R * 0.95), -1, 1));
-        const fore = Math.cos(ang);
+        // the eye as a point on the sphere, facing us at rest, then turned
+        const x0 = side * gap / 2;
+        const y0 = baseY - CY;
+        const z0 = Math.sqrt(Math.max(RS * RS - x0 * x0 - y0 * y0, 1));
+        const [rx, ry, rz] = turn3(x0, y0, z0);
+        const fore = rz / RS; // 1 = facing us, 0 = at the rim, <0 = behind
         const visible = fore > 0.08;
-        const ex = CX + Math.sin(ang) * R * 0.95 + sp.gazeX.x * 6 * facing;
-        const w = Math.max(ew * Math.max(fore, 0.15), minPx);
+        const ex = CX + rx + sp.gazeX.x * 6 * facing;
+        const ey = CY + ry;
+        const w = Math.max(ew, minPx);
         const h = Math.max(eh, minPx);
+        // foreshortened along the direction the surface is travelling
+        const squeeze = clamp(fore / (z0 / RS), 0.15, 1);
         const p = eyePath(0, 0, w, h, sp.smile.x, clamp(sp.open.x, 0.08, 1), thick);
         // world position follows the body's squash, lift and lean
         const wx = CX + (ex - CX) * sx + ox;
-        const wy = pivotY + (baseY - pivotY) * sy + oy;
+        const wy = pivotY + (ey - pivotY) * sy + oy;
         eye.setAttribute("d", p);
         eye.setAttribute(
           "transform",
-          `rotate(${rotDeg.toFixed(2)},${(CX + ox).toFixed(2)},${pivotY}) translate(${wx.toFixed(2)},${wy.toFixed(2)}) rotate(${(-side * sp.tilt.x).toFixed(2)})`,
+          `rotate(${rotDeg.toFixed(2)},${(CX + ox).toFixed(2)},${pivotY}) translate(${wx.toFixed(2)},${wy.toFixed(2)}) ` +
+            `rotate(${moveDeg.toFixed(1)}) scale(${squeeze.toFixed(3)},1) rotate(${(-moveDeg).toFixed(1)}) ` +
+            `rotate(${(-side * sp.tilt.x).toFixed(2)})`,
         );
         eye.setAttribute("fill", eyeFill);
-        eye.setAttribute("stroke", eyeFill);
+        eye.setAttribute("stroke", eyeRim);
+        eye.setAttribute("stroke-width", darkBody ? "1.6" : "2");
         eye.setAttribute("opacity", visible ? "1" : "0");
         const glintA = visible ? clamp(1 - sp.smile.x * 1.4, 0, 1) * clamp(sp.open.x * 1.2 - 0.2, 0, 1) * (h > 9 ? 0.9 : 0) : 0;
         glint.setAttribute("cx", (wx - w * 0.2 + sp.gazeX.x * 1.2).toFixed(2));
