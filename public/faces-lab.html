@@ -1,0 +1,241 @@
+<!doctype html>
+<!-- The faces lab: where the creatures are tuned BEFORE they go into the
+     dashboard. Every state, every reaction, any colour and shape, at hero size
+     and at the rail's real 26px, plus a stress row to watch the frame rate. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Switchboard — faces lab</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #09090b; --panel: #111113; --border: #27272a; --text: #f4f4f5;
+      --dim: #a1a1aa; --faint: #71717a; --accent: #f5a623;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--bg); color: var(--text);
+      font: 13px/1.5 ui-sans-serif, system-ui, sans-serif;
+    }
+    header {
+      display: flex; align-items: baseline; gap: 12px;
+      padding: 14px 20px; border-bottom: 1px solid var(--border);
+    }
+    header b { letter-spacing: 3px; font-size: 14px; }
+    header span { color: var(--faint); }
+    main { display: grid; grid-template-columns: minmax(280px, 380px) 1fr; gap: 0; min-height: calc(100vh - 50px); }
+    @media (max-width: 820px) { main { grid-template-columns: 1fr; } }
+    aside { border-right: 1px solid var(--border); padding: 18px 20px; display: flex; flex-direction: column; gap: 18px; }
+    section { padding: 18px 20px; display: flex; flex-direction: column; gap: 22px; min-width: 0; }
+    h3 {
+      margin: 0 0 8px; font-size: 10px; letter-spacing: 1.4px; text-transform: uppercase;
+      color: var(--faint); font-weight: 600;
+    }
+    .hero {
+      height: 260px; display: grid; place-items: center;
+      background: radial-gradient(circle at 50% 60%, #18181b, var(--bg) 70%);
+      border: 1px solid var(--border); border-radius: 12px; cursor: pointer; user-select: none;
+    }
+    .hero > div { width: 190px; height: 190px; }
+    .hero-state { text-align: center; color: var(--dim); margin-top: -4px; }
+    .btns { display: flex; flex-wrap: wrap; gap: 6px; }
+    button {
+      font: inherit; font-size: 12px; color: var(--dim);
+      background: var(--panel); border: 1px solid var(--border); border-radius: 7px;
+      padding: 6px 10px; cursor: pointer; min-height: 32px;
+    }
+    button:hover { color: var(--text); border-color: #3f3f46; }
+    button.on { color: var(--accent); border-color: var(--accent); }
+    .swatches { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+    .swatch { width: 28px; height: 28px; min-height: 28px; padding: 0; border-radius: 50%; border: 2px solid transparent; }
+    .swatch.on { border-color: var(--text); }
+    input[type=color] { width: 34px; height: 30px; border: 1px solid var(--border); border-radius: 7px; background: var(--panel); padding: 2px; }
+    select, input[type=range] { width: 100%; }
+    select { font: inherit; background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 7px; padding: 6px; }
+    label.row { display: flex; align-items: center; gap: 8px; color: var(--dim); }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 10px; }
+    .cell {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+      padding: 12px 8px 8px; display: flex; flex-direction: column; align-items: center; gap: 6px;
+      cursor: pointer;
+    }
+    .cell > div { width: 72px; height: 72px; }
+    .cell span { font-size: 11px; color: var(--dim); }
+    .rail { display: flex; flex-wrap: wrap; gap: 18px; align-items: flex-end; }
+    .rail figure { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 4px; }
+    .rail figure > div { width: 26px; height: 26px; }
+    .rail figcaption { font-size: 10px; color: var(--faint); }
+    .stress { display: flex; flex-wrap: wrap; gap: 8px; }
+    .stress > div { width: 26px; height: 26px; }
+    .note { color: var(--faint); font-size: 12px; }
+    .fps { font-family: ui-monospace, monospace; color: var(--accent); }
+  </style>
+</head>
+<body>
+  <header><b>⇄ FACES LAB</b><span>tune here, then they move into the board</span></header>
+  <main>
+    <aside>
+      <div>
+        <div class="hero" id="hero" title="Click to poke"><div id="hero-face"></div></div>
+        <div class="hero-state" id="hero-state">idle</div>
+      </div>
+      <div>
+        <h3>State</h3>
+        <div class="btns" id="states"></div>
+      </div>
+      <div>
+        <h3>Reaction</h3>
+        <div class="btns" id="reactions"></div>
+      </div>
+      <div>
+        <h3>Colour — the agent's, never the state's</h3>
+        <div class="swatches" id="swatches"></div>
+      </div>
+      <div>
+        <h3>Shape</h3>
+        <select id="shape"></select>
+      </div>
+      <div>
+        <h3>Options</h3>
+        <label class="row"><input type="checkbox" id="follow" checked /> eyes follow the pointer</label>
+        <label class="row"><input type="checkbox" id="motion" /> ignore the OS "reduce motion" setting</label>
+      </div>
+    </aside>
+    <section>
+      <div>
+        <h3>Every state — same colour</h3>
+        <div class="grid" id="grid"></div>
+      </div>
+      <div>
+        <h3>At rail size (26px) — does the motion still read?</h3>
+        <div class="rail" id="rail"></div>
+      </div>
+      <div>
+        <h3>Stress — 24 faces like a full rail <span class="fps" id="fps"></span></h3>
+        <div class="btns"><button id="stress-btn" type="button">add 24 faces</button></div>
+        <div class="stress" id="stress"></div>
+        <p class="note">Frame rate is measured over the whole page while these run.</p>
+      </div>
+    </section>
+  </main>
+  <script type="module">
+    import { createFace, STATES, REACTIONS, SHAPES, DEFAULT_COLOR, forceMotion } from "/faces/faces.js";
+
+    const COLORS = [DEFAULT_COLOR, "#60a5fa", "#a78bfa", "#f472b6", "#fb923c", "#facc15", "#2dd4bf", "#f4f4f5", "#1e293b"];
+    const $ = (s) => document.querySelector(s);
+    const el = (tag, cls, text) => {
+      const n = document.createElement(tag);
+      if (cls) n.className = cls;
+      if (text != null) n.textContent = text;
+      return n;
+    };
+
+    let color = localStorage.getItem("lab.color") || DEFAULT_COLOR;
+    let shape = localStorage.getItem("lab.shape") || "blob";
+    const all = [];
+
+    const hero = createFace($("#hero-face"), { color, shape, seed: "hero", follow: "pointer" });
+    all.push(hero);
+    $("#hero").addEventListener("click", () => hero.react("poke"));
+
+    // state buttons
+    const stateBtns = new Map();
+    for (const s of STATES) {
+      const b = el("button", s === "idle" ? "on" : "", s);
+      b.type = "button";
+      b.addEventListener("click", () => {
+        hero.setState(s);
+        $("#hero-state").textContent = s;
+        for (const [k, v] of stateBtns) v.classList.toggle("on", k === s);
+      });
+      stateBtns.set(s, b);
+      $("#states").appendChild(b);
+    }
+    for (const r of REACTIONS) {
+      const b = el("button", "", r);
+      b.type = "button";
+      b.addEventListener("click", () => hero.react(r));
+      $("#reactions").appendChild(b);
+    }
+
+    // colours
+    const paintAll = () => {
+      for (const f of all) f.setColor(color);
+      localStorage.setItem("lab.color", color);
+      for (const sw of document.querySelectorAll(".swatch")) sw.classList.toggle("on", sw.dataset.c === color);
+    };
+    for (const c of COLORS) {
+      const sw = el("button", "swatch");
+      sw.type = "button";
+      sw.dataset.c = c;
+      sw.style.background = c;
+      sw.title = c;
+      sw.addEventListener("click", () => { color = c; paintAll(); });
+      $("#swatches").appendChild(sw);
+    }
+    const pick = el("input");
+    pick.type = "color";
+    pick.value = /^#[0-9a-f]{6}$/i.test(color) ? color : DEFAULT_COLOR;
+    pick.title = "any colour";
+    pick.addEventListener("input", () => { color = pick.value; paintAll(); });
+    $("#swatches").appendChild(pick);
+
+    // shapes
+    for (const s of SHAPES) {
+      const o = el("option", "", s);
+      o.value = s;
+      if (s === shape) o.selected = true;
+      $("#shape").appendChild(o);
+    }
+    $("#shape").addEventListener("change", (e) => {
+      shape = e.target.value;
+      localStorage.setItem("lab.shape", shape);
+      for (const f of all) f.setShape(shape);
+    });
+
+    $("#follow").addEventListener("change", (e) => hero.follow(e.target.checked));
+    $("#motion").addEventListener("change", (e) => forceMotion(e.target.checked));
+
+    // grid: every state, clicking one pokes it
+    for (const s of STATES) {
+      const cell = el("div", "cell");
+      const box = el("div");
+      cell.append(box, el("span", "", s));
+      const f = createFace(box, { color, shape, state: s, seed: `grid-${s}` });
+      cell.addEventListener("click", () => f.react("poke"));
+      all.push(f);
+      $("#grid").appendChild(cell);
+    }
+    // rail size
+    for (const s of STATES) {
+      const fig = el("figure");
+      const box = el("div");
+      fig.append(box, el("figcaption", "", s));
+      all.push(createFace(box, { color, shape, state: s, seed: `rail-${s}` }));
+      $("#rail").appendChild(fig);
+    }
+    // stress
+    $("#stress-btn").addEventListener("click", () => {
+      for (let i = 0; i < 24; i++) {
+        const box = el("div");
+        $("#stress").appendChild(box);
+        all.push(createFace(box, { color, shape, state: STATES[i % STATES.length], seed: `stress-${all.length}` }));
+      }
+    });
+    // fps
+    let frames = 0, since = performance.now();
+    const count = (t) => {
+      frames++;
+      if (t - since >= 1000) {
+        $("#fps").textContent = `${Math.round((frames * 1000) / (t - since))} fps`;
+        frames = 0;
+        since = t;
+      }
+      requestAnimationFrame(count);
+    };
+    requestAnimationFrame(count);
+    paintAll();
+  </script>
+</body>
+</html>
