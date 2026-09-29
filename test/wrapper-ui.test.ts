@@ -1771,3 +1771,16 @@ describe("the rail wears the faces engine", () => {
     expect(script).toContain("Faces.forceMotion(");
   });
 });
+
+describe("the floating menu sits under what it opens", () => {
+  // At z-index 200 the colour picker (70) opened BENEATH the ⋯ menu, so a
+  // tapped colour landed on the menu and was never picked (29/09).
+  const z = (sel: string) => Number(styles.match(new RegExp(sel.replace(/[.]/g, "\\.") + " \\{[^}]*?z-index: (\\d+)"))?.[1]);
+  it("is above every card and below the picker, dialogs and lightbox", () => {
+    const menu = z(".agent-menu.floating");
+    expect(menu).toBeGreaterThan(z(".agent-card.menu-open"));
+    for (const over of [".color-pop", ".palette-backdrop", ".lightbox"]) {
+      expect(menu, over).toBeLessThan(z(over));
+    }
+  });
+});

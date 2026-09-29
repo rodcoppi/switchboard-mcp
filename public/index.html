@@ -960,7 +960,12 @@
       position: fixed;
       right: auto;
       bottom: auto;
-      z-index: 200;
+      /* Above every card (the highest, a card with its menu open, is 45) and
+         BELOW everything the menu itself opens — the colour picker (70),
+         dialogs (60), the groups lightbox (50). At 200 the colour picker
+         opened underneath the menu, so a tapped colour landed on the menu and
+         was never picked (found testing the faces' colour, 29/09). */
+      z-index: 46;
       overflow-y: auto;
     }
     .agent-menu:not([hidden]) {
