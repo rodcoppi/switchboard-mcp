@@ -579,14 +579,14 @@
     /* The engine mark, demoted to a corner badge — small, but never guessed at. */
     .blob-engine {
       position: absolute;
-      right: -4px; bottom: -4px;
-      width: 12px; height: 12px;
+      right: -5px; bottom: -5px;
+      width: 15px; height: 15px;
       display: grid; place-items: center;
       border-radius: 4px;
       background: var(--bg-elev);
       border: 1px solid var(--border-soft);
     }
-    .blob-engine .agent-logo { width: 8px; height: 8px; opacity: 0.9; }
+    .blob-engine .agent-logo { width: 10px; height: 10px; opacity: 0.9; }
 
     /* Engine portrait + presence lamp. The real Claude/Codex mark says what
        this agent is; the tiny corner light says whether it is reachable. */
@@ -611,14 +611,84 @@
        smaller than the old faces, so the host overflows the portrait by 6px a
        side: a ~27px body, and the card's layout does not move. */
     .sb-face-host { display: block; width: 100%; height: 100%; }
-    .agent-portrait.blob > .sb-face-host { width: 38px; height: 38px; margin: -6px; flex: none; }
+    /* ---- colour & shape panel ---- */
+    .look-pop {
+      position: fixed;
+      z-index: 70;
+      width: 312px;
+      max-height: calc(100dvh - 20px);
+      overflow-y: auto;
+      padding: 14px 14px 16px;
+      background: var(--bg-elev-2);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow-popover);
+      animation: pop-in 0.14s var(--ease);
+    }
+    .look-pop.sheet {
+      left: 0; right: 0; bottom: 0; top: auto;
+      width: auto;
+      max-height: 78dvh;
+      border-radius: 16px 16px 0 0;
+      padding-bottom: max(18px, env(safe-area-inset-bottom));
+    }
+    .look-head { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+    .look-preview { width: 64px; height: 64px; flex: none; cursor: pointer; }
+    .look-titles { flex: 1 1 auto; min-width: 0; }
+    .look-name { font-family: var(--sans); font-weight: 600; font-size: var(--fs-lg); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .look-sub { font-size: var(--fs-xs); color: var(--text-faint); }
+    .look-close {
+      flex: none; width: 32px; height: 32px; border-radius: 8px;
+      border: 1px solid var(--border); background: transparent; color: var(--text-dim);
+    }
+    .look-close:hover { color: var(--text); border-color: var(--accent-line); }
+    .look-label {
+      font-size: var(--fs-eyebrow); letter-spacing: 1.4px; text-transform: uppercase;
+      color: var(--text-faint); margin: 10px 0 8px;
+    }
+    .look-colors { display: flex; flex-wrap: wrap; gap: 8px; }
+    .look-sw {
+      width: 30px; height: 30px; padding: 0; border-radius: 50%;
+      border: 2px solid transparent; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.25);
+      cursor: pointer; position: relative;
+    }
+    .look-sw:hover { transform: scale(1.08); }
+    .look-sw.on { border-color: var(--text); box-shadow: 0 0 0 2px var(--bg-elev-2) inset; }
+    .look-reset::after {
+      content: "↺"; position: absolute; inset: 0; display: grid; place-items: center;
+      color: #0b0b0f; font-size: 13px; font-weight: 700;
+    }
+    .look-custom {
+      display: grid; place-items: center; overflow: hidden;
+      background: conic-gradient(#f87171, #fbbf24, #4ade80, #60a5fa, #a78bfa, #f472b6, #f87171);
+      color: #fff; font-weight: 700; text-shadow: 0 1px 2px rgba(0,0,0,0.6);
+    }
+    .look-custom input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+    .look-shapes { display: grid; grid-template-columns: repeat(auto-fill, minmax(62px, 1fr)); gap: 8px; }
+    .look-shape {
+      display: flex; flex-direction: column; align-items: center; gap: 4px;
+      padding: 8px 4px 6px; border-radius: 10px;
+      border: 1px solid var(--border-soft); background: var(--bg);
+      color: var(--text-faint); cursor: pointer;
+    }
+    .look-shape:hover { border-color: var(--border); color: var(--text-dim); }
+    .look-shape.on { border-color: var(--accent); color: var(--accent); background: var(--accent-wash); }
+    .look-shape-face { width: 40px; height: 40px; pointer-events: none; }
+    .look-shape-name { font-size: 10px; font-family: var(--mono); }
+    /* ~40px of creature (owner, 29/09: "o bicho tá muito pequeno"): a 42px
+       portrait, the face overflowing it by 7px a side for its accents. */
+    .agent-portrait.blob > .sb-face-host { width: 56px; height: 56px; margin: -7px; flex: none; }
     .agent-portrait.blob {
       border: 0;
       background: none;
       box-shadow: none;
       overflow: visible;
-      width: 26px; height: 26px;
+      width: 42px; height: 42px;
     }
+    /* The coloured square frame was for when a colour only tinted an engine
+       icon. The creature IS the colour now; the frame just boxed it in. */
+    .agent-card.tinted .agent-portrait.blob,
+    .agent-card.active .agent-portrait.blob { outline: none; }
     .status-dot {
       position: absolute;
       right: -3px;
@@ -4163,6 +4233,153 @@
       "#e0a326", "#f2c14e", "#e0623c", "#e0504e", "#d1509a", "#a371f7",
       "#6a8cff", "#4a9eff", "#2bb8a3", "#3fb950", "#8bc34a", "#9aa0bd",
     ];
+    /**
+     * "colour & shape…": one panel for an agent's look.
+     *
+     * It replaced a loose swatch popover plus a menu row you clicked to cycle
+     * the shape blind ("shape · blob", "shape · circle"…) — the owner asked for
+     * a better picker (29/09). A live preview on top; the colours as big
+     * swatches; and every shape drawn as a small face in the chosen colour, so
+     * you see the result before you tap. Picks apply at once and the panel
+     * stays open to try things; ✕, Esc or a tap outside closes it. On a phone
+     * it is a sheet at the bottom of the screen.
+     */
+    function openLookPicker(name) {
+      closeLookPicker();
+      if (!Faces) return;
+      const agent = state.agents.get(name);
+      const faces = []; // engine instances to destroy on close
+      const panel = el("div", "look-pop");
+      panel.id = "look-pop";
+      panel.setAttribute("role", "dialog");
+      panel.setAttribute("aria-label", `${displayOf(name)}: colour and shape`);
+
+      const head = el("div", "look-head");
+      const previewBox = el("div", "look-preview");
+      const preview = Faces.createFace(previewBox, {
+        color: chatColor(name) || Faces.DEFAULT_COLOR, shape: blobShapeOf(name),
+        state: "idle", seed: `${name}:look`, follow: "pointer",
+      });
+      faces.push(preview);
+      previewBox.addEventListener("click", () => preview.react("poke"));
+      const titles = el("div", "look-titles");
+      titles.append(el("div", "look-name", displayOf(name)), el("div", "look-sub", "colour & shape"));
+      const close = el("button", "look-close", "✕");
+      close.type = "button";
+      close.setAttribute("aria-label", "Close");
+      close.addEventListener("click", closeLookPicker);
+      head.append(previewBox, titles, close);
+
+      // colours
+      const colorLabel = el("div", "look-label", "Colour");
+      const colors = el("div", "look-colors");
+      const paintSelection = () => {
+        const cur = (chatColor(name) || "").toLowerCase();
+        for (const b of colors.querySelectorAll(".look-sw")) b.classList.toggle("on", b.dataset.c === cur);
+        reset.classList.toggle("on", !cur);
+      };
+      const pickColor = (c) => {
+        setChatColor(name, c);
+        const color = c || Faces.DEFAULT_COLOR;
+        for (const f of faces) f.setColor(color);
+        paintSelection();
+        preview.react("perk");
+      };
+      const reset = el("button", "look-sw look-reset");
+      reset.type = "button";
+      reset.title = "Default colour";
+      reset.style.background = Faces.DEFAULT_COLOR;
+      reset.addEventListener("click", () => pickColor(null));
+      colors.appendChild(reset);
+      for (const c of COLOR_SWATCHES) {
+        const b = el("button", "look-sw");
+        b.type = "button";
+        b.dataset.c = c.toLowerCase();
+        b.title = c;
+        b.style.background = c;
+        b.addEventListener("click", () => pickColor(c));
+        colors.appendChild(b);
+      }
+      const customWrap = el("label", "look-sw look-custom");
+      customWrap.title = "Any colour";
+      const custom = el("input");
+      custom.type = "color";
+      custom.value = chatColor(name) || Faces.DEFAULT_COLOR;
+      custom.addEventListener("input", (e) => {
+        for (const f of faces) f.setColor(e.target.value); // live, without saving each tick
+      });
+      custom.addEventListener("change", (e) => pickColor(e.target.value));
+      customWrap.append(el("span", null, "+"), custom);
+      colors.appendChild(customWrap);
+
+      // shapes, each a small face in the current colour
+      const shapeLabel = el("div", "look-label", "Shape");
+      const shapes = el("div", "look-shapes");
+      const tiles = new Map();
+      for (const sh of BLOB_SHAPE_NAMES) {
+        const tile = el("button", "look-shape");
+        tile.type = "button";
+        tile.title = sh;
+        const box = el("span", "look-shape-face");
+        tile.append(box, el("span", "look-shape-name", sh));
+        faces.push(Faces.createFace(box, {
+          color: chatColor(name) || Faces.DEFAULT_COLOR, shape: sh, state: "idle", seed: `${name}:${sh}`,
+        }));
+        tile.addEventListener("click", () => {
+          blobShapes.set(name, sh);
+          persistBlobShapes();
+          const entry = faceHosts.get(name);
+          if (entry) entry.face.setShape(sh);
+          preview.setShape(sh);
+          preview.react("bounce");
+          for (const [k, t] of tiles) t.classList.toggle("on", k === sh);
+          lastRailSignature = "";
+        });
+        tiles.set(sh, tile);
+        shapes.appendChild(tile);
+      }
+      tiles.get(blobShapeOf(name))?.classList.add("on");
+
+      panel.append(head, colorLabel, colors, shapeLabel, shapes);
+      document.body.appendChild(panel);
+      paintSelection();
+
+      // Beside the agent's card on a wide screen; a bottom sheet on a phone.
+      const card = [...document.querySelectorAll(".agent-card")].find((c) => c.dataset.name === name);
+      const sheet = window.matchMedia("(max-width: 640px), (hover: none)").matches || !card;
+      panel.classList.toggle("sheet", sheet);
+      if (!sheet) {
+        const r = card.getBoundingClientRect();
+        const pw = panel.offsetWidth, ph = panel.offsetHeight;
+        const left = Math.min(r.right + 10, window.innerWidth - pw - 10);
+        const top = Math.max(10, Math.min(r.top, window.innerHeight - ph - 10));
+        panel.style.left = `${Math.max(10, left)}px`;
+        panel.style.top = `${top}px`;
+      }
+      lookState = { panel, faces };
+      setTimeout(() => {
+        document.addEventListener("pointerdown", onLookOutside, true);
+        document.addEventListener("keydown", onLookKey);
+      }, 0);
+      void agent;
+    }
+    let lookState = null;
+    function onLookOutside(ev) {
+      if (lookState && !lookState.panel.contains(ev.target)) closeLookPicker();
+    }
+    function onLookKey(ev) {
+      if (ev.key === "Escape") closeLookPicker();
+    }
+    function closeLookPicker() {
+      if (!lookState) return;
+      for (const f of lookState.faces) f.destroy();
+      lookState.panel.remove();
+      lookState = null;
+      document.removeEventListener("pointerdown", onLookOutside, true);
+      document.removeEventListener("keydown", onLookKey);
+      renderAgents(); // the rail catches up with whatever was picked
+    }
+
     function openColorPicker(anchor, current, onPick, opts = {}) {
       document.getElementById("color-pop")?.remove();
       const pop = el("div", "color-pop");
@@ -4766,7 +4983,7 @@
     // The silhouettes the faces engine draws (public/faces/faces.js SHAPES —
     // kept in step by test/faces.test.ts). Listed here because the rail needs
     // them before the engine module has loaded.
-    const BLOB_SHAPE_NAMES = ["blob", "circle", "squircle", "capsule", "teardrop", "clover", "hexagon", "triangle", "diamond"];
+    const BLOB_SHAPE_NAMES = ["circle", "blob", "squircle", "capsule", "teardrop", "clover", "hexagon", "triangle", "diamond"];
     const BLOB_SHAPE_KEY = "sb.blobShape";
 
     /** Operator-chosen shapes, by agent. A view preference, like the colours. */
@@ -4792,7 +5009,8 @@
      */
     function blobShapeOf(name) {
       const chosen = blobShapes.get(name);
-      return chosen && BLOB_SHAPE_NAMES.includes(chosen) ? chosen : "blob";
+      // Round unless picked (owner, 29/09: "deixa por padrão todos redondos").
+      return chosen && BLOB_SHAPE_NAMES.includes(chosen) ? chosen : "circle";
     }
 
     const BLOB_LABEL = {
@@ -5813,32 +6031,6 @@
           },
         ),
       );
-      // The agent's silhouette. Cycles through the shapes on click: with ten of
-      // them, a submenu would be a lot of chrome for a choice you make once and
-      // recognise by eye anyway.
-      menu.appendChild(
-        menuItem(
-          "shape-btn",
-          `shape · ${blobShapeOf(agent.name)}`,
-          "Change this agent's silhouette — the face's EXPRESSION stays the state, " +
-            "the shape is how you tell agents apart at a glance",
-          (item) => {
-            const cur = blobShapeOf(agent.name);
-            const next = BLOB_SHAPE_NAMES[(BLOB_SHAPE_NAMES.indexOf(cur) + 1) % BLOB_SHAPE_NAMES.length];
-            blobShapes.set(agent.name, next);
-            persistBlobShapes();
-            const label = item.querySelector("span:last-child");
-            if (label) label.textContent = `shape · ${next}`;
-            // NOT renderAgents(): it refuses to run while a menu is open (a
-            // rebuild would close the menu in your face), so calling it here
-            // did nothing at all — you clicked and the shape never changed.
-            // Repaint just this face, which is the only thing that changed,
-            // and the menu stays open so you can keep cycling.
-            const entry = faceHosts.get(agent.name);
-            if (entry) entry.face.setShape(next); // morphs in place
-          },
-        ),
-      );
       // Start over: same agent, blank conversation. Confirms first — see
       // reopenAgent's note on what stops being one click away.
       menu.appendChild(
@@ -5905,18 +6097,11 @@
       menu.appendChild(
         menuItem(
           "colour-btn",
-          chatColor(agent.name) ? "recolour…" : "colour…",
-          `Give "${agent.name}" its colour — the face's body and the cable in the rail`,
-          (item) => {
-            openColorPicker(
-              item,
-              chatColor(agent.name),
-              (c) => {
-                closeMenus();
-                setChatColor(agent.name, c); // c === null clears
-              },
-              { clearable: !!chatColor(agent.name) },
-            );
+          "colour & shape…",
+          `Pick "${agent.name}"'s colour and shape — its face's body, and the cable in the rail`,
+          () => {
+            closeMenus(); // the panel stands alone, above everything
+            openLookPicker(agent.name);
           },
         ),
       );

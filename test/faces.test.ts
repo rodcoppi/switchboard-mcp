@@ -83,3 +83,21 @@ describe("the faces engine keeps the old lessons", () => {
     expect(engineSrc).toMatch(/phase\.breathe \+= TAU \* hz\.breathe\.x \* dt/);
   });
 });
+
+describe("the look the owner asked for (29/09)", () => {
+  it("is flat — no shaded, glassy body", () => {
+    expect(engineSrc).not.toContain("radialGradient\", { id: `${id}g`");
+    expect(engineSrc).toContain('body.setAttribute("fill", css(c))');
+  });
+
+  it("is round unless someone picked a shape", async () => {
+    const { DEFAULT_SHAPE } = await import("../public/faces/faces.js");
+    expect(DEFAULT_SHAPE).toBe("circle");
+    expect(dashboard).toMatch(/BLOB_SHAPE_NAMES\.includes\(chosen\) \? chosen : "circle"/);
+  });
+
+  it("is big enough to read in the rail", () => {
+    expect(dashboard).toMatch(/\.agent-portrait\.blob \{[^}]*width: 42px/);
+    expect(dashboard).toMatch(/\.agent-portrait\.blob > \.sb-face-host \{ width: 56px; height: 56px/);
+  });
+});

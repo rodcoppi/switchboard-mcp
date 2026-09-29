@@ -994,33 +994,44 @@ describe("message stamps carry the day once they are not today", () => {
   });
 });
 
-describe("the shape switcher actually switches", () => {
-  // It called renderAgents(), which REFUSES to run while a menu is open (a
-  // rebuild would close the menu in your face) — so the click stored the new
-  // shape and nothing on screen ever changed (owner, 28/08).
-  const src = (() => {
-    const at = script.indexOf('"shape-btn",');
-    if (at === -1) throw new Error("the shape menu item was not found in the page");
-    return script.slice(at, script.indexOf("// Start over: same agent", at));
-  })();
+describe("the colour & shape panel", () => {
+  // One panel replaced a loose swatch popover and a menu row you clicked to
+  // cycle the shape blind (owner, 29/09: "deixa melhor o seletor de cor e
+  // formato").
+  const fn = script.match(/function openLookPicker\(name\) \{[\s\S]*?\n    }/)?.[0] ?? "";
 
-  it("repaints the face directly instead of asking for a rail rebuild", () => {
-    // Comments stripped: the code explains WHY it does not call renderAgents,
-    // and that sentence would otherwise fail the check it is documenting.
-    const code = src.replace(/^\s*\/\/.*$/gm, "");
-    // The faces engine morphs the live face in place.
-    expect(code).toContain("entry.face.setShape(next)");
-    expect(code).not.toMatch(/renderAgents\(\)/);
+  it("is opened by a single menu row, which closes the menu first", () => {
+    expect(script).toContain('"colour & shape…"');
+    expect(script).toMatch(/closeMenus\(\); \/\/ the panel stands alone[\s\S]{0,60}openLookPicker\(agent\.name\)/);
+    // The blind shape-cycling row is gone.
+    expect(script).not.toContain('`shape · ${blobShapeOf(agent.name)}`');
   });
 
-  it("keeps the menu open, so shapes can be cycled one click after another", () => {
-    expect(src).not.toContain("closeMenus()");
-    expect(src).toContain("shape · ${next}"); // the label follows along
+  it("previews live and draws every shape as a small face in the chosen colour", () => {
+    expect(fn).toContain("const preview = Faces.createFace(previewBox");
+    expect(fn).toMatch(/for \(const sh of BLOB_SHAPE_NAMES\)[\s\S]*?Faces\.createFace\(box/);
   });
 
-  it("stores the choice so it survives a reload", () => {
-    expect(src).toContain("blobShapes.set(agent.name, next)");
-    expect(src).toContain("persistBlobShapes()");
+  it("applies a pick straight to the live face, not through a rail rebuild", () => {
+    // renderAgents refuses to run while a menu is open, which once made the
+    // shape switcher store a pick and change nothing on screen (28/08).
+    expect(fn).toContain("if (entry) entry.face.setShape(sh)");
+    expect(fn).toContain("for (const f of faces) f.setColor(color)");
+    expect(fn).toContain("setChatColor(name, c)");
+  });
+
+  it("frees its engine faces when it closes", () => {
+    const close = script.match(/function closeLookPicker\(\) \{[\s\S]*?\n    }/)?.[0] ?? "";
+    expect(close).toContain("for (const f of lookState.faces) f.destroy()");
+  });
+
+  it("is a bottom sheet on a phone", () => {
+    expect(fn).toMatch(/matchMedia\("\(max-width: 640px\), \(hover: none\)"\)/);
+    expect(styles).toMatch(/\.look-pop\.sheet \{[^}]*bottom: 0/);
+  });
+
+  it("sits above the dashboard like the other panels", () => {
+    expect(styles).toMatch(/\.look-pop \{[^}]*z-index: 70/);
   });
 });
 

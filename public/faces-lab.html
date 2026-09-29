@@ -120,7 +120,7 @@
     </section>
   </main>
   <script type="module">
-    import { createFace, STATES, REACTIONS, SHAPES, DEFAULT_COLOR, forceMotion } from "/faces/faces.js";
+    import { createFace, STATES, REACTIONS, SHAPES, DEFAULT_COLOR, DEFAULT_SHAPE, forceMotion } from "/faces/faces.js";
 
     const COLORS = [DEFAULT_COLOR, "#60a5fa", "#a78bfa", "#f472b6", "#fb923c", "#facc15", "#2dd4bf", "#f4f4f5", "#1e293b"];
     const $ = (s) => document.querySelector(s);
@@ -132,7 +132,7 @@
     };
 
     let color = localStorage.getItem("lab.color") || DEFAULT_COLOR;
-    let shape = localStorage.getItem("lab.shape") || "blob";
+    let shape = localStorage.getItem("lab.shape") || DEFAULT_SHAPE;
     const all = [];
 
     const hero = createFace($("#hero-face"), { color, shape, seed: "hero", follow: "pointer" });

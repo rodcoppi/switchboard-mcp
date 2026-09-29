@@ -19,6 +19,7 @@
 // stops when none is on screen or the tab is hidden.
 
 export const DEFAULT_COLOR = "#4ade80";
+export const DEFAULT_SHAPE = "circle";
 
 export const STATES = [
   "idle", "working", "speaking", "thinking", "asking",
@@ -30,7 +31,7 @@ export const REACTIONS = [
 ];
 
 export const SHAPES = [
-  "blob", "circle", "squircle", "capsule", "teardrop", "clover", "hexagon", "triangle", "diamond",
+  "circle", "blob", "squircle", "capsule", "teardrop", "clover", "hexagon", "triangle", "diamond",
 ];
 
 // --------------------------------------------------------------------------
@@ -119,7 +120,6 @@ const luminance = (c) => {
 };
 const GRAY = [63, 63, 70];
 const WHITE = [255, 255, 255];
-const BLACK = [0, 0, 0];
 
 /**
  * The body colour at an intensity. Below 1 it fades toward a dark grey (asleep,
@@ -404,10 +404,6 @@ export function createFace(host, options = {}) {
     "aria-hidden": "true",
   });
   const defs = svg("defs", {}, root);
-  const grad = svg("radialGradient", { id: `${id}g`, cx: "0.36", cy: "0.3", r: "0.8" }, defs);
-  const stopHi = svg("stop", { offset: "0" }, grad);
-  const stopMid = svg("stop", { offset: "0.55" }, grad);
-  const stopLo = svg("stop", { offset: "1" }, grad);
   const glowGrad = svg("radialGradient", { id: `${id}w`, r: "0.5" }, defs);
   const glowIn = svg("stop", { offset: "0.55" }, glowGrad);
   svg("stop", { offset: "1", "stop-opacity": "0" }, glowGrad);
@@ -415,7 +411,7 @@ export function createFace(host, options = {}) {
   const glow = svg("circle", { cx: CX, cy: CY, r: R * 1.55, fill: `url(#${id}w)`, opacity: "0" }, root);
   const shadow = svg("ellipse", { cx: CX, cy: CY + R + 5, rx: R * 0.72, ry: 3.2, fill: "#000", opacity: "0.28" }, root);
   const ring = svg("path", { fill: "none", "stroke-width": "2", opacity: "0" }, root);
-  const body = svg("path", { fill: `url(#${id}g)` }, root);
+  const body = svg("path", {}, root);
   const flash = svg("path", { fill: "none", stroke: ACCENT.flash, "stroke-width": "3", "stroke-linejoin": "round", opacity: "0" }, root);
   const blushL = svg("ellipse", { rx: "6.5", ry: "3.6", fill: ACCENT.blush, opacity: "0" }, root);
   const blushR = svg("ellipse", { rx: "6.5", ry: "3.6", fill: ACCENT.blush, opacity: "0" }, root);
@@ -457,7 +453,8 @@ export function createFace(host, options = {}) {
   const phase = { breathe: rand() * TAU, bob: rand() * TAU, sway: rand() * TAU, pulse: 0, wob: rand() * 100 };
   const accent = Object.fromEntries(ACCENT_NAMES.map((n) => [n, S(0, 70, 0.8)]));
 
-  let shape = SHAPE_FN[options.shape] ? options.shape : "blob";
+  // Round unless someone picked otherwise (owner, 29/09).
+  let shape = SHAPE_FN[options.shape] ? options.shape : DEFAULT_SHAPE;
   let fromShape = shape;
   let shapeT = 1;
   let baseRGB = toRGB(options.color || DEFAULT_COLOR);
@@ -790,13 +787,11 @@ export function createFace(host, options = {}) {
       shadow.setAttribute("opacity", (0.28 * (1 - lift * 0.6)).toFixed(3));
 
       // ---- colour: the owner's hue, only its intensity moves
+      // FLAT: one solid colour. The body was shaded (lit top-left, dark below)
+      // and read as a glass ball — "tira esse efeito de 3D" (owner, 29/09).
+      // The 3D spin stays: that one is the eyes travelling, not the shading.
       const c = intensityColor(baseRGB, intensity);
-      stopHi.setAttribute("stop-color", css(mix(c, WHITE, 0.38)));
-      stopMid.setAttribute("stop-color", css(c));
-      stopLo.setAttribute("stop-color", css(mix(c, BLACK, 0.3)));
-      // the highlight slides as it turns — the cheapest honest 3D cue
-      grad.setAttribute("cx", (0.36 + mvX * sinA * 0.28).toFixed(3));
-      grad.setAttribute("cy", (0.3 + mvY * sinA * 0.28).toFixed(3));
+      body.setAttribute("fill", css(c));
       const glowA = clamp((intensity - 1) * 3.2, 0, 0.55);
       glow.setAttribute("opacity", glowA.toFixed(3));
       glowIn.setAttribute("stop-color", css(c));
