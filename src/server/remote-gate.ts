@@ -103,6 +103,7 @@ export function createRemoteGate(options: RemoteGateOptions): RemoteGate {
 
   let record = loadRemoteAuth(baseDir);
   let armedNotice = record.enabled;
+  let knownHash = record.hash;
   if (record.enabled) {
     log("warn", "[switchboard] remote access is ON — every request needs the password or the local token.");
   }
@@ -117,6 +118,14 @@ export function createRemoteGate(options: RemoteGateOptions): RemoteGate {
       // Arming or disarming invalidates every browser session: turning it off
       // and on again must not leave yesterday's cookie working.
       sessions.destroyAll();
+    }
+    if (fresh.hash !== knownHash) {
+      knownHash = fresh.hash;
+      // A new password must lock out whoever held the old one — `remote
+      // password` promises exactly that, and until 29/09 only an arm/disarm
+      // actually dropped the sessions, so an old cookie outlived the change.
+      sessions.destroyAll();
+      log("info", "[switchboard] remote password changed — every browser session dropped.");
     }
     record = fresh;
     return fresh;

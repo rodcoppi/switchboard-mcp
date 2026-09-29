@@ -203,8 +203,11 @@ export function verifyPassword(password: string, record: RemoteAuthRecord): bool
  * enforced where the password is SET, not merely suggested in the docs.
  */
 export function passwordProblem(password: string): string | null {
-  if (password.length < 12) {
-    return "Password must be at least 12 characters — this gate stands in front of an agent that can run commands.";
+  // 8, not 12 (owner's call, 29/09): with the login throttle an online
+  // attacker gets ~480 guesses a day, which no 8-character mixed password
+  // falls to; the hash itself is only exposed to someone already on the host.
+  if (password.length < 8) {
+    return "Password must be at least 8 characters — this gate stands in front of an agent that can run commands.";
   }
   if (/^\s|\s$/.test(password)) {
     return "Password must not start or end with whitespace (it is almost always an accident, and impossible to see later).";

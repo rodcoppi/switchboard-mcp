@@ -493,7 +493,7 @@ What Switchboard owns is the **lock behind that door**.
 ### Turning it on
 
 ```bash
-switchboard remote password   # typed, never passed as an argument; min 12 chars
+switchboard remote password   # typed, never passed as an argument; min 8 chars
 switchboard remote on         # arms the gate
 ```
 

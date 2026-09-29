@@ -62,7 +62,8 @@ describe("the password itself", () => {
   });
 
   it("holds a floor on what it will accept, at the point it is set", () => {
-    expect(passwordProblem("short")).toMatch(/12 characters/);
+    expect(passwordProblem("short")).toMatch(/8 characters/);
+    expect(passwordProblem("Gn4r$@!x")).toBeNull(); // 8 mixed characters pass
     expect(passwordProblem("  padded password  ")).toMatch(/whitespace/);
     expect(passwordProblem("aaaaaaaaaaaaaaa")).toMatch(/distinct/);
     expect(passwordProblem("a reasonable passphrase")).toBeNull();
@@ -438,5 +439,28 @@ describe("the installable-app shell passes the armed gate", () => {
     for (const closed of ["/api/agents", "/icon-evil.png", "/sw.js.map", "/"]) {
       expect((await fetch(url(closed))).status, closed).toBe(401);
     }
+  });
+});
+
+describe("changing the password", () => {
+  let hub: Hub;
+  afterEach(async () => {
+    await hub?.close();
+  });
+
+  it("drops every open session, as `remote password` says it does", async () => {
+    saveRemoteAuth(dir, { ...emptyRecord(), enabled: true, ...hashPassword("first password") });
+    hub = await startHub({ baseDir: dir, port: 0, quiet: true, onMessage: () => "queued_offline" });
+    const url = (p: string) => `http://127.0.0.1:${hub.port}${p}`;
+    const login = await fetch(url("/api/auth/login"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ password: "first password" }),
+    });
+    const token = /sb_session=([^;]+)/.exec(login.headers.get("set-cookie") ?? "")?.[1] ?? "";
+    const cookie = { cookie: `${SESSION_COOKIE}=${token}` };
+    expect((await fetch(url("/api/agents"), { headers: cookie })).status).toBe(200);
+    saveRemoteAuth(dir, { ...loadRemoteAuth(dir), ...hashPassword("second password") });
+    expect((await fetch(url("/api/agents"), { headers: cookie })).status).toBe(401);
   });
 });
