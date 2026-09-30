@@ -1142,7 +1142,10 @@ describe("the rail's agent filter", () => {
   });
 
   it("hides rooms a search emptied, and says so when nothing is left", () => {
-    expect(renderAgentsSrc).toContain("if (query && inGroup.length === 0) continue;");
+    // (With subgroups a room counts its clients too: a family is hidden only
+    // when the search emptied the parent AND every client inside it.)
+    expect(renderAgentsSrc).toContain("if (query && child.count === 0) continue;");
+    expect(renderAgentsSrc).toContain("if (query && shown === 0) continue;");
     expect(renderAgentsSrc).toContain("No agent matches");
     // Without a search an empty group keeps its header (a room you just named).
     expect(renderAgentsSrc).toContain("const query = state.railSearch.trim();");
@@ -1793,5 +1796,43 @@ describe("the floating menu sits under what it opens", () => {
     for (const over of [".color-pop", ".palette-backdrop", ".lightbox"]) {
       expect(menu, over).toBeLessThan(z(over));
     }
+  });
+});
+
+/**
+ * Subgroups — an agency's clients (owner, 30/09). The wall rule itself is
+ * tested on the hub (test/subgroups.test.ts); these pin the board's side.
+ */
+describe("subgroups on the board", () => {
+  it("mirrors the hub's wall rule", () => {
+    const touch = embeddedFunctionWith<(a: string, b: string) => boolean>("groupsTouch", ["parentOfGroup"]);
+    expect(touch("agency", "agency/acme")).toBe(true);
+    expect(touch("agency/acme", "agency/globex")).toBe(false);
+  });
+
+  it("files a conversation across agency/client in the client's room", () => {
+    const fn = script.match(/function messageGroup\(m\) \{[\s\S]*?\n    }/)?.[0] ?? "";
+    expect(fn).toContain("return parentOfGroup(a) ? a : b");
+  });
+
+  it("lets a parent's tab read its whole family", () => {
+    expect(script).toContain("if (state.group && !inGroupFamily(messageGroup(m), state.group)) continue;");
+  });
+
+  it("draws each client inside its agency's box", () => {
+    expect(script).toContain('const box = el("div", sub ? "rail-group rail-subgroup" : "rail-group")');
+    expect(styles).toMatch(/\.rail-subgroup \{/);
+  });
+
+  it("accepts one '/' in a typed group name, and only one", () => {
+    const clean = embeddedFunctionWith<(raw: string, keep: boolean) => string>("sanitizeGroupNameInput", ["sanitizeAgentNameInput"]);
+    expect(clean("AI Panorama/Acme Corp", false)).toBe("ai-panorama/acme-corp");
+    expect(clean("agency/a/b", false)).toBe("agency/a-b");
+    expect(clean("agency/", true)).toBe("agency/");
+    expect(clean("agency/", false)).toBe("agency");
+  });
+
+  it("offers a '+ client' on every agency in the groups panel", () => {
+    expect(script).toContain('"+ client"');
   });
 });

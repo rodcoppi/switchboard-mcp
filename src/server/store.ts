@@ -35,12 +35,33 @@ import { defaultBaseDir, loadConfig } from "./config.js";
 export const AGENT_NAME_RE = /^[a-z0-9][a-z0-9-]{1,30}$/;
 
 /**
- * Group names follow the agent-name rule. Same reason: a group name is typed by
- * a human, shown on the dashboard and passed on a command line, so one shape for
- * both is one thing to learn. They live in separate namespaces — a group and an
- * agent may share a name without colliding.
+ * Group names follow the agent-name rule, plus ONE optional level of subgroup:
+ * "ai-panorama" or "ai-panorama/cliente-x". Each segment is agent-name shaped
+ * (typed by a human, shown on the dashboard, passed on a command line). They
+ * live in a separate namespace from agents — a group and an agent may share a
+ * name without colliding.
+ *
+ * Subgroups exist for clients (owner, 30/09): an agency's own agents in the
+ * parent, one subgroup per client. One level is all that needs, and a deeper
+ * tree would make "who can reach whom" something nobody could keep in mind.
  */
-export const GROUP_NAME_RE = AGENT_NAME_RE;
+export const GROUP_NAME_RE = /^[a-z0-9][a-z0-9-]{1,30}(?:\/[a-z0-9][a-z0-9-]{1,30})?$/;
+
+/** The parent of a subgroup ("ai-panorama/x" → "ai-panorama"), else null. */
+export function parentGroup(group: string): string | null {
+  const at = group.indexOf("/");
+  return at === -1 ? null : group.slice(0, at);
+}
+
+/**
+ * Whether two groups share a wall-free boundary: the same group, or a parent
+ * and one of its own subgroups. Two subgroups of the same parent do NOT touch —
+ * one client's agents never reach another client's (owner, 30/09: "cliente ↔ AI
+ * Panorama, cliente ≠ cliente").
+ */
+export function groupsTouch(a: string, b: string): boolean {
+  return a === b || parentGroup(a) === b || parentGroup(b) === a;
+}
 
 /**
  * Where an agent lands when nobody said otherwise. Every record written before
@@ -402,16 +423,35 @@ export class Store {
     if (!GROUP_NAME_RE.test(to)) {
       throw new Error(
         `Invalid group name: "${to}". Use lowercase letters, digits and hyphens ` +
-          `(2 to 31 characters, starting with a letter or digit): ^[a-z0-9][a-z0-9-]{1,30}$`,
+          `(2 to 31 characters, starting with a letter or digit), with at most one ` +
+          `"/" for a subgroup: "agency" or "agency/client".`,
       );
     }
     const members = this.listAgentsInGroup(from);
-    if (members.length === 0) {
+    // A parent's subgroups move WITH it: renaming "agency" to "studio" must
+    // make "agency/client" into "studio/client", or the clients would be left
+    // under a parent that no longer exists — outside its wall.
+    const children = this.listAgents().filter((a) => parentGroup(resolveGroup(a.group)) === from);
+    if (members.length === 0 && children.length === 0) {
       throw new Error(`Unknown group: "${from}". No agent belongs to it.`);
     }
+    if (children.length > 0 && parentGroup(to) !== null) {
+      throw new Error(
+        `Cannot make "${from}" a subgroup: it has subgroups of its own, and groups go one level deep.`,
+      );
+    }
     for (const agent of members) agent.group = to;
+    for (const agent of children) agent.group = `${to}/${resolveGroup(agent.group).slice(from.length + 1)}`;
     this.saveAgentsSnapshot();
-    return members;
+    return [...members, ...children];
+  }
+
+  /** Everyone `name` can reach: its group, its parent and its own subgroups. */
+  listReachable(name: string): Agent[] {
+    const self = this.getAgent(name);
+    if (!self) return [];
+    const mine = resolveGroup(self.group);
+    return this.listAgents().filter((a) => groupsTouch(mine, resolveGroup(a.group)));
   }
 
   /** Every group that currently has an agent in it, sorted for a stable UI. */
@@ -432,7 +472,7 @@ export class Store {
     const sender = this.getAgent(from);
     const recipient = this.getAgent(to);
     if (!sender || !recipient) return false;
-    return resolveGroup(sender.group) === resolveGroup(recipient.group);
+    return groupsTouch(resolveGroup(sender.group), resolveGroup(recipient.group));
   }
 
   /**

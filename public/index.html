@@ -3082,6 +3082,17 @@
 
     /* A group is a real room: one framed rack with a tinted header and agent
        rows inside. Colour lives across the TOP, never as another left rail. */
+    /* A client inside its agency's box: indented, on the inset surface, with
+       a quieter head — the family reads by its shape. */
+    .rail-subgroup {
+      margin: 8px 2px 4px 10px;
+      background: var(--bg);
+      border-left: 2px solid color-mix(in srgb, var(--group-color) 55%, var(--border-soft));
+    }
+    .rail-subgroup > .group-head { padding: 8px 10px 7px; }
+    .rail-subgroup > .group-head .rail-group-name { font-size: var(--fs-xs); }
+    .group-tab.sub { opacity: 0.85; }
+    .groups-group.sub { margin-left: 18px; border-left: 2px solid var(--border); }
     .rail-group {
       position: relative;
       margin: 6px 4px 16px;
@@ -5165,6 +5176,20 @@
     // before groups existed has no field and belongs with the rest of them.
     const DEFAULT_GROUP = "default";
 
+    /** "agency/client" → "agency"; a top-level group → null. */
+    function parentOfGroup(group) {
+      const at = group ? group.indexOf("/") : -1;
+      return at === -1 ? null : group.slice(0, at);
+    }
+    /** Mirrors groupsTouch in src/server/store.ts: same group, or parent ↔ its own subgroup. */
+    function groupsTouch(a, b) {
+      return a === b || parentOfGroup(a) === b || parentOfGroup(b) === a;
+    }
+    /** Whether `group` is `family` itself or one of its subgroups. */
+    function inGroupFamily(group, family) {
+      return group === family || parentOfGroup(group) === family;
+    }
+
     function groupOf(agent) {
       return (agent && agent.group) || DEFAULT_GROUP;
     }
@@ -5226,6 +5251,9 @@
       const saved = localStorage.getItem("sb.groupColor." + group);
       if (saved) return saved;
       if (group === DEFAULT_GROUP) return DEFAULT_GROUP_COLOR;
+      // A client wears its agency's colour until given its own.
+      const parent = parentOfGroup(group);
+      if (parent) return groupColor(parent);
       return GROUP_PALETTE[hashStr(group) % GROUP_PALETTE.length];
     }
     function setGroupColor(group, color) {
@@ -5240,7 +5268,9 @@
     function groupLabelOf(group) {
       const saved = localStorage.getItem("sb.groupLabel." + group);
       if (saved) return saved;
-      return group === DEFAULT_GROUP ? "Desagrupados" : group;
+      if (group === DEFAULT_GROUP) return "Desagrupados";
+      const parent = parentOfGroup(group);
+      return parent ? group.slice(parent.length + 1) : group; // a client reads as its own name
     }
     function setGroupLabel(group, label) {
       const v = (label || "").trim().slice(0, 48);
@@ -5527,8 +5557,15 @@
      */
     function messageGroup(m) {
       const sender = state.agents.get(m.from);
-      if (sender) return groupOf(sender);
       const recipient = state.agents.get(m.to);
+      // Across an agency/client boundary the conversation is ABOUT the client:
+      // it lands in the subgroup's room, or the agency's side and the client's
+      // replies would split into two rooms.
+      if (sender && recipient) {
+        const a = groupOf(sender), b = groupOf(recipient);
+        if (a !== b && groupsTouch(a, b)) return parentOfGroup(a) ? a : b;
+      }
+      if (sender) return groupOf(sender);
       return recipient ? groupOf(recipient) : null;
     }
 
@@ -5548,16 +5585,28 @@
 
     /** Every group that has an agent, in the operator's order (else sorted). */
     function allGroups() {
-      const present = [...new Set([...state.agents.values()].map(groupOf))];
+      const present = new Set([...state.agents.values()].map(groupOf));
+      // A subgroup implies its parent, even with nobody in the parent itself.
+      for (const g of [...present]) {
+        const parent = parentOfGroup(g);
+        if (parent) present.add(parent);
+      }
       const rank = new Map(loadGroupOrder().map((g, i) => [g, i]));
-      return present.sort((a, b) => {
+      const byRank = (a, b) => {
         const ia = rank.has(a) ? rank.get(a) : -1;
         const ib = rank.has(b) ? rank.get(b) : -1;
         if (ia !== -1 && ib !== -1) return ia - ib;
         if (ia !== -1) return -1;
         if (ib !== -1) return 1;
         return a < b ? -1 : a > b ? 1 : 0;
-      });
+      };
+      // Parents in the saved order, each followed by its own subgroups (A–Z).
+      const out = [];
+      for (const top of [...present].filter((g) => !parentOfGroup(g)).sort(byRank)) {
+        out.push(top);
+        for (const sub of [...present].filter((g) => parentOfGroup(g) === top).sort()) out.push(sub);
+      }
+      return out;
     }
 
     /**
@@ -5642,20 +5691,38 @@
       if (groups.length === 1 && groups[0] === DEFAULT_GROUP) {
         appendAgentCards(container, agents);
       } else {
-        for (const group of groups) {
+        // Subgroups (an agency's clients) live INSIDE their parent's box, under
+        // the parent's own agents, so the rail shows the family by its shape.
+        const selected = state.group;
+        const shows = (group) =>
+          !selected || group === selected || parentOfGroup(group) === selected || parentOfGroup(selected) === group;
+        const buildBox = (group, sub) => {
           const inGroup = agents.filter((a) => groupOf(a) === group);
-          if (state.group && group !== state.group) continue;
-          // A search empties most rooms, and a header over nothing is a shell.
-          // Only a search hides one: with the box empty, a room you have just
-          // named and not yet filled still has to be visible.
-          if (query && inGroup.length === 0) continue;
-          const box = el("div", "rail-group");
+          const box = el("div", sub ? "rail-group rail-subgroup" : "rail-group");
           box.dataset.group = group;
           box.style.setProperty("--group-color", groupColor(group));
           box.appendChild(buildGroupHead(group, inGroup));
+          if (!collapsedGroups.has(group)) appendAgentCards(box, inGroup);
+          return { box, count: inGroup.length };
+        };
+        for (const group of groups) {
+          if (parentOfGroup(group)) continue; // drawn inside its parent below
+          if (!shows(group)) continue;
+          const { box, count } = buildBox(group, false);
+          let shown = count;
           if (!collapsedGroups.has(group)) {
-            appendAgentCards(box, inGroup);
+            for (const sub of groups.filter((g) => parentOfGroup(g) === group)) {
+              if (selected && selected !== group && selected !== sub) continue;
+              const child = buildBox(sub, true);
+              // A search empties most rooms; a header over nothing is a shell.
+              if (query && child.count === 0) continue;
+              shown += child.count;
+              box.appendChild(child.box);
+            }
           }
+          // Only a search hides a room: with the box empty, a room you have
+          // just named and not yet filled still has to be visible.
+          if (query && shown === 0) continue;
           container.appendChild(box);
         }
       }
@@ -5776,7 +5843,11 @@
 
       tabs.appendChild(mk("all", null));
       for (const group of groups) {
-        tabs.appendChild(mk(groupLabelOf(group), group, [...state.agents.values()].filter((a) => groupOf(a) === group).length));
+        const sub = !!parentOfGroup(group);
+        const count = [...state.agents.values()].filter((a) => inGroupFamily(groupOf(a), group)).length;
+        const tab = mk(`${sub ? "↳ " : ""}${groupLabelOf(group)}`, group, count);
+        if (sub) tab.classList.add("sub");
+        tabs.appendChild(tab);
       }
     }
 
@@ -6552,6 +6623,33 @@
      * to the end, which fights anyone editing mid-string, so the caret is put
      * back where it was minus whatever the rewrite removed.
      */
+    /**
+     * A group name: agent-name shaped, with ONE optional "/" for a subgroup
+     * ("ai-panorama/acme" — a client of an agency). Each side is sanitized on
+     * its own; while typing, a trailing "/" is kept so the second half can
+     * follow.
+     */
+    function sanitizeGroupNameInput(raw, keepTrailing) {
+      const at = raw.indexOf("/");
+      if (at === -1) return sanitizeAgentNameInput(raw, keepTrailing);
+      const parent = sanitizeAgentNameInput(raw.slice(0, at), false);
+      const child = sanitizeAgentNameInput(raw.slice(at + 1).replace(/\//g, "-"), keepTrailing);
+      if (!parent) return child;
+      if (!child) return keepTrailing ? `${parent}/` : parent;
+      return `${parent}/${child}`;
+    }
+    function bindGroupNameSanitizer(input) {
+      input.addEventListener("input", () => {
+        const before = input.value;
+        const after = sanitizeGroupNameInput(before, true);
+        if (after === before) return;
+        const caret = input.selectionStart;
+        input.value = after;
+        const next = Math.max(0, caret - (before.length - after.length));
+        input.setSelectionRange(next, next);
+      });
+    }
+
     function bindAgentNameSanitizer(input) {
       input.addEventListener("input", () => {
         const before = input.value;
@@ -6716,7 +6814,17 @@
     }
 
     function panelGroups() {
-      return [...new Set([...allGroups(), ...draftGroups])].sort();
+      // Same order as the rail: each parent followed by its subgroups.
+      const all = [...new Set([...allGroups(), ...draftGroups])];
+      for (const g of [...all]) {
+        const parent = parentOfGroup(g);
+        if (parent && !all.includes(parent)) all.push(parent);
+      }
+      const out = [];
+      for (const top of all.filter((g) => !parentOfGroup(g)).sort()) {
+        out.push(top, ...all.filter((g) => parentOfGroup(g) === top).sort());
+      }
+      return out;
     }
 
     function renderGroupsPanel() {
@@ -6741,6 +6849,20 @@
         rename.title = `Rename "${group}" — every agent in it moves along`;
         rename.addEventListener("click", () => startGroupRename(group, head, rename));
         if (members.length > 0) head.appendChild(rename);
+        // A client of this group: prefill "group/" in the create field.
+        if (!parentOfGroup(group) && group !== DEFAULT_GROUP) {
+          const addSub = el("button", "groups-rename groups-addsub", "+ client");
+          addSub.type = "button";
+          addSub.title = `New subgroup inside "${group}" — its agents reach ${group}'s, never another client's`;
+          addSub.addEventListener("click", () => {
+            const input = $("#groups-new");
+            input.value = `${group}/`;
+            input.focus();
+            input.setSelectionRange(input.value.length, input.value.length);
+          });
+          head.appendChild(addSub);
+        }
+        if (parentOfGroup(group)) box.classList.add("sub");
         box.appendChild(head);
 
         if (members.length === 0) {
@@ -6771,7 +6893,9 @@
       sel.dataset.agent = agent.name;
       sel.title = `Which group ${agent.name} talks in`;
       for (const group of groups) {
-        const opt = el("option", null, groupLabelOf(group));
+        // A client shows its agency too: two agencies may both have an "acme".
+        const parent = parentOfGroup(group);
+        const opt = el("option", null, parent ? `${groupLabelOf(parent)} › ${groupLabelOf(group)}` : groupLabelOf(group));
         opt.value = group;
         if (group === groupOf(agent)) opt.selected = true;
         sel.appendChild(opt);
@@ -6799,8 +6923,8 @@
       input.type = "text";
       input.value = group;
       input.spellcheck = false;
-      input.maxLength = 31;
-      input.title = "Group name — Enter to confirm, Esc to cancel";
+      input.maxLength = 63;
+      input.title = "Group name (\"agency/client\" for a subgroup) — Enter to confirm, Esc to cancel";
 
       let done = false;
       function restore() {
@@ -6811,7 +6935,7 @@
         return false;
       }
       function confirm() {
-        const next = sanitizeAgentNameInput(input.value, false);
+        const next = sanitizeGroupNameInput(input.value, false);
         if (restore()) return;
         if (next === "" || next === group) return;
         renameGroup(group, next);
@@ -6822,7 +6946,7 @@
         else if (ev.key === "Escape") restore();
       });
       input.addEventListener("blur", restore);
-      bindAgentNameSanitizer(input);
+      bindGroupNameSanitizer(input);
 
       trigger.hidden = true;
       nameEl.replaceWith(input);
@@ -9893,7 +10017,8 @@
 
       for (let i = state.messages.length - 1; i >= 0; i--) {
         const m = state.messages[i];
-        if (state.group && messageGroup(m) !== state.group) continue;
+        // A parent's tab reads its whole family (agency + clients).
+        if (state.group && !inGroupFamily(messageGroup(m), state.group)) continue;
         let row;
         if (m.broadcastId) {
           if (seen.has(m.broadcastId)) continue;
@@ -11016,7 +11141,7 @@
       // A group name is an address too, under the same rule as an agent's, so
       // it gets the same treatment: typing "Chefe de Redes" reads back as
       // "chefe-de-redes" rather than bouncing off the hub.
-      bindAgentNameSanitizer($("#launch-group"));
+      bindGroupNameSanitizer($("#launch-group"));
 
       // Messages: a tab like any other, so selecting it is closing the screen.
       $("#tab-messages").addEventListener("click", closeScreen);
@@ -12226,9 +12351,9 @@
       });
       $("#groups-create").addEventListener("click", () => {
         const input = $("#groups-new");
-        const name = sanitizeAgentNameInput(input.value, false);
+        const name = sanitizeGroupNameInput(input.value, false);
         if (name === "") {
-          toast("Name the group first — lowercase letters, digits and hyphens.", "warn");
+          toast("Name the group first — lowercase letters, digits and hyphens (\"agency/client\" for a subgroup).", "warn");
           return;
         }
         if (panelGroups().includes(name)) {
@@ -12242,7 +12367,7 @@
         renderGroupsPanel();
         toast(`Group "${name}" is ready — move an agent into it to make it real.`);
       });
-      bindAgentNameSanitizer($("#groups-new"));
+      bindGroupNameSanitizer($("#groups-new"));
       $("#groups-new").addEventListener("keydown", (ev) => {
         if (ev.key === "Enter") {
           ev.preventDefault();
@@ -12324,7 +12449,7 @@
         <div class="groups-panel" id="groups-panel">
           <div class="groups-head">
             <span class="eyebrow">Groups</span>
-            <span class="groups-hint">An agent can only message agents in the same group.</span>
+            <span class="groups-hint">An agent messages its own group — and a client subgroup reaches its agency and back, never another client.</span>
             <button class="dirpicker-close" id="groups-close" type="button"
               title="Close (Esc)">✕</button>
           </div>
@@ -12434,7 +12559,7 @@
             <input class="launch-input" id="launch-group" name="group"
               list="group-options" spellcheck="false"
               placeholder="default — the agents it can talk to"
-              title="An agent can only message agents in the same group. Type a new name to start a group, or pick one you already have." />
+              title="An agent messages its own group (a client subgroup, agency/client, also reaches its agency). Type a new name to start a group, or pick one you already have." />
             <datalist id="group-options"></datalist>
           </div>
           <div class="launcher-row">

@@ -386,13 +386,15 @@ export function createMcpEndpoint(options: McpOptions): McpEndpoint {
 
         // The agent meets its group here and nothing beyond it: these are the
         // only names it can message, so they are the only ones worth naming.
+        // With subgroups that is its group, its parent and its own subgroups
+        // (a client's agents meet the agency's; never another client's).
         const group = resolveGroup(updated.group);
         return jsonResult({
           ok: true,
           group,
           agents: store
-            .listAgentsInGroup(group)
-            .map((a) => ({ name: a.name, role: a.role, status: a.status })),
+            .listReachable(updated.name)
+            .map((a) => ({ name: a.name, role: a.role, status: a.status, group: resolveGroup(a.group) })),
           etiquette: ETIQUETTE,
           // Only on on-the-fly creation / legacy claim (PRD 9.1 v1.1); never
           // echoed back on a normal token-proven join.
@@ -502,7 +504,7 @@ export function createMcpEndpoint(options: McpOptions): McpEndpoint {
           // this agent's business and it could not message them anyway. The
           // caller itself stays in the list, as it always has (PRD 9.3).
           agents_online: store
-            .listAgentsInGroup(resolveGroup(store.getAgent(name)?.group))
+            .listReachable(name)
             .filter((a) => a.status === "online")
             .map((a) => a.name),
         });
@@ -527,7 +529,7 @@ export function createMcpEndpoint(options: McpOptions): McpEndpoint {
         // returned: such a session has no identity yet, so there is no group to
         // filter by, and it cannot send anything until it joins anyway.
         const self = name ? store.getAgent(name) : undefined;
-        const agents = self ? store.listAgentsInGroup(resolveGroup(self.group)) : store.listAgents();
+        const agents = self ? store.listReachable(self.name) : store.listAgents();
 
         return jsonResult({
           ok: true,
@@ -538,6 +540,7 @@ export function createMcpEndpoint(options: McpOptions): McpEndpoint {
             status: a.status,
             mcp_connected: a.mcpConnected,
             unread_count: store.unreadCount(a.name),
+            group: resolveGroup(a.group),
           })),
         });
       },

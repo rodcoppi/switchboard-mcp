@@ -246,7 +246,8 @@ export function registerWireCommand(program: Command): void {
     )
     .option(
       "--group <group>",
-      "the group this agent talks in — it can only message agents in the same group " +
+      "the group this agent talks in, or \"group/subgroup\" (a client of an agency) — it can " +
+        "message its own group, its parent group and its own subgroups, never a sibling " +
         "(default: keeps its current group, or \"default\" for a new agent)",
     )
     .option(

@@ -29,7 +29,7 @@ import {
   type SseEvent,
 } from "../shared/types.js";
 import type { Logger } from "./log.js";
-import { GROUP_NAME_RE, resolveGroup, type Store } from "./store.js";
+import { GROUP_NAME_RE, groupsTouch, resolveGroup, type Store } from "./store.js";
 import { discoverSkills } from "./skills.js";
 // Value imports for the instanceof mapping and the /api/fs/dirs path
 // translation below. No runtime cycle: launcher.ts imports this module with
@@ -119,6 +119,23 @@ export function reachableFrom(store: Store, from: string): string[] {
   const sender = store.getAgent(from);
   if (!sender) return [];
   return all
+    .filter((a) => groupsTouch(resolveGroup(a.group), resolveGroup(sender.group)))
+    .map((a) => a.name)
+    .sort();
+}
+
+/**
+ * Who an agent's "all" reaches: its OWN group only. Direct messages cross a
+ * parent/subgroup boundary (reachableFrom), but a broadcast does not — an
+ * agency agent saying "all" to its own team must not land in every client's
+ * room at once. The operator is in no group and reaches the whole board.
+ */
+export function broadcastTargets(store: Store, from: string): string[] {
+  const all = store.listAgents().filter((a) => a.name !== from);
+  if (from === "operator") return all.map((a) => a.name).sort();
+  const sender = store.getAgent(from);
+  if (!sender) return [];
+  return all
     .filter((a) => resolveGroup(a.group) === resolveGroup(sender.group))
     .map((a) => a.name)
     .sort();
@@ -155,7 +172,7 @@ export function validateRecipient(
 
   const reachable = reachableFrom(store, from);
   if (to === "all") {
-    if (reachable.length === 0) {
+    if (broadcastTargets(store, from).length === 0) {
       return {
         code: "invalid",
         error:
@@ -241,7 +258,7 @@ export function deliverMessage(
   // exist to prevent.
   const recipients: Agent[] =
     input.to === "all"
-      ? reachableFrom(store, input.from)
+      ? broadcastTargets(store, input.from)
           .map((name) => store.getAgent(name)!)
           .filter((a) => input.group === undefined || resolveGroup(a.group) === input.group)
       : [store.getAgent(input.to)!];

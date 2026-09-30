@@ -300,6 +300,24 @@ Leave `--group` off and nothing changes: the agent keeps the group it already ha
 one joins `default`, where every agent you have today already lives. Re-running `start` or
 `wire` without the flag never moves an agent out of its group.
 
+#### Subgroups — one per client
+
+An agency that runs agents for its clients gives each client a subgroup,
+`agency/client` (one level deep, no more):
+
+```bash
+switchboard start acme-social --dir ~/clients/acme --group ai-panorama/acme
+switchboard start globex-social --dir ~/clients/globex --group ai-panorama/globex
+```
+
+The wall bends by exactly one step: the agency's own agents (`ai-panorama`) reach every
+client, and every client reaches the agency — but one client never reaches, lists or sees
+another. A broadcast stays in the sender's own group, so the agency saying "all" to its team
+does not land in every client's room. In the dashboard, the groups panel has a **+ client**
+button under each group, the rail nests the clients inside their agency, and the agency's tab
+shows the whole family while a client's tab shows that client alone. Renaming the agency
+carries its clients along.
+
 You are the operator, so no wall applies to you: you can message any agent from the dashboard.
 
 ### Mentions — delegate with `%name`

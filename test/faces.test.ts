@@ -12,12 +12,14 @@ const dashboard = fs.readFileSync(path.join(process.cwd(), "public", "index.html
 
 describe("the faces engine", () => {
   it("draws exactly the shapes the dashboard lets you pick", async () => {
+    // @ts-expect-error — plain browser JS module, no type declarations
     const { SHAPES } = await import("../public/faces/faces.js");
     const list = dashboard.match(/const BLOB_SHAPE_NAMES = (\[[^\]]*\])/)?.[1] ?? "[]";
     expect(JSON.parse(list)).toEqual(SHAPES);
   });
 
   it("loads without a DOM and exports its vocabulary", async () => {
+    // @ts-expect-error — plain browser JS module, no type declarations
     const mod = await import("../public/faces/faces.js");
     expect(typeof mod.createFace).toBe("function");
     expect(mod.SHAPES).toContain("blob");
@@ -25,6 +27,7 @@ describe("the faces engine", () => {
   });
 
   it("animates exactly the states the dashboard already derives", async () => {
+    // @ts-expect-error — plain browser JS module, no type declarations
     const { STATES } = await import("../public/faces/faces.js");
     // BLOB_LABEL names every state the dashboard's blobStateOf can report.
     const labels = dashboard.match(/const BLOB_LABEL = \{([\s\S]*?)\};/)?.[1] ?? "";
@@ -91,6 +94,7 @@ describe("the look the owner asked for (29/09)", () => {
   });
 
   it("is round unless someone picked a shape", async () => {
+    // @ts-expect-error — plain browser JS module, no type declarations
     const { DEFAULT_SHAPE } = await import("../public/faces/faces.js");
     expect(DEFAULT_SHAPE).toBe("circle");
     expect(dashboard).toMatch(/BLOB_SHAPE_NAMES\.includes\(chosen\) \? chosen : "circle"/);
