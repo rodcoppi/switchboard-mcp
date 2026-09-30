@@ -508,20 +508,19 @@ describe("drag-and-drop staging", () => {
 });
 
 describe("autostart toggle (rail menu)", () => {
-  it("every card's ⋯ menu offers the login-autostart toggle", () => {
-    expect(script).toContain('"autostart-btn": "⏻"');
-    expect(script).toContain("toggleAutostart(agent.name, !agent.autostart)");
-    expect(script).toContain('agent.autostart ? "autostart ✓" : "autostart"');
+  it("every card's menu offers the login-autostart toggle, as a switch", () => {
+    expect(script).toContain('label: "Start with Windows", cls: "autostart-btn", toggle: autostart');
+    expect(script).toContain("toggleAutostart(agent.name, autostart)");
   });
 
-  it("the enabled state reads as data (ok green), zinc grammar", () => {
-    expect(html).toContain(".autostart-btn.autostarted { color: var(--ok); }");
+  it("the on state reads as data (ok green) on the switch, not in the label", () => {
+    expect(html).toMatch(/\.agent-menu \.on > \.mi-switch \{[^}]*var\(--ok\)/);
   });
 });
 
 describe("launch args (rail menu)", () => {
-  it("the ⋯ menu offers launch args and both fields share the editor dialog", () => {
-    expect(script).toContain('"cliargs-btn": "⚙"');
+  it("the menu offers launch args and both fields share the editor dialog", () => {
+    expect(script).toContain('label: "Launch args…", cls: "cliargs-btn"');
     expect(script).toContain('field: "cliArgs"');
     expect(script).toContain('field: "bootCommand"');
     expect(script).toContain("function showAgentFieldDialog");
@@ -1172,13 +1171,12 @@ describe("the transcript filter kept a door", () => {
   // only way in, and undiscoverable at that. That click now opens the wake
   // screen, which is what you want from a sleeping agent, so the filter needed
   // an entry of its own instead of quietly disappearing.
-  it("lives in the agent's ⋯ menu", () => {
-    // The comma matters: "filter-btn": "🔎" in the icon map comes first.
-    const at = script.indexOf('"filter-btn",');
+  it("lives in the agent's menu", () => {
+    const at = script.indexOf('cls: "filter-btn"');
     expect(at, "the filter menu item is gone").toBeGreaterThan(-1);
-    const item = script.slice(at, at + 500);
+    const item = script.slice(at, at + 300);
     expect(item).toContain("setFilter(agent.name)");
-    expect(item).toContain("closeMenus()"); // the transcript is elsewhere on screen
+    expect(item).toContain("act("); // closes the menu: the transcript is elsewhere on screen
   });
 
   it("is not reachable ONLY by the clear button any more", () => {
@@ -1707,7 +1705,7 @@ describe("the UI pass", () => {
   });
 
   it("floats the agent menu over the page and puts it back on close", () => {
-    expect(script).toContain("function floatMenu(menu, anchor, home)");
+    expect(script).toContain("function floatMenu(menu, anchor, home, point)");
     expect(script).toContain("document.body.appendChild(menu)");
     // Measured by layout, not by a rect taken mid entrance-animation.
     expect(script).toContain("{ width: menu.offsetWidth, height: menu.offsetHeight }");
@@ -1834,5 +1832,59 @@ describe("subgroups on the board", () => {
 
   it("offers a '+ client' on every agency in the groups panel", () => {
     expect(script).toContain('"+ client"');
+  });
+});
+
+describe("the agent menu (⋯ or right-click)", () => {
+  // Sixteen rows in one flat list, emoji that did not all render, the
+  // everyday next to the once-a-year (owner, 30/09: "ta super ruim a
+  // usabilidade dali"). Rebuilt with sections and two inner pages.
+  const menu = embeddedFunctionSource("buildAgentMenu");
+  const mainPage = menu.slice(0, menu.indexOf('const groupPage = subPage("Move to group")'));
+
+  it("opens on a right-click at the pointer, leaving shift + right-click to the browser", () => {
+    expect(script).toContain('card.addEventListener("contextmenu"');
+    expect(script).toContain("if (ev.shiftKey ||");
+    expect(script).toContain("openAgentMenu(menu, card, kebab, menuWrap, fromKeyboard ? null : { x: ev.clientX, y: ev.clientY })");
+    // Placed at the point, flipped left/up when that side runs out of screen.
+    expect(embeddedFunctionSource("floatMenu")).toContain("point.x + mr.width <= vw - pad ? point.x : point.x - mr.width");
+  });
+
+  it("draws its icons instead of spelling them in emoji", () => {
+    expect(script).not.toContain("MENU_ICONS = {");
+    for (const emoji of ["⏻", "📣", "🗑", "🚪", "🛠", "👑"]) expect(menu, emoji).not.toContain(emoji);
+    expect(styles).toMatch(/\.agent-menu \.mi-icon svg \{[^}]*stroke: currentColor/);
+  });
+
+  it("keeps the first page short and the technical rows one step in", () => {
+    const rows = [...mainPage.matchAll(/main\.appendChild\(\s*agentMenuRow\(/g)].length;
+    expect(rows).toBeLessThanOrEqual(13);
+    const more = menu.slice(menu.indexOf('const morePage = subPage("More")'));
+    for (const cls of ["bootcmd-btn", "cliargs-btn", "rename-btn", "mute-toggle", "autostart-btn", "leader-btn", "nudge-btn"]) {
+      expect(mainPage, cls).not.toContain(`cls: "${cls}"`);
+      expect(more, cls).toContain(`cls: "${cls}"`);
+    }
+  });
+
+  it("puts its inner pages IN the menu (they were built and never shown)", () => {
+    const sub = menu.slice(menu.indexOf("const subPage = (title) =>"), menu.indexOf("const sep = (page) =>"));
+    expect(sub).toContain("menu.appendChild(page)");
+  });
+
+  it("moves an agent into a new client of an agency, right from the menu", () => {
+    expect(menu).toContain('newGroupRow("client", "New client…"');
+    expect(menu).toContain('const target = kind === "client" ? `${agency.value}/${typed}` : typed;');
+    expect(menu).toContain("moveAgentToGroup(agent.name, target)");
+    // The rule that makes a subgroup worth having, said where you pick one.
+    expect(menu).toContain("A client talks to its agency — never to another client.");
+  });
+
+  it("asks before removing or starting blank", () => {
+    expect(menu).toContain('if (!armMenuRow(item, "Remove? Click again")) return;');
+    expect(menu).toContain('if (!armMenuRow(item, "Start blank? Click again")) return;');
+  });
+
+  it("redraws the rail once it closes, so a switch flipped inside shows on the card", () => {
+    expect(embeddedFunctionSource("closeMenus")).toContain("if (wasOpen) queueMicrotask(renderAgents)");
   });
 });

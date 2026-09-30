@@ -1079,15 +1079,141 @@
       font-size: 12px;
       line-height: 1;
     }
-    .agent-menu .remove-btn { margin-top: 3px; border-radius: 0 0 6px 6px; position: relative; }
-    .agent-menu .remove-btn::before {
+    .agent-menu .danger-item:hover,
+    .agent-menu .danger-item:focus-visible { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); }
+    .agent-menu .danger-item.confirming { color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent); }
+
+    /* The agent menu (⋯ or right-click): a header naming whose menu it is,
+       short sections split by hairlines, "›" rows that open a second page,
+       and switches for the toggles. */
+    .agent-menu[role="menu"] { width: 248px; gap: 0; outline: none; }
+    .agent-menu .am-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 10px 8px;
+      margin-bottom: 4px;
+      border-bottom: 1px solid var(--border-soft);
+      min-width: 0;
+    }
+    .agent-menu .am-dot { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: var(--text-faint); }
+    .agent-menu .am-dot.on { background: var(--ok); box-shadow: 0 0 6px color-mix(in srgb, var(--ok) 60%, transparent); }
+    .agent-menu .am-title {
+      font-family: var(--sans);
+      font-size: var(--fs-md);
+      font-weight: 600;
+      color: var(--text);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      min-width: 0;
+    }
+    .agent-menu .am-sub {
+      margin-left: auto;
+      flex: 0 1 auto;
+      min-width: 0;
+      font-family: var(--mono);
+      font-size: var(--fs-xs);
+      color: var(--text-faint);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .agent-menu .am-page { display: flex; flex-direction: column; gap: 1px; }
+    .agent-menu .am-page[hidden] { display: none; }
+    .agent-menu .am-sep { flex: 0 0 auto; height: 1px; margin: 4px 8px; background: var(--border-soft); }
+    .agent-menu .am-hint {
+      padding: 2px 10px 6px;
+      font-family: var(--sans);
+      font-size: var(--fs-xs);
+      line-height: 1.45;
+      color: var(--text-faint);
+    }
+    .agent-menu .mi-icon svg {
+      display: block;
+      width: 15px;
+      height: 15px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .agent-menu .mi-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+    .agent-menu .mi-aside + .mi-switch, .agent-menu .mi-aside + .mi-next { margin-left: 0; }
+    .agent-menu .mi-aside {
+      flex: 0 1 auto;
+      min-width: 0;
+      max-width: 90px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-family: var(--mono);
+      font-size: var(--fs-xs);
+      color: var(--text-faint);
+    }
+    .agent-menu .mi-next { color: var(--text-faint); }
+    .agent-menu .mi-next svg { width: 13px; height: 13px; }
+    .agent-menu .agent-menu-item:focus-visible { outline: none; background: var(--bg-hover); color: var(--text); }
+    .agent-menu .am-back { color: var(--text); font-weight: 600; margin-bottom: 2px; }
+    .agent-menu .am-back .mi-icon { color: var(--text-faint); }
+    /* A switch, not a changing label: the row says what it controls, the
+       switch says whether it is on. */
+    .agent-menu .mi-switch {
+      flex: 0 0 auto;
+      position: relative;
+      width: 26px;
+      height: 15px;
+      border-radius: 8px;
+      background: var(--border);
+      transition: background 0.15s var(--ease);
+    }
+    .agent-menu .mi-switch::after {
       content: "";
       position: absolute;
-      top: -2px; left: 6px; right: 6px;
-      height: 1px;
-      background: var(--border-soft);
+      top: 2px;
+      left: 2px;
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+      background: var(--text-dim);
+      transition: transform 0.15s var(--ease), background 0.15s var(--ease);
     }
-    .agent-menu .remove-btn:hover { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); }
+    .agent-menu .on > .mi-switch { background: color-mix(in srgb, var(--ok) 55%, transparent); }
+    .agent-menu .on > .mi-switch::after { transform: translateX(11px); background: #fff; }
+    .agent-menu .am-group-dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; margin-left: -4px; }
+    .agent-menu .am-group.sub { padding-left: 26px; }
+    .agent-menu .am-group.current { color: var(--text); }
+    .agent-menu .am-group.current .mi-icon { color: var(--ok); }
+    .agent-menu .am-new { display: flex; align-items: center; gap: 4px; padding: 3px 4px; }
+    .agent-menu .am-new select,
+    .agent-menu .am-new input {
+      min-width: 0;
+      font-family: var(--mono);
+      font-size: var(--fs-xs);
+      color: var(--text);
+      background: var(--bg-inset);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 5px 6px;
+    }
+    .agent-menu .am-new select { flex: 0 1 92px; }
+    .agent-menu .am-new input { flex: 1 1 auto; }
+    .agent-menu .am-new input:focus,
+    .agent-menu .am-new select:focus { outline: none; border-color: var(--border-strong); }
+    .agent-menu .am-new input.invalid { border-color: var(--danger); }
+    .agent-menu .am-new-slash { color: var(--text-faint); font-family: var(--mono); }
+    .agent-menu .am-new-go {
+      flex: 0 0 auto;
+      font-family: var(--sans);
+      font-size: var(--fs-xs);
+      color: var(--text);
+      background: var(--bg-hover);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 5px 9px;
+      cursor: pointer;
+    }
+    .agent-menu .am-new-go:hover { border-color: var(--border-strong); }
     .mute-toggle, .nudge-btn, .open-btn, .reopen-btn, .rename-btn, .remove-btn, .menu-btn {
       background: transparent;
       border: 1px solid var(--border);
@@ -1103,7 +1229,6 @@
     .mute-toggle:active, .nudge-btn:active, .open-btn:active, .reopen-btn:active, .rename-btn:active, .remove-btn:active, .menu-btn:active { transform: scale(0.96); }
     .menu-btn { padding: 3px 7px; letter-spacing: 1px; }
     .mute-toggle.muted { color: var(--warn); border-color: var(--accent-line); }
-    .autostart-btn.autostarted { color: var(--ok); }
     .bootcmd-body { display: flex; flex-direction: column; gap: 8px; padding: 14px 16px 16px; }
     .bootcmd-input {
       font-family: var(--mono);
@@ -6035,384 +6160,24 @@
       const kebab = el("button", "menu-btn", "⋯");
       kebab.type = "button";
       kebab.title = "More actions";
-      const menu = el("div", "agent-menu");
-      menu.hidden = true;
-
-      // One glyph per action so the menu scans by eye, not by reading.
-      const MENU_ICONS = {
-        "nudge-btn": "📣", "group-btn": "🚪", "codex-btn": "◆", "colour-btn": "🎨",
-        "colour-reset-btn": "⭕", "mute-toggle": "🔇", "rename-btn": "✏️", "remove-btn": "🗑",
-        "autostart-btn": "⏻", "bootcmd-btn": "🛠", "cliargs-btn": "⚙",
-        "display-btn": "🏷", "leader-btn": "👑", "stop-btn": "⏹", "desc-btn": "📄",
-        "folder-btn": "📂", "fresh-btn": "✨", "shape-btn": "⬡", "filter-btn": "🔎",
-      };
-      function menuItem(cls, label, title, onClick) {
-        const item = el("button", `agent-menu-item ${cls}`);
-        const key = cls.split(" ")[0];
-        const icon = cls.includes("muted") ? "🔊" : MENU_ICONS[key];
-        if (icon) item.appendChild(el("span", "mi-icon", icon));
-        item.appendChild(el("span", null, label));
-        item.type = "button";
-        item.title = title;
-        item.addEventListener("click", (ev) => {
-          ev.stopPropagation();
-          onClick(item);
-        });
-        return item;
-      }
-
-      menu.appendChild(
-        menuItem(
-          "nudge-btn",
-          "nudge",
-          "Force a manual nudge (respects the pane guard)",
-          () => {
-            closeMenus();
-            forceNudge(agent.name);
-          },
-        ),
-      );
-      // Open the agent's project folder (its cwd) in Windows Explorer.
-      if (agent.cwd) {
-        menu.appendChild(
-          menuItem(
-            "folder-btn",
-            "open folder",
-            `Open ${agent.cwd} in Windows Explorer`,
-            (item) => {
-              closeMenus();
-              openAgentFolder(agent.name, item);
-            },
-          ),
-        );
-      }
-      // Filter the transcript to this agent. It used to be what clicking an
-      // OFFLINE card did — the only way in, and undiscoverable at that. That
-      // click now opens the wake screen (which is what you actually want from
-      // a sleeping agent), so the filter needs a door of its own rather than
-      // quietly disappearing.
-      menu.appendChild(
-        menuItem(
-          "filter-btn",
-          "filter transcript",
-          `Show only ${displayOf(agent)}'s messages in the transcript`,
-          () => {
-            closeMenus();
-            setFilter(agent.name);
-          },
-        ),
-      );
-      // Start over: same agent, blank conversation. Confirms first — see
-      // reopenAgent's note on what stops being one click away.
-      menu.appendChild(
-        menuItem(
-          "fresh-btn",
-          "new conversation",
-          `Relaunch ${agent.name} with a BLANK conversation (the current one stays on disk, ` +
-            `reachable with /resume in the terminal)`,
-          (item) => {
-            if (item.dataset.confirming !== "1") {
-              item.dataset.confirming = "1";
-              item.classList.add("confirming");
-              const label = item.querySelector("span:last-child");
-              if (label) label.textContent = "start blank?";
-              setTimeout(() => {
-                if (!item.isConnected || item.dataset.confirming !== "1") return;
-                item.dataset.confirming = "0";
-                item.classList.remove("confirming");
-                if (label) label.textContent = "new conversation";
-              }, 4000);
-              return;
-            }
-            closeMenus();
-            const card = item.closest(".agent-card");
-            const btn = card ? card.querySelector(".reopen-btn") : null;
-            reopenAgent(agent, btn || item, true);
-          },
-        ),
-      );
-      // Opens the Groups panel rather than editing here: a group is a container
-      // holding several agents, so it is managed where you can see all of them
-      // at once. (This used to turn the NAME cell into a group field, which put
-      // the group's name where the agent's name lives — confusing, and it left
-      // no way to rename a group or put a second agent in one.)
-      menu.appendChild(
-        menuItem(
-          "group-btn",
-          "group…",
-          `Move "${agent.name}" to another group — it can only message agents in the same one`,
-          () => {
-            closeMenus();
-            openGroups(agent.name);
-          },
-        ),
-      );
-      // "Open Codex here": launch the codex sibling in the SAME cwd, so this
-      // logical agent gains a second engine (the pair shows engine tabs). Only
-      // offered on a claude agent that has no sibling yet.
-      if (agentTypeOf(agent) === "claude" && !agent.name.endsWith("-codex") && !state.agents.has(`${agent.name}-codex`)) {
-        menu.appendChild(
-          menuItem(
-            "codex-btn",
-            "open codex…",
-            `Open a Codex instance on ${agent.name}'s folder — same files, its own session`,
-            (item) => {
-              openCodexSibling(agent, item);
-              closeMenus();
-            },
-          ),
-        );
-      }
-      // Recolour this chat's cable — a swatch popover (pick a colour, or custom,
-      // or clear). No native OS dialog; a click picks, nothing auto-applies.
-      menu.appendChild(
-        menuItem(
-          "colour-btn",
-          "colour & shape…",
-          `Pick "${agent.name}"'s colour and shape — its face's body, and the cable in the rail`,
-          () => {
-            closeMenus(); // the panel stands alone, above everything
-            openLookPicker(agent.name);
-          },
-        ),
-      );
-      menu.appendChild(
-        menuItem(
-          `mute-toggle${agent.muted ? " muted" : ""}`,
-          agent.muted ? "unmute" : "mute",
-          agent.muted ? "Unmute nudges" : "Mute nudges (messages are still recorded)",
-          () => {
-            closeMenus();
-            toggleMute(agent.name, !agent.muted);
-          },
-        ),
-      );
-      // Launch at Windows login: a persisted preference the login hook reads.
-      menu.appendChild(
-        menuItem(
-          `autostart-btn${agent.autostart ? " autostarted" : ""}`,
-          agent.autostart ? "autostart ✓" : "autostart",
-          agent.autostart
-            ? "Launching at Windows login — click to disable"
-            : "Launch this agent at Windows login (resumes its conversation)",
-          () => {
-            closeMenus();
-            toggleAutostart(agent.name, !agent.autostart);
-          },
-        ),
-      );
-      // Leader: purely visual, and only meaningful inside a real group. Set it,
-      // and offer to announce it to the group (operator's voice). Toggle off if
-      // this agent is already the marked leader.
-      {
-        const grp2 = groupOf(agent);
-        if (grp2 !== DEFAULT_GROUP) {
-          const isLeader = groupLeaderOf(grp2) === agent.name;
-          menu.appendChild(
-            menuItem(
-              "leader-btn",
-              isLeader ? "unset leader" : "set as leader",
-              isLeader
-                ? "Remove the leader badge from this agent (visual only)"
-                : `Mark "${agent.name}" as this group's leader (visual only — you decide)`,
-              () => {
-                closeMenus();
-                if (isLeader) {
-                  setGroupLeader(grp2, null);
-                  return;
-                }
-                setGroupLeader(grp2, agent.name);
-                // Offer to tell the other agents. Non-blocking: a toast asks.
-                openLeaderAnnouncePrompt(grp2, agent.name);
-              },
-            ),
-          );
-        }
-      }
-      // Read the full description (the card truncates it to one line).
-      menu.appendChild(
-        menuItem(
-          "desc-btn",
-          "description…",
-          `See the full description of "${agent.name}"`,
-          () => {
-            closeMenus();
-            showInfoDialog(`${displayOf(agent)} — description`, agent.role || "");
-          },
-        ),
-      );
-      // Boot command: the project's setup line, run before the CLI on every
-      // launch (operator-set; an agent can never write its own boot code).
-      menu.appendChild(
-        menuItem(
-          "bootcmd-btn",
-          agent.bootCommand ? "boot command ✓" : "boot command…",
-          agent.bootCommand
-            ? `Runs before the CLI on every launch: ${agent.bootCommand.slice(0, 80)}`
-            : `Set a setup command to run before "${agent.name}"'s CLI on every launch`,
-          () => {
-            closeMenus();
-            showAgentFieldDialog(agent, {
-              title: "boot command",
-              field: "bootCommand",
-              endpoint: "bootcmd",
-              bodyKey: "command",
-              hint: "runs before the CLI, same shell — exports carry; failure aborts the launch",
-              placeholder: ". ~/.config/myproj/env && docker compose -f ~/proj/compose.yml up -d",
-            });
-          },
-        ),
-      );
-      // Launch args: REPLACE the CLI's standard argv (pinned --resume master,
-      // special channel flags). Operator-set; continue no longer applies.
-      menu.appendChild(
-        menuItem(
-          "cliargs-btn",
-          agent.cliArgs ? "launch args ✓" : "launch args…",
-          agent.cliArgs
-            ? `Custom CLI argv on every launch: ${agent.cliArgs.slice(0, 80)}`
-            : `Replace "${agent.name}"'s CLI launch arguments (e.g. --resume <session-id>)`,
-          () => {
-            closeMenus();
-            showAgentFieldDialog(agent, {
-              title: "launch args",
-              field: "cliArgs",
-              endpoint: "cliargs",
-              bodyKey: "args",
-              hint: "replaces the standard CLI argv on every launch — wake's continue no longer applies",
-              placeholder: "--resume <session-id> --dangerously-skip-permissions",
-            });
-          },
-        ),
-      );
-      // Nickname: the free display name (emoji ok) — works on a RUNNING agent,
-      // because nothing in the protocol reads it. The name cell becomes the
-      // editor, like rename, but the kebab id is untouched.
-      menu.appendChild(
-        menuItem(
-          "display-btn",
-          "nickname…",
-          `Set the display name the UI shows for "${agent.name}" — emoji welcome; empty clears`,
-          () => {
-            closeMenus();
-            startDisplayRename(agent, name);
-          },
-        ),
-      );
-      // Rename the technical ID — only OFFLINE (a live agent would re-join under
-      // its old name). Now that "nickname…" covers what people usually want (the
-      // shown name), the raw id rename is an advanced, rare thing — so it is
-      // HIDDEN while online instead of shown greyed-and-confusing. It reappears
-      // when the agent is stopped, for when you truly need to change the address.
-      if (!online) menu.appendChild(
-        menuItem(
-          "rename-btn",
-          "rename id",
-          online
-            ? `Stop "${agent.name}" first — a running agent would re-join under its old name`
-            : "Rename this agent — its message history follows the new name",
-          () => {
-            closeMenus();
-            if (online) {
-              toast(
-                `To rename "${agent.name}", stop it first: switchboard stop ${agent.name}`,
-                "warn",
-              );
-              return;
-            }
-            startRename(agent, name);
-          },
-        ),
-      );
-      // Stop: kill the tmux session but KEEP the registration (offline, can be
-      // reopened). Online only — an offline agent has nothing to stop.
-      if (online) {
-        menu.appendChild(
-          menuItem(
-            "stop-btn",
-            "stop",
-            `Stop "${agent.name}" (kills its tmux session) but keep it in the Hub — you can wake it again`,
-            async () => {
-              closeMenus();
-              try {
-                const res = await fetch(`/api/agents/${encodeURIComponent(agent.name)}/stop`, { method: "POST" });
-                const body = await res.json().catch(() => ({}));
-                if (!res.ok || !body.ok) {
-                  toast(`Could not stop "${agent.name}": ${body.error || `HTTP ${res.status}`}`, "warn");
-                  return;
-                }
-                toast(`Stopped "${agent.name}" — still in the rail, offline.`);
-              } catch (err) {
-                toast(`Could not stop "${agent.name}": ${err && err.message ? err.message : err}`, "warn");
-              }
-            },
-          ),
-        );
-      }
-      // Remove: ALWAYS offered (the owner's ask — deleting the codex sibling
-      // took a trip to the CLI). Online, it stops the tmux session first, then
-      // removes the registration. Two-click inline confirmation, no dialogs.
-      const removeLabel = online ? "stop & remove" : "remove";
-      menu.appendChild(
-        menuItem(
-          "remove-btn",
-          removeLabel,
-          online
-            ? `Stop "${agent.name}" (kills its tmux session) and remove it from the Hub (messages are kept)`
-            : "Remove this agent from the Hub registry (messages are kept)",
-          async (item) => {
-            if (item.dataset.confirming === "1") {
-              closeMenus();
-              if (online) {
-                try {
-                  const res = await fetch(`/api/agents/${encodeURIComponent(agent.name)}/stop`, { method: "POST" });
-                  const body = await res.json().catch(() => ({}));
-                  if (!res.ok || !body.ok) {
-                    toast(`Could not stop "${agent.name}": ${body.error || `HTTP ${res.status}`}`, "warn");
-                    return;
-                  }
-                } catch (err) {
-                  toast(`Could not stop "${agent.name}": ${err && err.message ? err.message : err}`, "warn");
-                  return;
-                }
-              }
-              removeAgent(agent.name);
-              return;
-            }
-            item.dataset.confirming = "1";
-            item.textContent = "sure?";
-            item.classList.add("confirming");
-            setTimeout(() => {
-              item.dataset.confirming = "";
-              item.textContent = "";
-              item.appendChild(el("span", "mi-icon", "🗑"));
-              item.appendChild(el("span", null, removeLabel));
-              item.classList.remove("confirming");
-            }, 3000);
-          },
-        ),
-      );
+      const menu = buildAgentMenu(agent, online, name);
 
       kebab.addEventListener("click", (ev) => {
         ev.stopPropagation();
-        const wasHidden = menu.hidden;
-        closeMenus();
-        menu.hidden = !wasHidden;
-        // Keep the actions cluster pinned open while the menu is: its items
-        // can render past the card's edge, and losing :hover there would yank
-        // the whole cluster (and the open menu) out from under the cursor.
-        card.classList.toggle("menu-open", !menu.hidden);
-        // Flip UP when the menu doesn't fit below (a low card's 11-item menu
-        // fell past the viewport / the rail's scrollport and looked truncated).
-        // Measured with the menu already visible; falls back to drop-down when
-        // above doesn't fit either.
-        // The menu FLOATS over the page while open: moved to <body> and
-        // positioned against the viewport. Anchored inside the card it was
-        // clipped by the rail's own scroll box (half the menu vanished behind
-        // the usage card) and the cards below — each a stacking context of its
-        // own — painted their buttons ON TOP of it (owner's screenshots,
-        // 23/09). closeMenus() puts it back home.
-        if (!menu.hidden) floatMenu(menu, kebab, menuWrap);
+        if (!menu.hidden) closeMenus();
+        else openAgentMenu(menu, card, kebab, menuWrap);
+      });
+      // Right-click anywhere on the card opens the same menu at the pointer
+      // (a long-press does it on Android). Shift + right-click, or one inside
+      // a text field, still gets the browser's own menu.
+      card.addEventListener("contextmenu", (ev) => {
+        if (ev.shiftKey || (ev.target instanceof Element && ev.target.closest("input, textarea"))) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        // The keyboard's menu key fires this too, with no real pointer spot:
+        // then it opens under the ⋯ like a click would.
+        const fromKeyboard = ev.button !== 2 && ev.clientX === 0 && ev.clientY === 0;
+        openAgentMenu(menu, card, kebab, menuWrap, fromKeyboard ? null : { x: ev.clientX, y: ev.clientY });
       });
       menuWrap.append(kebab, menu);
 
@@ -6444,41 +6209,665 @@
       return card;
     }
 
+    // --- The agent menu: ⋯ on a card, or a right-click anywhere on it -------
+    // It had grown into sixteen rows in one flat list, lettered with emoji
+    // that did not all render (autostart's ⏻ came out as an empty box), the
+    // everyday next to the once-a-year (owner, 30/09: "ta super ruim a
+    // usabilidade dali"). Now: a header saying WHOSE menu it is, the common
+    // actions in short sections, and the rare or technical one step in
+    // ("Move to group ›", "More ›"), so the first page never scrolls.
+    // Toggles keep a fixed label and show their state as a switch — the old
+    // "autostart ✓" / "unset leader" wording made you read a row to learn
+    // what clicking it would do.
+    const MENU_ICON_PATHS = {
+      window: ["M15 3h6v6", "M10 14 21 3", "M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"],
+      wake: ["M7 4v16l13-8z"],
+      folder: ["M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"],
+      filter: ["M3 4h18l-7 8.5V19l-4 2v-8.5z"],
+      fresh: ["M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z", "M12 7v6", "M9 10h6"],
+      group: ["M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2", "M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z", "M22 21v-2a4 4 0 0 0-3-3.87", "M16 3.13a4 4 0 0 1 0 7.75"],
+      look: ["M12 22a10 10 0 1 1 10-10c0 2.2-1.8 3-3.5 3H16a2 2 0 0 0-1.6 3.2A2 2 0 0 1 13 22z", "M7.5 11.5h.01", "M10.5 7.5h.01", "M15.5 8.5h.01"],
+      rename: ["M12 20h9", "M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"],
+      codex: ["M12 3 21 12 12 21 3 12z"],
+      more: ["M5 12h.01", "M12 12h.01", "M19 12h.01"],
+      nudge: ["M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9", "M10.3 21a1.94 1.94 0 0 0 3.4 0"],
+      mute: ["M13.7 21a2 2 0 0 1-3.4 0", "M18.6 13A17.9 17.9 0 0 1 18 8", "M6.3 6.3A5.9 5.9 0 0 0 6 8c0 7-3 9-3 9h14", "M18 8a6 6 0 0 0-9.3-5", "M2 2l20 20"],
+      power: ["M12 2v10", "M18.4 6.6a9 9 0 1 1-12.8 0"],
+      leader: ["M2 7l5 4 5-7 5 7 5-4-2 11H4z", "M4 21h16"],
+      desc: ["M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z", "M14 2v6h6", "M16 13H8", "M16 17H8"],
+      boot: ["M4 17l6-6-6-6", "M12 19h8"],
+      args: ["M4 21v-7", "M4 10V3", "M12 21v-9", "M12 8V3", "M20 21v-5", "M20 12V3", "M1 14h6", "M9 8h6", "M17 16h6"],
+      id: ["M4 9h16", "M4 15h16", "M10 3 8 21", "M16 3l-2 18"],
+      stop: ["M6 6h12v12H6z"],
+      remove: ["M3 6h18", "M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6", "M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"],
+      back: ["M15 18l-6-6 6-6"],
+      next: ["M9 18l6-6-6-6"],
+      check: ["M20 6 9 17l-5-5"],
+      plus: ["M12 5v14", "M5 12h14"],
+      settings: ["M21 4h-7", "M10 4H3", "M21 12h-9", "M8 12H3", "M21 20h-5", "M12 20H3", "M14 2v4", "M8 10v4", "M16 18v4"],
+    };
+    function menuIcon(key) {
+      const NS = "http://www.w3.org/2000/svg";
+      const box = el("span", "mi-icon");
+      const paths = MENU_ICON_PATHS[key];
+      if (!paths) return box; // an empty slot keeps the labels aligned
+      const svg = document.createElementNS(NS, "svg");
+      svg.setAttribute("viewBox", "0 0 24 24");
+      svg.setAttribute("aria-hidden", "true");
+      for (const d of paths) {
+        const p = document.createElementNS(NS, "path");
+        p.setAttribute("d", d);
+        svg.appendChild(p);
+      }
+      box.appendChild(svg);
+      return box;
+    }
+
+    /**
+     * One row. `opts`: icon, label, title, cls (hook classes), aside (faint
+     * text on the right), toggle (a boolean → a switch), next (→ a "›" that
+     * opens another page of the menu).
+     */
+    function agentMenuRow(opts, onClick) {
+      const item = el("button", `agent-menu-item ${opts.cls || ""}`.trim());
+      item.type = "button";
+      item.setAttribute("role", opts.toggle === undefined ? "menuitem" : "menuitemcheckbox");
+      if (opts.title) item.title = opts.title;
+      item.appendChild(menuIcon(opts.icon));
+      item.appendChild(el("span", "mi-label", opts.label));
+      if (opts.aside) item.appendChild(el("span", "mi-aside", opts.aside));
+      if (opts.toggle !== undefined) {
+        item.appendChild(el("span", "mi-switch"));
+        setMenuRowOn(item, opts.toggle);
+      }
+      if (opts.next) {
+        item.classList.add("has-next");
+        item.appendChild(menuIcon("next")).classList.add("mi-next");
+      }
+      item.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        onClick(item);
+      });
+      return item;
+    }
+    function setMenuRowOn(item, on) {
+      item.classList.toggle("on", on);
+      item.setAttribute("aria-checked", on ? "true" : "false");
+    }
+    /**
+     * Two-click confirmation on a row, no dialog: the first click re-labels it
+     * with the question and answers false; a second click within 4s answers
+     * true (go ahead). Left alone, it quietly goes back to its own label.
+     */
+    function armMenuRow(item, question) {
+      if (item.dataset.confirming === "1") return true;
+      const label = item.querySelector(".mi-label");
+      const before = label.textContent;
+      item.dataset.confirming = "1";
+      item.classList.add("confirming");
+      label.textContent = question;
+      setTimeout(() => {
+        if (item.dataset.confirming !== "1") return;
+        item.dataset.confirming = "";
+        item.classList.remove("confirming");
+        label.textContent = before;
+      }, 4000);
+      return false;
+    }
+    /** "ai-panorama › acme" for a client, the plain label otherwise. */
+    function groupPathLabel(group) {
+      const parent = parentOfGroup(group);
+      return parent ? `${groupLabelOf(parent)} › ${groupLabelOf(group)}` : groupLabelOf(group);
+    }
+    /** Every group an agent could be moved to: the rail's order, then empty drafts, "default" last. */
+    function groupsForMenu() {
+      const out = allGroups().filter((g) => g !== DEFAULT_GROUP);
+      for (const g of draftGroups) {
+        if (out.includes(g)) continue;
+        const parent = parentOfGroup(g);
+        if (parent && out.includes(parent)) {
+          // After the parent's last subgroup, so the family stays together.
+          let at = out.indexOf(parent) + 1;
+          while (at < out.length && parentOfGroup(out[at]) === parent) at++;
+          out.splice(at, 0, g);
+        } else {
+          if (parent) out.push(parent);
+          out.push(g);
+        }
+      }
+      out.push(DEFAULT_GROUP);
+      return out;
+    }
+
+    function buildAgentMenu(agent, online, nameEl) {
+      const menu = el("div", "agent-menu");
+      menu.hidden = true;
+      menu.tabIndex = -1;
+      menu.setAttribute("role", "menu");
+      menu.setAttribute("aria-label", `${displayOf(agent)} — actions`);
+      // A click on the header, a hint or a separator must not fall through to
+      // the document and close the menu under the pointer.
+      menu.addEventListener("click", (ev) => ev.stopPropagation());
+      const group = groupOf(agent);
+      const act = (fn) => (item) => {
+        closeMenus();
+        fn(item);
+      };
+      // reopenAgent wants the card's own wake button to show "waking…" on.
+      // The menu floats in <body> while open, so it is found through the
+      // menu's home in the card, not by walking up from the clicked row.
+      const wakeButton = () => {
+        const card = menu.__home && menu.__home.closest(".agent-card");
+        return (card && card.querySelector(".reopen-btn")) || el("button");
+      };
+
+      const head = el("div", "am-head");
+      head.title = online ? "online" : "offline";
+      head.append(el("span", `am-dot${online ? " on" : ""}`), el("span", "am-title", displayOf(agent)));
+      if (group !== DEFAULT_GROUP) head.appendChild(el("span", "am-sub", groupPathLabel(group)));
+      menu.appendChild(head);
+
+      const main = el("div", "am-page");
+      const pages = [main];
+      const show = (page, focus = true) => {
+        for (const p of pages) p.hidden = p !== page;
+        refitMenu(menu);
+        if (!focus) return;
+        const first = page.querySelector(".agent-menu-item:not(.am-back)") || page.querySelector(".agent-menu-item");
+        if (first) first.focus({ preventScroll: true });
+      };
+      const subPage = (title) => {
+        const page = el("div", "am-page");
+        page.hidden = true;
+        page.appendChild(agentMenuRow({ icon: "back", label: title, cls: "am-back", title: "Back" }, () => show(main)));
+        pages.push(page);
+        menu.appendChild(page);
+        return page;
+      };
+      const sep = (page) => page.appendChild(el("div", "am-sep"));
+      menu.__reset = () => show(main, false);
+      menu.appendChild(main);
+
+      // 1 — get to it.
+      if (online) {
+        main.appendChild(
+          agentMenuRow(
+            { icon: "window", label: "Open window", cls: "window-btn", title: `Open a Windows terminal window attached to "${agent.name}"` },
+            act(() => openAgentTerminal(agent.name)),
+          ),
+        );
+      } else {
+        main.appendChild(
+          agentMenuRow(
+            { icon: "wake", label: "Wake", cls: "wake-btn", title: `Wake "${agent.name}" — it comes back in ${agent.cwd}, continuing its conversation` },
+            act(() => reopenAgent(agent, wakeButton())),
+          ),
+        );
+      }
+      if (agent.cwd) {
+        main.appendChild(
+          agentMenuRow(
+            { icon: "folder", label: "Open folder", cls: "folder-btn", title: `Open ${agent.cwd} in Windows Explorer` },
+            act((item) => openAgentFolder(agent.name, item)),
+          ),
+        );
+      }
+      // Filter the transcript to this agent. It used to be what clicking an
+      // OFFLINE card did — the only way in, and undiscoverable at that. That
+      // click now opens the wake screen, so the filter keeps a door here.
+      main.appendChild(
+        agentMenuRow(
+          { icon: "filter", label: "Filter messages", cls: "filter-btn", title: `Show only ${displayOf(agent)}'s messages in the transcript` },
+          act(() => setFilter(agent.name)),
+        ),
+      );
+
+      // 2 — who it is and where it lives.
+      sep(main);
+      main.appendChild(
+        agentMenuRow(
+          {
+            icon: "group", label: "Move to group", cls: "group-btn", next: true,
+            title: `Move "${agent.name}" to another group — it can only message agents in the same one`,
+          },
+          () => show(groupPage),
+        ),
+      );
+      main.appendChild(
+        agentMenuRow(
+          { icon: "look", label: "Colour & shape…", cls: "colour-btn", title: `Pick "${agent.name}"'s colour and shape — its face's body, and the cable in the rail` },
+          () => {
+            closeMenus(); // the panel stands alone, above everything
+            openLookPicker(agent.name);
+          },
+        ),
+      );
+      // The display name (emoji ok) — works on a RUNNING agent, because
+      // nothing in the protocol reads it. The technical id is in More.
+      main.appendChild(
+        agentMenuRow(
+          { icon: "rename", label: "Rename…", cls: "display-btn", title: `The name the board shows for "${agent.name}" — emoji welcome; empty goes back to the id` },
+          act(() => startDisplayRename(agent, nameEl)),
+        ),
+      );
+
+      // 3 — its session.
+      sep(main);
+      // "Open Codex here": the codex sibling in the SAME cwd, so this logical
+      // agent gains a second engine (the pair shows engine tabs). Only on a
+      // claude agent that has no sibling yet.
+      if (agentTypeOf(agent) === "claude" && !agent.name.endsWith("-codex") && !state.agents.has(`${agent.name}-codex`)) {
+        main.appendChild(
+          agentMenuRow(
+            { icon: "codex", label: "Open Codex here", cls: "codex-btn", title: `Open a Codex instance on ${agent.name}'s folder — same files, its own session` },
+            (item) => {
+              openCodexSibling(agent, item);
+              closeMenus();
+            },
+          ),
+        );
+      }
+      // Start over: same agent, blank conversation (the old one stays on disk,
+      // reachable with /resume). Confirms first.
+      main.appendChild(
+        agentMenuRow(
+          { icon: "fresh", label: "New conversation", cls: "fresh-btn", title: `Relaunch ${agent.name} with a BLANK conversation (the current one stays on disk, reachable with /resume in the terminal)` },
+          (item) => {
+            if (!armMenuRow(item, "Start blank? Click again")) return;
+            closeMenus();
+            reopenAgent(agent, wakeButton(), true);
+          },
+        ),
+      );
+      main.appendChild(
+        agentMenuRow({ icon: "settings", label: "More", cls: "more-btn", next: true, title: "Nudges, autostart, leader, boot command, launch args" }, () => show(morePage)),
+      );
+
+      // 4 — the ones that end something, set apart.
+      sep(main);
+      if (online) {
+        // Kills the tmux session but KEEPS the registration: offline, wakeable.
+        main.appendChild(
+          agentMenuRow(
+            { icon: "stop", label: "Stop", cls: "stop-btn", title: `Stop "${agent.name}" (kills its tmux session) but keep it in the Hub — you can wake it again` },
+            act(async () => {
+              try {
+                const res = await fetch(`/api/agents/${encodeURIComponent(agent.name)}/stop`, { method: "POST" });
+                const body = await res.json().catch(() => ({}));
+                if (!res.ok || !body.ok) {
+                  toast(`Could not stop "${agent.name}": ${body.error || `HTTP ${res.status}`}`, "warn");
+                  return;
+                }
+                toast(`Stopped "${agent.name}" — still in the rail, offline.`);
+              } catch (err) {
+                toast(`Could not stop "${agent.name}": ${err && err.message ? err.message : err}`, "warn");
+              }
+            }),
+          ),
+        );
+      }
+      // Remove: always offered. Online, it stops the session first. The
+      // messages stay either way.
+      main.appendChild(
+        agentMenuRow(
+          {
+            icon: "remove", label: online ? "Stop & remove" : "Remove", cls: "remove-btn danger-item",
+            title: online
+              ? `Stop "${agent.name}" (kills its tmux session) and remove it from the Hub (messages are kept)`
+              : "Remove this agent from the Hub registry (messages are kept)",
+          },
+          async (item) => {
+            if (!armMenuRow(item, "Remove? Click again")) return;
+            closeMenus();
+            if (online) {
+              try {
+                const res = await fetch(`/api/agents/${encodeURIComponent(agent.name)}/stop`, { method: "POST" });
+                const body = await res.json().catch(() => ({}));
+                if (!res.ok || !body.ok) {
+                  toast(`Could not stop "${agent.name}": ${body.error || `HTTP ${res.status}`}`, "warn");
+                  return;
+                }
+              } catch (err) {
+                toast(`Could not stop "${agent.name}": ${err && err.message ? err.message : err}`, "warn");
+                return;
+              }
+            }
+            removeAgent(agent.name);
+          },
+        ),
+      );
+
+      // --- Page: move to group -------------------------------------------
+      // Right here instead of a trip to the groups panel, and with the one
+      // thing nobody could find before: making a client of an agency.
+      const groupPage = subPage("Move to group");
+      groupPage.appendChild(
+        el("div", "am-hint", "Agents only talk inside their group. A client talks to its agency — never to another client."),
+      );
+      for (const g of groupsForMenu()) {
+        const here = g === group;
+        const row = agentMenuRow(
+          {
+            icon: here ? "check" : null,
+            label: groupLabelOf(g),
+            cls: `am-group${parentOfGroup(g) ? " sub" : ""}${here ? " current" : ""}`,
+            aside: parentOfGroup(g) ? "client" : "",
+            title: here ? `"${agent.name}" is in ${g}` : `Move "${agent.name}" to ${g}`,
+          },
+          act(() => {
+            if (!here) moveAgentToGroup(agent.name, g);
+          }),
+        );
+        const dot = el("span", "am-group-dot");
+        dot.style.background = groupColor(g);
+        row.insertBefore(dot, row.querySelector(".mi-label"));
+        groupPage.appendChild(row);
+      }
+      sep(groupPage);
+      const agencies = groupsForMenu().filter((g) => g !== DEFAULT_GROUP && !parentOfGroup(g));
+      if (agencies.length) {
+        groupPage.appendChild(newGroupRow("client", "New client…", `Make a client of an agency and move "${agent.name}" into it`));
+      }
+      groupPage.appendChild(newGroupRow("group", "New group…", `Create a group and move "${agent.name}" into it`));
+      groupPage.appendChild(
+        agentMenuRow({ icon: "settings", label: "Manage groups…", cls: "manage-groups-btn", title: "Rename groups, recolour them, see every member" }, act(() => openGroups(agent.name))),
+      );
+
+      /**
+       * A row that turns into a small form in place: a name (and, for a
+       * client, which agency) → Enter creates the group by moving the agent in.
+       */
+      function newGroupRow(kind, label, title) {
+        const row = agentMenuRow({ icon: "plus", label, cls: `am-new-row am-new-${kind}`, title }, () => {
+          const form = el("form", "am-new");
+          let agency = null;
+          if (kind === "client") {
+            agency = el("select", "am-new-agency");
+            agency.title = "Which agency this client belongs to";
+            const family = parentOfGroup(group) || group;
+            for (const g of agencies) {
+              const opt = el("option", null, groupLabelOf(g));
+              opt.value = g;
+              if (g === family) opt.selected = true;
+              agency.appendChild(opt);
+            }
+            form.append(agency, el("span", "am-new-slash", "/"));
+          }
+          const input = el("input", "am-new-name");
+          input.type = "text";
+          input.maxLength = kind === "client" ? 31 : 63;
+          input.placeholder = kind === "client" ? "client name" : "group name";
+          input.setAttribute("aria-label", input.placeholder);
+          input.autocomplete = "off";
+          input.spellcheck = false;
+          if (kind === "client") bindAgentNameSanitizer(input);
+          else bindGroupNameSanitizer(input);
+          const go = el("button", "am-new-go", "Move");
+          go.type = "submit";
+          form.append(input, go);
+          const back = () => {
+            form.replaceWith(row);
+            row.focus({ preventScroll: true });
+          };
+          form.addEventListener("keydown", (ev) => {
+            if (ev.key !== "Escape") return;
+            ev.preventDefault();
+            ev.stopPropagation(); // Esc here undoes the form, not the whole menu
+            back();
+          });
+          form.addEventListener("submit", (ev) => {
+            ev.preventDefault();
+            const typed = kind === "client"
+              ? sanitizeAgentNameInput(input.value, false)
+              : sanitizeGroupNameInput(input.value, false);
+            const target = kind === "client" ? `${agency.value}/${typed}` : typed;
+            const leaf = kind === "client" ? typed : typed.slice(typed.indexOf("/") + 1);
+            if (leaf.length < 2) {
+              input.classList.add("invalid");
+              input.placeholder = "at least 2 letters";
+              input.focus();
+              return;
+            }
+            closeMenus();
+            moveAgentToGroup(agent.name, target);
+          });
+          row.replaceWith(form);
+          refitMenu(menu);
+          input.focus({ preventScroll: true });
+        });
+        return row;
+      }
+
+      // --- Page: more ------------------------------------------------------
+      const morePage = subPage("More");
+      if (online) {
+        morePage.appendChild(
+          agentMenuRow(
+            { icon: "nudge", label: "Nudge now", cls: "nudge-btn", title: "Force a manual nudge (respects the pane guard)" },
+            act(() => forceNudge(agent.name)),
+          ),
+        );
+      }
+      let muted = !!agent.muted;
+      morePage.appendChild(
+        agentMenuRow(
+          { icon: "mute", label: "Mute nudges", cls: "mute-toggle", toggle: muted, title: "Muted, it is not woken for new messages — they are still recorded" },
+          (item) => {
+            muted = !muted;
+            setMenuRowOn(item, muted);
+            toggleMute(agent.name, muted);
+          },
+        ),
+      );
+      // Launch at Windows login: a persisted preference the login hook reads.
+      let autostart = !!agent.autostart;
+      morePage.appendChild(
+        agentMenuRow(
+          { icon: "power", label: "Start with Windows", cls: "autostart-btn", toggle: autostart, title: "Launch this agent at Windows login (resumes its conversation)" },
+          (item) => {
+            autostart = !autostart;
+            setMenuRowOn(item, autostart);
+            toggleAutostart(agent.name, autostart);
+          },
+        ),
+      );
+      // Leader: purely visual, and only meaningful inside a real group.
+      // Setting it offers to announce it to the group (operator's voice).
+      if (group !== DEFAULT_GROUP) {
+        const isLeader = groupLeaderOf(group) === agent.name;
+        morePage.appendChild(
+          agentMenuRow(
+            { icon: "leader", label: "Group leader", cls: "leader-btn", toggle: isLeader, title: `Mark "${agent.name}" as ${groupLabelOf(group)}'s lead — a badge only, nothing about who talks to whom changes` },
+            act(() => {
+              if (isLeader) {
+                setGroupLeader(group, null);
+                return;
+              }
+              setGroupLeader(group, agent.name);
+              openLeaderAnnouncePrompt(group, agent.name);
+            }),
+          ),
+        );
+      }
+      if (agent.role) {
+        morePage.appendChild(
+          agentMenuRow(
+            { icon: "desc", label: "Full description", cls: "desc-btn", title: `The whole description of "${agent.name}" (the card cuts it short)` },
+            act(() => showInfoDialog(`${displayOf(agent)} — description`, agent.role)),
+          ),
+        );
+      }
+      sep(morePage);
+      // Boot command: the project's setup line, run before the CLI on every
+      // launch (operator-set; an agent can never write its own boot code).
+      morePage.appendChild(
+        agentMenuRow(
+          {
+            icon: "boot", label: "Boot command…", cls: "bootcmd-btn", aside: agent.bootCommand ? "set" : "",
+            title: agent.bootCommand
+              ? `Runs before the CLI on every launch: ${agent.bootCommand.slice(0, 80)}`
+              : `Set a setup command to run before "${agent.name}"'s CLI on every launch`,
+          },
+          act(() =>
+            showAgentFieldDialog(agent, {
+              title: "boot command",
+              field: "bootCommand",
+              endpoint: "bootcmd",
+              bodyKey: "command",
+              hint: "runs before the CLI, same shell — exports carry; failure aborts the launch",
+              placeholder: ". ~/.config/myproj/env && docker compose -f ~/proj/compose.yml up -d",
+            }),
+          ),
+        ),
+      );
+      // Launch args: REPLACE the CLI's standard argv (pinned --resume, special
+      // channel flags). Operator-set; wake's continue no longer applies.
+      morePage.appendChild(
+        agentMenuRow(
+          {
+            icon: "args", label: "Launch args…", cls: "cliargs-btn", aside: agent.cliArgs ? "set" : "",
+            title: agent.cliArgs
+              ? `Custom CLI argv on every launch: ${agent.cliArgs.slice(0, 80)}`
+              : `Replace "${agent.name}"'s CLI launch arguments (e.g. --resume <session-id>)`,
+          },
+          act(() =>
+            showAgentFieldDialog(agent, {
+              title: "launch args",
+              field: "cliArgs",
+              endpoint: "cliargs",
+              bodyKey: "args",
+              hint: "replaces the standard CLI argv on every launch — wake's continue no longer applies",
+              placeholder: "--resume <session-id> --dangerously-skip-permissions",
+            }),
+          ),
+        ),
+      );
+      // The technical id — only OFFLINE (a live agent would re-join under its
+      // old name). "Rename…" covers what people usually want, so this one is
+      // hidden while online rather than shown greyed-and-confusing.
+      if (!online) {
+        morePage.appendChild(
+          agentMenuRow(
+            { icon: "id", label: "Change id…", cls: "rename-btn", title: "Change the address other agents use — its message history follows the new id" },
+            act(() => startRename(agent, nameEl)),
+          ),
+        );
+      }
+
+      // Arrows walk the rows of the page on show, → opens a "›" page and ← /
+      // Backspace comes back. Esc (wired globally) closes.
+      menu.addEventListener("keydown", (ev) => {
+        const t = ev.target;
+        if (t instanceof HTMLInputElement || t instanceof HTMLSelectElement) return;
+        const page = pages.find((p) => !p.hidden) || main;
+        const rows = [...page.querySelectorAll(".agent-menu-item")];
+        if (!rows.length) return;
+        const at = rows.indexOf(document.activeElement);
+        if (ev.key === "ArrowDown" || ev.key === "ArrowUp") {
+          ev.preventDefault();
+          const step = ev.key === "ArrowDown" ? 1 : -1;
+          const next = at === -1 ? (step > 0 ? 0 : rows.length - 1) : (at + step + rows.length) % rows.length;
+          rows[next].focus({ preventScroll: false });
+        } else if (ev.key === "Home" || ev.key === "End") {
+          ev.preventDefault();
+          rows[ev.key === "Home" ? 0 : rows.length - 1].focus();
+        } else if (ev.key === "ArrowRight" && t instanceof Element && t.classList.contains("has-next")) {
+          ev.preventDefault();
+          t.click();
+        } else if ((ev.key === "ArrowLeft" || ev.key === "Backspace") && page !== main) {
+          ev.preventDefault();
+          show(main);
+        }
+      });
+      return menu;
+    }
+
+    /**
+     * Opens a card's menu — under its ⋯, or at the pointer for a right-click
+     * (`point`). Always on the first page, focus in the menu so the arrows work.
+     */
+    function openAgentMenu(menu, card, anchor, home, point) {
+      closeMenus();
+      menu.hidden = false;
+      // Keep the actions cluster pinned open while the menu is: losing :hover
+      // there would yank the cluster out from under the cursor.
+      card.classList.add("menu-open");
+      if (menu.__reset) menu.__reset();
+      // The menu FLOATS over the page while open: moved to <body> and placed
+      // against the viewport. Anchored inside the card it was clipped by the
+      // rail's scroll box and painted under the cards below (23/09).
+      // closeMenus() puts it back home.
+      floatMenu(menu, anchor, home, point);
+      menu.focus({ preventScroll: true });
+    }
+
     /** One menu open at a time; outside click / Esc closes (wired once below). */
     /** Lifts an open menu out to <body> and places it beside `anchor`. */
-    function floatMenu(menu, anchor, home) {
+    function floatMenu(menu, anchor, home, point) {
       menu.__home = home;
       menu.classList.remove("drop-up");
       menu.classList.add("floating");
       document.body.appendChild(menu);
       menu.style.maxHeight = "";
       const pad = 8;
-      const br = anchor.getBoundingClientRect();
       // Layout size, not getBoundingClientRect: the menu's entrance animation
       // starts scaled down, and a mid-animation rect said a 650px menu fit
       // below when it ran 100px off the bottom.
       const mr = { width: menu.offsetWidth, height: menu.offsetHeight };
       const vw = window.innerWidth;
       const vh = window.innerHeight;
-      // Right edges aligned with the kebab, kept on screen.
-      const left = Math.max(pad, Math.min(br.right - mr.width, vw - mr.width - pad));
+      let left;
       let top;
-      if (br.bottom + 5 + mr.height <= vh - pad) top = br.bottom + 5;          // below
-      else if (br.top - 5 - mr.height >= pad) top = br.top - 5 - mr.height;   // above
-      else {
-        // Neither fits (a phone in landscape): as tall as the screen allows,
-        // scrolling inside.
+      if (point) {
+        // A right-click: the corner at the pointer, flipped left / up when
+        // that side runs out of screen, like every desktop context menu.
+        left = point.x + mr.width <= vw - pad ? point.x : point.x - mr.width;
+        top = point.y + mr.height <= vh - pad ? point.y : point.y - mr.height;
+        menu.style.transformOrigin = `${left < point.x ? "right" : "left"} ${top < point.y ? "bottom" : "top"}`;
+      } else {
+        const br = anchor.getBoundingClientRect();
+        // Right edges aligned with the kebab.
+        left = br.right - mr.width;
+        if (br.bottom + 5 + mr.height <= vh - pad) top = br.bottom + 5;          // below
+        else if (br.top - 5 - mr.height >= pad) top = br.top - 5 - mr.height;   // above
+        else top = pad;
+        menu.style.transformOrigin = "";
+      }
+      menu.style.left = `${Math.round(left)}px`;
+      menu.style.top = `${Math.round(top)}px`;
+      refitMenu(menu);
+    }
+
+    /**
+     * Keeps a floating menu whole on screen — after it opens, and whenever a
+     * page of it (groups, more) or an inline form changes its size. Taller
+     * than the screen (a phone in landscape): as tall as it allows, scrolling
+     * inside.
+     */
+    function refitMenu(menu) {
+      if (!menu.classList.contains("floating")) return;
+      const pad = 8;
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      menu.style.maxHeight = "";
+      const w = menu.offsetWidth;
+      const h = menu.offsetHeight;
+      let top = parseFloat(menu.style.top) || pad;
+      const left = Math.max(pad, Math.min(parseFloat(menu.style.left) || pad, vw - pad - w));
+      if (h > vh - pad * 2) {
         top = pad;
         menu.style.maxHeight = `${vh - pad * 2}px`;
+      } else {
+        top = Math.max(pad, Math.min(top, vh - pad - h));
       }
-      // Whatever the branch, the menu stays on screen (an anchor scrolled
-      // partly out of the rail would otherwise drag it past an edge).
-      if (!menu.style.maxHeight) top = Math.max(pad, Math.min(top, vh - pad - mr.height));
       menu.style.left = `${Math.round(left)}px`;
       menu.style.top = `${Math.round(top)}px`;
     }
 
     function closeMenus() {
+      // The rail skips its rebuilds while a menu is open (see renderAgents),
+      // so whatever a toggle in it changed is drawn once it closes.
+      const wasOpen = !!document.querySelector(".agent-menu:not([hidden])");
       document.querySelectorAll(".agent-menu").forEach((m) => {
         m.hidden = true;
         if (m.classList.contains("floating")) {
@@ -6490,6 +6879,7 @@
         }
       });
       document.querySelectorAll(".agent-card.menu-open").forEach((c) => c.classList.remove("menu-open"));
+      if (wasOpen) queueMicrotask(renderAgents);
     }
     document.addEventListener("click", closeMenus);
     // A tap outside also closes it, caught in the CAPTURE phase: parts of the

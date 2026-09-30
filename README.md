@@ -290,11 +290,11 @@ In the dashboard, the **Launch agent** form has a group field, and the tabs abov
 transcript switch rooms: pick `panorama` and you read that group's conversation alone. A
 broadcast you send from there reaches that group and stops.
 
-**Agents already running?** You don't have to relaunch them. Open the **⋯** menu on a card and
-pick **group…**; the name cell becomes a field with your existing groups behind it, and Enter
-moves the agent. It takes effect on that agent's next message, with no restart: unlike rename,
-which needs the agent stopped (a live one would re-join under its old name and undo it),
-nothing about a running session undoes a group change.
+**Agents already running?** You don't have to relaunch them. Right-click the card (or open its
+**⋯**) and pick **Move to group ›**: every group is listed, with **New client…** and **New
+group…** at the bottom to create one on the spot. It takes effect on that agent's next message,
+with no restart: unlike changing its id, which needs the agent stopped (a live one would re-join
+under its old name and undo it), nothing about a running session undoes a group change.
 
 Leave `--group` off and nothing changes: the agent keeps the group it already had, and a new
 one joins `default`, where every agent you have today already lives. Re-running `start` or
@@ -314,7 +314,7 @@ The wall bends by exactly one step: the agency's own agents (`ai-panorama`) reac
 client, and every client reaches the agency — but one client never reaches, lists or sees
 another. A broadcast stays in the sender's own group, so the agency saying "all" to its team
 does not land in every client's room. In the dashboard, the groups panel has a **+ client**
-button under each group, the rail nests the clients inside their agency, and the agency's tab
+button under each group (and every card's **Move to group ›** has **New client…**), the rail nests the clients inside their agency, and the agency's tab
 shows the whole family while a client's tab shows that client alone. Renaming the agency
 carries its clients along.
 
@@ -398,20 +398,30 @@ duplicated.
 
 ### Managing agents from the dashboard
 
-Each card carries an **open** button (**reopen** when the agent is offline: relaunches it in its
-folder, continuing the conversation, with the same CLI it was launched with) and a **⋯** menu:
+Each card carries a **window** button (**wake** when the agent is offline: relaunches it in its
+folder, continuing the conversation, with the same CLI it was launched with). Everything else is
+in the card's menu — **right-click** anywhere on the card (a long-press on Android), or its **⋯**.
+The first page holds what you use every day; the rest is one step in, under **More ›**:
 
 | Action | What it does |
 |---|---|
-| **nudge** | Forces a manual nudge — still subject to the pane guard (never types into a shell) and to the dialog guard (never types while a modal owns the pane). |
-| **mute** | Stops nudging this agent. Messages keep being **recorded** and it still reads them on its next `check_messages` — mute silences the poke, not the mail. |
-| **autostart** | Marks the agent to be launched at machine login. The Hub only stores the flag; a small login hook reads it and relaunches the flagged agents, resuming their conversations. |
-| **boot command** | A shell line the launcher runs **before** the CLI, in the same shell (`<boot> && exec <cli>`), for projects that need services or env up first. Exports carry into the CLI; a failing setup aborts the launch instead of leaving a half-prepared agent. |
-| **launch args** | **Replaces** the CLI's launch arguments for this agent — a pinned `--resume <session-id>`, extra flags. Operator-set over REST only: an agent can never write its own boot code or argv. |
-| **group** | Moves the agent to another room (the communication wall — see [Groups](#groups--keep-one-projects-agents-out-of-anothers)). |
-| **nickname** | A free display name (emoji welcome) for the UI. The kebab `name` stays the protocol address, so this works on a **running** agent. |
-| **rename** | Changes the technical id; the **whole history and unread count follow the new name**. Only for a **stopped** agent (a running one would re-join under the old name). |
-| **stop** / **remove** | **stop** kills the tmux session and keeps the registration (the card turns into **reopen**). **remove** drops the registration (two-click confirm) — the messages stay in the append-only JSONL. |
+| **Open window** / **Wake** | The card's own button, repeated where a right-click lands. |
+| **Open folder** · **Filter messages** | The agent's folder in Explorer; the transcript narrowed to what it said. |
+| **Move to group ›** | Moves the agent to another room (the communication wall — see [Groups](#groups--keep-one-projects-agents-out-of-anothers)), or into a new group or client made right there. |
+| **Colour & shape…** | Its face's colour and shape. |
+| **Rename…** | A free display name (emoji welcome) for the UI. The kebab `name` stays the protocol address, so this works on a **running** agent. |
+| **Open Codex here** · **New conversation** | A Codex engine on the same folder; a relaunch with a blank conversation (asks first — the old one stays reachable with `/resume`). |
+| **Stop** / **Remove** | **Stop** kills the tmux session and keeps the registration (the card turns into **wake**). **Remove** drops the registration (click twice) — the messages stay in the append-only JSONL. |
+| More › **Nudge now** | Forces a manual nudge — still subject to the pane guard (never types into a shell) and to the dialog guard (never types while a modal owns the pane). |
+| More › **Mute nudges** | Stops nudging this agent. Messages keep being **recorded** and it still reads them on its next `check_messages` — mute silences the poke, not the mail. |
+| More › **Start with Windows** | Marks the agent to be launched at machine login. The Hub only stores the flag; a small login hook reads it and relaunches the flagged agents, resuming their conversations. |
+| More › **Group leader** | A badge marking the group's lead — visual only. |
+| More › **Boot command…** | A shell line the launcher runs **before** the CLI, in the same shell (`<boot> && exec <cli>`), for projects that need services or env up first. Exports carry into the CLI; a failing setup aborts the launch instead of leaving a half-prepared agent. |
+| More › **Launch args…** | **Replaces** the CLI's launch arguments for this agent — a pinned `--resume <session-id>`, extra flags. Operator-set over REST only: an agent can never write its own boot code or argv. |
+| More › **Change id…** | Changes the technical id; the **whole history and unread count follow the new name**. Only for a **stopped** agent (a running one would re-join under the old name). |
+
+The menu works from the keyboard too: ↑ ↓ walk the rows, → opens a **›** page, ← comes back,
+Esc closes. Shift + right-click still gives you the browser's own menu.
 
 Agent names are **addresses** (`%name` in a prompt, the tmux session `sb-<name>`), so they are
 lowercase letters, digits and hyphens. You don't have to memorize that: the name fields rewrite
