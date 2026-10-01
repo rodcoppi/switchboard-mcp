@@ -12,15 +12,11 @@ import {
 } from "../src/server/winpicker.js";
 
 describe("findPowerShell", () => {
-  // This choice IS the dialog the user sees: powershell.exe is 5.1 on .NET
-  // Framework, whose FolderBrowserDialog is the XP-era tree that opens on the
-  // Desktop and refuses to navigate to \\wsl$; pwsh is modern .NET, where the
-  // same class is the Windows 11 dialog and opens on the WSL path it is given.
   it("prefers PowerShell 7 when it is installed", () => {
     expect(findPowerShell((p) => p === PWSH_PATHS[0])).toBe(PWSH_PATHS[0]);
   });
 
-  it("falls back to powershell.exe — the old dialog beats no dialog", () => {
+  it("falls back to powershell.exe, present on every Windows", () => {
     expect(findPowerShell(() => false)).toBe("powershell.exe");
   });
 });
@@ -52,6 +48,31 @@ describe("pickFolderScript", () => {
     const script = pickFolderScript("\\\\wsl$\\Ubuntu\\home\\rod\\projects");
     expect(script).toContain("$dialog.SelectedPath = '\\\\wsl$\\Ubuntu\\home\\rod\\projects'");
     expect(script).toContain(PICK_CANCELLED);
+  });
+
+  it("shows the modern folder dialog on ANY PowerShell, not the XP-era tree", () => {
+    // PowerShell 5.1's FolderBrowserDialog is the "Procurar Pasta" tree that
+    // will not open on \\wsl$ — and 5.1 is all most machines have (owner,
+    // 01/10: "pq ta ainda abrindo esse picker de folder tosco?").
+    const script = pickFolderScript("\\\\wsl$\\Ubuntu\\home\\rod");
+    expect(script).toContain("DC1C5A9C-E88A-4dde-A5A1-60F82A20AEF7"); // CLSID_FileOpenDialog
+    expect(script).toContain("dialog.SetOptions(fos | 0x20 | 0x40)"); // FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM
+    expect(script).toContain("[SbPicker]::PickFolder($owner.Handle, 'Switchboard — pick the folder the agent works in', '\\\\wsl$\\Ubuntu\\home\\rod')");
+    // The old dialog survives only as the fallback when the new one throws.
+    const fallback = script.indexOf("New-Object System.Windows.Forms.FolderBrowserDialog");
+    expect(fallback).toBeGreaterThan(script.indexOf("} catch {"));
+  });
+
+  it("keeps the C# free of single quotes — it rides in a single-quoted literal", () => {
+    const script = pickFolderScript("C:\\x");
+    const start = script.indexOf("-TypeDefinition '") + "-TypeDefinition '".length;
+    const cs = script.slice(start, script.indexOf("'; $owner", start));
+    expect(cs).toContain("public static class SbPicker");
+    expect(cs).not.toContain("'");
+  });
+
+  it("answers in UTF-8, so accented folder names come back intact", () => {
+    expect(pickFolderScript("C:\\x")).toMatch(/^\[Console\]::OutputEncoding = \[System\.Text\.Encoding\]::UTF8/);
   });
 
   it("a quote in the folder name cannot end the PowerShell literal", () => {

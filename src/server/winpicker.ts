@@ -38,24 +38,92 @@ export const PWSH_PATHS = [
 ];
 
 /**
- * Picks the PowerShell to run the dialog with, and it decides which DIALOG the
- * user gets — the same FolderBrowserDialog class renders very differently:
- *
- *   - powershell.exe is 5.1 on .NET Framework, whose FolderBrowserDialog is the
- *     Windows-XP-era "Browse For Folder" tree. It opens on the Desktop showing
- *     OneDrive and Libraries, and it will NOT navigate to a \\wsl$\… path — so
- *     the folders the user actually wants are several clicks away, if they find
- *     them at all;
- *   - pwsh is PowerShell 7 on modern .NET, where the same class is the Vista+
- *     IFileDialog: the Windows 11 dialog, with a path bar, the distro in the
- *     sidebar, and UNC paths it can open on.
- *
- * So pwsh when it exists, powershell.exe when it does not — the old dialog beats
- * no dialog, and the caller can always fall back to the in-page browser.
+ * Picks the PowerShell to run the dialogs with: pwsh when it exists,
+ * powershell.exe otherwise. It used to decide WHICH folder dialog the user got
+ * (FolderBrowserDialog is the XP-era tree on 5.1 and the Windows 11 dialog only
+ * on modern .NET); the folder picker now calls the modern dialog itself
+ * (PICKER_CS), so either shell shows the same thing and powershell.exe — on
+ * every Windows — is no longer the ugly fallback.
  */
 export function findPowerShell(exists: (p: string) => boolean = fs.existsSync): string {
   return PWSH_PATHS.find(exists) ?? "powershell.exe";
 }
+
+/**
+ * C# for the folder dialog, compiled by Add-Type inside the PowerShell that
+ * shows it: the Win32 foreground calls, and the Vista+ folder picker
+ * (IFileOpenDialog with FOS_PICKFOLDERS) — the Windows 11 dialog with a path
+ * bar and the distro in the sidebar.
+ *
+ * Why not FolderBrowserDialog: on Windows PowerShell 5.1 (.NET Framework) that
+ * class is the XP-era "Browse For Folder" tree, which opens on the Desktop and
+ * will not navigate to \\wsl$. Only PowerShell 7 renders it as the modern
+ * dialog, and PowerShell 7 is not installed on most machines (it was not on the
+ * owner's new PC — "pq ta ainda abrindo esse picker de folder tosco?", 01/10).
+ * Calling the COM dialog directly gives the modern one on ANY PowerShell.
+ *
+ * Only the vtable prefix up to GetResult is declared — the methods past it are
+ * never called, and a COM interface may be declared short.
+ *
+ * Kept free of single quotes: it travels inside a single-quoted PowerShell literal.
+ */
+const PICKER_CS = [
+  "using System;",
+  "using System.Runtime.InteropServices;",
+  "public static class SbPicker {",
+  '[DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);',
+  '[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();',
+  '[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, IntPtr pid);',
+  '[DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();',
+  '[DllImport("user32.dll")] public static extern bool AttachThreadInput(uint a, uint b, bool attach);',
+  '[DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr h);',
+  '[ComImport, Guid("DC1C5A9C-E88A-4dde-A5A1-60F82A20AEF7")] private class FileOpenDialog { }',
+  '[ComImport, Guid("43826D1E-E718-42EE-BC55-A1E261C37BFE"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]',
+  "private interface IShellItem {",
+  "void BindToHandler(IntPtr pbc, ref Guid bhid, ref Guid riid, out IntPtr ppv);",
+  "void GetParent(out IShellItem parent);",
+  "void GetDisplayName(uint sigdn, [MarshalAs(UnmanagedType.LPWStr)] out string name);",
+  "void GetAttributes(uint mask, out uint attribs);",
+  "void Compare(IShellItem other, uint hint, out int order);",
+  "}",
+  '[ComImport, Guid("42F85136-DB7E-439C-85F1-E4075D135FC8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]',
+  "private interface IFileDialog {",
+  "[PreserveSig] int Show(IntPtr parent);",
+  "void SetFileTypes(uint count, IntPtr specs);",
+  "void SetFileTypeIndex(uint index);",
+  "void GetFileTypeIndex(out uint index);",
+  "void Advise(IntPtr sink, out uint cookie);",
+  "void Unadvise(uint cookie);",
+  "void SetOptions(uint fos);",
+  "void GetOptions(out uint fos);",
+  "void SetDefaultFolder(IShellItem item);",
+  "void SetFolder(IShellItem item);",
+  "void GetFolder(out IShellItem item);",
+  "void GetCurrentSelection(out IShellItem item);",
+  "void SetFileName([MarshalAs(UnmanagedType.LPWStr)] string name);",
+  "void GetFileName([MarshalAs(UnmanagedType.LPWStr)] out string name);",
+  "void SetTitle([MarshalAs(UnmanagedType.LPWStr)] string title);",
+  "void SetOkButtonLabel([MarshalAs(UnmanagedType.LPWStr)] string label);",
+  "void SetFileNameLabel([MarshalAs(UnmanagedType.LPWStr)] string label);",
+  "void GetResult(out IShellItem item);",
+  "}",
+  '[DllImport("shell32.dll", CharSet = CharSet.Unicode, PreserveSig = false)]',
+  "private static extern void SHCreateItemFromParsingName(string path, IntPtr pbc, [MarshalAs(UnmanagedType.LPStruct)] Guid riid, out IShellItem item);",
+  // FOS_PICKFOLDERS 0x20 | FOS_FORCEFILESYSTEM 0x40; SIGDN_FILESYSPATH 0x80058000.
+  // Show answers ERROR_CANCELLED (not 0) on Cancel, so anything but 0 is "no pick".
+  "public static string PickFolder(IntPtr owner, string title, string startIn) {",
+  "IFileDialog dialog = (IFileDialog)new FileOpenDialog();",
+  "uint fos; dialog.GetOptions(out fos);",
+  "dialog.SetOptions(fos | 0x20 | 0x40);",
+  "dialog.SetTitle(title);",
+  "try { IShellItem start; SHCreateItemFromParsingName(startIn, IntPtr.Zero, typeof(IShellItem).GUID, out start); dialog.SetFolder(start); } catch (Exception) { }",
+  "if (dialog.Show(owner) != 0) return null;",
+  "IShellItem picked; dialog.GetResult(out picked);",
+  "string path; picked.GetDisplayName(0x80058000, out path);",
+  "return path;",
+  "}",
+  "}",
+].join(" ");
 
 /**
  * The PowerShell that shows the dialog (pure — unit-tested).
@@ -74,35 +142,23 @@ export function findPowerShell(exists: (p: string) => boolean = fs.existsSync): 
  * foregrounded owner, so it comes up in front. The owner is 1×1 and transparent,
  * so the flash is invisible.
  *
+ * The dialog itself is the modern one (PICKER_CS). Should it fail to come up
+ * at all, the old FolderBrowserDialog still does — an ugly dialog beats a
+ * button that silently does nothing.
+ *
  * -STA is required for Windows Forms; without it ShowDialog throws. `startIn` is
  * machine-derived (never network text) and embedded in a single-quoted literal
  * with quotes doubled, so a folder called "Tim O'Brien" cannot end the literal.
+ * Output is UTF-8, or "Área de Trabalho" would come back mangled by the console
+ * code page.
  */
 export function pickFolderScript(startIn: string): string {
   const quoted = `'${startIn.replace(/'/g, "''")}'`;
+  const title = "'Switchboard — pick the folder the agent works in'";
   return [
+    "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8",
     "Add-Type -AssemblyName System.Windows.Forms",
-    // Win32 the managed API does not expose: force-foreground a window even when
-    // the process did not start in the foreground (the WSL case).
-    "$sig = '" +
-      "[DllImport(\"user32.dll\")] public static extern bool SetForegroundWindow(IntPtr h); " +
-      "[DllImport(\"user32.dll\")] public static extern IntPtr GetForegroundWindow(); " +
-      "[DllImport(\"user32.dll\")] public static extern uint GetWindowThreadProcessId(IntPtr h, IntPtr pid); " +
-      "[DllImport(\"kernel32.dll\")] public static extern uint GetCurrentThreadId(); " +
-      "[DllImport(\"user32.dll\")] public static extern bool AttachThreadInput(uint a, uint b, bool attach); " +
-      "[DllImport(\"user32.dll\")] public static extern bool BringWindowToTop(IntPtr h); " +
-      "[DllImport(\"user32.dll\")] public static extern bool ShowWindow(IntPtr h, int cmd);'",
-    "$fg = Add-Type -MemberDefinition $sig -Name Fg -Namespace Win32 -PassThru",
-    "$dialog = New-Object System.Windows.Forms.FolderBrowserDialog",
-    "$dialog.Description = 'Switchboard — pick the folder the agent works in'",
-    // Modern .NET only, and harmless on 5.1 (guarded): it promotes Description
-    // from a label above the tree to the dialog's actual title.
-    "if ($dialog.PSObject.Properties['UseDescriptionForTitle']) { $dialog.UseDescriptionForTitle = $true }",
-    "$dialog.ShowNewFolderButton = $false",
-    // Start on the agent's own world. The modern dialog opens right here; the
-    // legacy one ignores UNC and lands on the Desktop, which is one more reason
-    // findPowerShell prefers pwsh.
-    `$dialog.SelectedPath = ${quoted}`,
+    `Add-Type -TypeDefinition '${PICKER_CS}'`,
     // A REAL topmost owner: 1x1, transparent, off-screen, shown — so it owns a
     // window that can be forced to the front.
     "$owner = New-Object System.Windows.Forms.Form",
@@ -115,17 +171,22 @@ export function pickFolderScript(startIn: string): string {
     "$owner.Location = New-Object System.Drawing.Point(-32000,-32000)",
     "$owner.Show()",
     // Steal the foreground: attach to whoever holds it now, then claim it.
-    "$foreThread = $fg::GetWindowThreadProcessId($fg::GetForegroundWindow(), [IntPtr]::Zero)",
-    "$thisThread = $fg::GetCurrentThreadId()",
-    "[void]$fg::AttachThreadInput($thisThread, $foreThread, $true)",
-    "[void]$fg::BringWindowToTop($owner.Handle)",
-    "[void]$fg::SetForegroundWindow($owner.Handle)",
-    "[void]$fg::AttachThreadInput($thisThread, $foreThread, $false)",
+    "$foreThread = [SbPicker]::GetWindowThreadProcessId([SbPicker]::GetForegroundWindow(), [IntPtr]::Zero)",
+    "$thisThread = [SbPicker]::GetCurrentThreadId()",
+    "[void][SbPicker]::AttachThreadInput($thisThread, $foreThread, $true)",
+    "[void][SbPicker]::BringWindowToTop($owner.Handle)",
+    "[void][SbPicker]::SetForegroundWindow($owner.Handle)",
+    "[void][SbPicker]::AttachThreadInput($thisThread, $foreThread, $false)",
     "$owner.Activate()",
-    "$result = $dialog.ShowDialog($owner)",
+    "$picked = $null",
+    `try { $picked = [SbPicker]::PickFolder($owner.Handle, ${title}, ${quoted}) } catch { ` +
+      "$dialog = New-Object System.Windows.Forms.FolderBrowserDialog; " +
+      `$dialog.Description = ${title}; ` +
+      "$dialog.ShowNewFolderButton = $false; " +
+      `$dialog.SelectedPath = ${quoted}; ` +
+      "if ($dialog.ShowDialog($owner) -eq [System.Windows.Forms.DialogResult]::OK) { $picked = $dialog.SelectedPath } }",
     "$owner.Dispose()",
-    "if ($result -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $dialog.SelectedPath } " +
-      `else { Write-Output '${PICK_CANCELLED}' }`,
+    `if ($picked) { Write-Output $picked } else { Write-Output '${PICK_CANCELLED}' }`,
   ].join("; ");
 }
 
