@@ -158,13 +158,19 @@ export interface AgentTypeDescriptor {
    */
   readonly continueArgHint: string;
   /**
-   * Does the kickoff press Enter when it detects the trust dialog?
-   * claude: NO — its flow has always relied on the human accepting it in the
-   * attach, and the readiness poll simply waits it out. Keeping that false is
-   * what makes this refactor behavior-preserving for claude.
+   * Does the kickoff press Enter on the trust dialog's DEFAULT option?
+   * claude: NO — its default is "No, exit", so that Enter would quit the
+   * agent; claude's dialog is walked to "Yes" by trustDialogKey instead.
    * codex: YES — Enter accepts its "Do you trust…" default ("1. Yes, continue").
    */
   readonly autoAcceptTrustDialog: boolean;
+  /**
+   * For a trust dialog whose DEFAULT is the wrong answer (claude's "❯ No,
+   * exit"), the key that walks it to "yes": "Down" while "No" is selected,
+   * "Enter" once a "Yes" is, null when the pane is not the dialog or the
+   * selection cannot be read. Takes precedence over autoAcceptTrustDialog.
+   */
+  trustDialogKey?(pane: string): "Enter" | "Down" | null;
 
   /** The FULL argv that follows `bin`, defaults applied and deduped. */
   buildArgs(input: BuildAgentArgsInput): string[];
@@ -247,16 +253,40 @@ export const claudeAgentType: AgentTypeDescriptor = {
 
   isTuiReady: claudeIsTuiReady,
 
-  /**
-   * Diagnostic only — autoAcceptTrustDialog is false, so nothing ever types
-   * here. Wordings observed across claude 2.x builds.
-   */
+  /** Wordings observed across claude 2.x builds. */
   isTrustDialog(pane) {
     return (
       pane.includes("Quick safety check") ||
       pane.includes("Do you trust the files in this folder") ||
       pane.includes("trust this folder")
     );
+  },
+
+  /**
+   * Claude's trust dialog opens with "❯ No, exit" selected (claude 2.x), so
+   * the Enter that accepts codex's would make claude QUIT — which is how a
+   * dashboard launch in a new folder died, again and again, the moment
+   * anything pressed Enter (owner, 01/10: "ta dando pau", "nem o terminal ta
+   * ligando"). Launching an agent in a folder you picked IS trusting it, so
+   * the kickoff walks the menu to "Yes, I trust this folder" — and only ever
+   * presses Enter with a "Yes" visibly selected. Read from the dialog onward,
+   * so an old "❯" in the scrollback cannot be mistaken for the selection.
+   */
+  trustDialogKey(pane) {
+    const at = ["Quick safety check", "Do you trust the files in this folder", "trust this folder"]
+      .map((m) => pane.indexOf(m))
+      .filter((i) => i !== -1)
+      .sort((x, y) => x - y)[0];
+    if (at === undefined) return null;
+    const selected = pane
+      .slice(at)
+      .split("\n")
+      .map((line) => line.trim())
+      .find((line) => line.startsWith("❯"));
+    if (!selected) return null;
+    if (/\bYes\b/.test(selected)) return "Enter";
+    if (/\bNo\b/.test(selected)) return "Down";
+    return null;
   },
 
   mcpAddArgs(serverName, url) {

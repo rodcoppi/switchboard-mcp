@@ -183,3 +183,99 @@ describe("launchAgent (fake tmux) accepts Windows Explorer paths", () => {
     expect(created).toEqual([]);
   });
 });
+
+describe("kickoff answers claude's trust dialog (it defaults to \"No, exit\")", () => {
+  // Owner, 01/10: a client agent launched from the dashboard in a NEW folder
+  // kept dying — claude's "Quick safety check" opens with "❯ No, exit"
+  // selected, so the first Enter from anywhere made it quit, and the terminal
+  // then had no session to attach to ("nem o terminal ta ligando").
+  let dir: string;
+  let launcher: Launcher;
+
+  afterEach(() => {
+    launcher.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** A fake claude showing the trust dialog; `lag` = captures before a Down shows. */
+  function setup(lag: number) {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "switchboard-trust-unit-"));
+    const log = createLogger({ level: "error", filePath: path.join(dir, "logs", "hub.log"), stdout: false });
+    const store = new Store(dir, log);
+    const keys: string[] = [];
+    let selected: "No" | "Yes" = "No";
+    let pendingDown = -1;
+    let accepted = false;
+    const sessions = new Set<string>();
+    const dialog = () =>
+      [
+        " Accessing workspace:",
+        " /home/rod/clients/acme",
+        " Quick safety check: Is this a project you created or one you trust?",
+        ` ${selected === "No" ? "❯" : " "} No, exit`,
+        ` ${selected === "Yes" ? "❯" : " "} Yes, I trust this folder`,
+        " Enter to confirm · Esc to cancel",
+      ].join("\n");
+    const tmux: LauncherTmux = {
+      hasSession: async (s) => sessions.has(s),
+      killSession: async (s) => {
+        sessions.delete(s);
+      },
+      newSession: async (s) => {
+        sessions.add(s);
+      },
+      capturePane: async () => {
+        if (pendingDown > 0) pendingDown--;
+        else if (pendingDown === 0) {
+          selected = "Yes";
+          pendingDown = -1;
+        }
+        return accepted ? "? for shortcuts" : dialog();
+      },
+      nudgeSession: async () => ({ sent: true }),
+      isPaneSafeToNudge: async () => true,
+      sendDown: async () => {
+        keys.push("Down");
+        pendingDown = lag;
+      },
+      sendEnter: async (s) => {
+        keys.push(`Enter on ${selected}`);
+        if (selected === "No") sessions.delete(s); // claude quits
+        else accepted = true;
+      },
+    };
+    launcher = createLauncher({
+      store,
+      tmux,
+      config: { ...DEFAULTS, kickoffDelayMs: 1 },
+      log,
+      bus: new EventBus(),
+      settleMs: 1,
+      readinessPollMs: 1,
+      claudeBin: "/bin/true",
+    });
+    return { keys, isAccepted: () => accepted };
+  }
+
+  async function until(check: () => boolean): Promise<void> {
+    for (let i = 0; i < 400 && !check(); i++) await new Promise((r) => setTimeout(r, 5));
+  }
+
+  it("walks to \"Yes, I trust this folder\" and only then presses Enter", async () => {
+    const { keys, isAccepted } = setup(0);
+    fs.mkdirSync(path.join(dir, "acme"));
+    await launcher.launchAgent({ dir: path.join(dir, "acme"), name: "acme-social" });
+    await until(isAccepted);
+    expect(keys).toEqual(["Down", "Enter on Yes"]);
+  });
+
+  it("sends ONE Down and waits for a slow redraw rather than pressing again", async () => {
+    // A second Down before the first one shows could wrap the selection back
+    // onto "No" — and an Enter there quits the agent.
+    const { keys, isAccepted } = setup(3);
+    fs.mkdirSync(path.join(dir, "acme"));
+    await launcher.launchAgent({ dir: path.join(dir, "acme"), name: "acme-social" });
+    await until(isAccepted);
+    expect(keys).toEqual(["Down", "Enter on Yes"]);
+  });
+});

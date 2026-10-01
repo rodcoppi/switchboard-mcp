@@ -180,9 +180,9 @@ describe("claude descriptor", () => {
     expect(claudeAgentType.isTrustDialog(dialog)).toBe(true);
   });
 
-  it("claude NEVER auto-accepts its trust dialog (the human does, in the attach)", () => {
-    // This false is load-bearing: flipping it would change the behavior of the
-    // default agent type, which this whole feature must leave alone.
+  it("claude never presses Enter on its trust dialog's DEFAULT — that is \"No, exit\"", () => {
+    // This false is load-bearing: an Enter on the default QUITS claude. Its
+    // dialog is walked to "Yes" by trustDialogKey (tested below) instead.
     expect(claudeAgentType.autoAcceptTrustDialog).toBe(false);
   });
 
@@ -456,5 +456,37 @@ describe("buildAgentCommand + PATH", () => {
   it("with a boot command the PATH is quoted into the shell line like the rest", () => {
     const argv = buildAgentCommand({ ...base, pathValue: "/a b", bootCommand: "true" });
     expect(argv[2]).toContain(`'PATH=/a b'`);
+  });
+});
+
+describe("claude's trust dialog is walked to \"yes\", never Entered on \"No\"", () => {
+  // Captured from claude 2.x on 01/10 — the default selection is "No, exit".
+  const captured = (sel: "No" | "Yes") =>
+    [
+      "────────────────",
+      " Accessing workspace:",
+       " /home/you/projects/clients/acme",
+      " Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open source project, or work from your team).",
+      " Claude Code'll be able to read, edit, and execute files here.",
+      " Security guide",
+      ` ${sel === "No" ? "❯" : " "} No, exit`,
+      `   ${sel === "Yes" ? "❯ " : ""}Yes, I trust this folder`,
+      " Enter to confirm · Esc to cancel",
+    ].join("\n");
+
+  it("asks for Down while \"No, exit\" is selected", () => {
+    expect(claudeAgentType.trustDialogKey!(captured("No"))).toBe("Down");
+  });
+
+  it("asks for Enter only once a \"Yes\" is selected", () => {
+    expect(claudeAgentType.trustDialogKey!(captured("Yes"))).toBe("Enter");
+  });
+
+  it("says nothing about a pane that is not the dialog", () => {
+    expect(claudeAgentType.trustDialogKey!("❯ Yes do it\n? for shortcuts")).toBeNull();
+  });
+
+  it("ignores a \"❯\" in the scrollback above the dialog", () => {
+    expect(claudeAgentType.trustDialogKey!(`❯ Yes please\n${captured("No")}`)).toBe("Down");
   });
 });

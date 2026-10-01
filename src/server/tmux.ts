@@ -263,6 +263,11 @@ export interface Tmux {
   /** `tmux send-keys -t =<s>: Enter` — always a SEPARATE command (P1). */
   sendEnter(session: string): Promise<void>;
   /**
+   * `tmux send-keys -t =<s>: Down` — one arrow press, for walking a TUI menu
+   * (claude's trust dialog). Callers run the pane guard first, as for Enter.
+   */
+  sendDown(session: string): Promise<void>;
+  /**
    * `tmux new-session -d -s <s> -c <cwd> [<cmd>]`. `cmd` as a STRING is a raw
    * sh command (legacy behavior, caller owns the quoting); as an ARRAY it has
    * argv semantics — each element becomes exactly one argument of the final
@@ -377,6 +382,11 @@ export function createTmux(options: TmuxOptions = {}): Tmux {
     assertValidSession(session);
     await exec("tmux", ["send-keys", "-t", paneTarget(session), "Enter"]);
   }
+  async function sendDown(session: string): Promise<void> {
+    assertValidSession(session);
+    await exec("tmux", ["send-keys", "-t", paneTarget(session), "Down"]);
+  }
+
 
   async function newSession(
     session: string,
@@ -692,6 +702,7 @@ export function createTmux(options: TmuxOptions = {}): Tmux {
     paneCommand,
     sendKeysLiteral,
     sendEnter,
+    sendDown,
     newSession,
     capturePane,
     sendKeysHex,

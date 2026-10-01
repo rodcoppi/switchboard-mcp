@@ -130,14 +130,14 @@ export interface LauncherTmux {
   /** THE guarded nudge path (pane guard + separate Enter) — never bypassed. */
   nudgeSession(session: string, text: string, enterDelayMs: number): Promise<NudgeResult>;
   /**
-   * Both OPTIONAL, used ONLY to accept the trust dialog of an agent type whose
-   * descriptor sets autoAcceptTrustDialog (codex; never claude). Optional so
-   * the existing in-memory test doubles — which implement exactly the five
-   * methods above — keep type-checking; a double without them just waits the
-   * dialog out, which is the pre-existing behavior.
+   * OPTIONAL, used ONLY to answer an agent's trust dialog (codex: Enter on its
+   * default; claude: Down to "Yes", then Enter). Optional so the existing
+   * in-memory test doubles — which implement exactly the five methods above —
+   * keep type-checking; a double without them just waits the dialog out.
    */
   isPaneSafeToNudge?(session: string): Promise<boolean>;
   sendEnter?(session: string): Promise<void>;
+  sendDown?(session: string): Promise<void>;
 }
 
 export interface LaunchInput {
@@ -632,9 +632,11 @@ export function createLauncher(options: LauncherOptions): Launcher {
     // At most ONE trust-dialog Enter per kickoff — see the CLI's runKickoffAgent
     // for the full reasoning: between our Enter and the TUI's redraw the dialog
     // is still on screen, and every extra Enter becomes an empty submit in the
-    // freshly-ready composer. Only a really sent Enter flips this, so an attempt
+    // freshly-ready composer. And at most one Down: a second one, sent before
+    // the first one's redraw reached the pane, could carry the selection back
+    // onto "No, exit". Only a really sent key flips these, so an attempt
     // refused by the pane guard is still retried next round.
-    let trustEnterSent = false;
+    const trust = { enterSent: false, downSent: false };
     for (;;) {
       if (closed) return;
       if (!(await tmux.hasSession(session))) {
@@ -650,13 +652,10 @@ export function createLauncher(options: LauncherOptions): Launcher {
         pane = ""; // unreadable this round — treated as not ready
       }
       if (descriptor.isTuiReady(pane)) break;
-      // Agent types that accept their own trust dialog (codex) get an Enter on
-      // its default option — nothing else would: the dashboard launches with
-      // no human attached. Guarded (pane allow-list) and best-effort; claude
-      // keeps waiting for the human, exactly as before.
-      if (!trustEnterSent) {
-        trustEnterSent = await acceptTrustDialog(name, session, descriptor, pane);
-      }
+      // The trust dialog gets answered — nothing else would: the dashboard
+      // launches with no human attached, and claude's default answer is "No,
+      // exit". Guarded (pane allow-list) and best-effort.
+      if (!trust.enterSent) await answerTrustDialog(name, session, descriptor, pane, trust);
       if (now() >= deadline) {
         log.warn(
           `[launcher] kickoff for ${name} NOT sent: the ${descriptor.bin} TUI did not become ready ` +
@@ -690,43 +689,51 @@ export function createLauncher(options: LauncherOptions): Launcher {
   }
 
   /**
-   * Presses Enter on the trust dialog for agent types that ask for it — codex's
-   * "Do you trust the contents of this directory?" defaults to "1. Yes,
-   * continue", which Enter accepts. Claude is deliberately excluded
-   * (autoAcceptTrustDialog: false): its flow has always relied on the human
-   * accepting it in the attach, and preserving that is why this is a descriptor
-   * capability rather than a blanket "press Enter on any dialog".
+   * Answers the "do you trust this folder?" dialog. Codex's defaults to "1.
+   * Yes, continue", so Enter accepts it (autoAcceptTrustDialog). Claude's
+   * defaults to "No, exit" — an Enter there QUITS the agent — so its
+   * descriptor reads the selection (trustDialogKey): Down while "No" is
+   * selected, Enter only once a "Yes" visibly is. Picking the folder in the
+   * launcher is the operator's trust decision; this just types it.
    *
-   * The pane guard is NOT bypassed (PRD 10.3): Enter is only ever sent to a
+   * The pane guard is NOT bypassed (PRD 10.3): a key is only ever sent to a
    * pane on the allow-list, because an Enter into a SHELL executes whatever
-   * sits on the prompt — the exact scenario the guard exists for. Codex's
-   * pane_current_command is "node", already allow-listed, so this needed no
+   * sits on the prompt — the exact scenario the guard exists for. The agent
+   * CLIs run as "node"/"claude", already allow-listed, so this needed no
    * widening of SAFE_PANE_COMMANDS. Best-effort: any failure just means the
    * next poll round tries again.
-   *
-   * Returns whether an Enter was actually SENT (the caller presses at most once).
    */
-  async function acceptTrustDialog(
+  async function answerTrustDialog(
     name: string,
     session: string,
     descriptor: AgentTypeDescriptor,
     pane: string,
-  ): Promise<boolean> {
-    if (!descriptor.autoAcceptTrustDialog) return false;
-    if (!descriptor.isTrustDialog(pane)) return false;
-    if (typeof tmux.sendEnter !== "function" || typeof tmux.isPaneSafeToNudge !== "function") {
-      return false; // double without the surface — wait the dialog out
+    trust: { enterSent: boolean; downSent: boolean },
+  ): Promise<void> {
+    if (!descriptor.isTrustDialog(pane)) return;
+    const key = descriptor.trustDialogKey
+      ? descriptor.trustDialogKey(pane)
+      : descriptor.autoAcceptTrustDialog
+        ? "Enter"
+        : null;
+    if (key === null) return;
+    if (key === "Down" && trust.downSent) return; // wait for the redraw instead
+    const send = key === "Enter" ? tmux.sendEnter : tmux.sendDown;
+    if (typeof send !== "function" || typeof tmux.isPaneSafeToNudge !== "function") {
+      return; // double without the surface — wait the dialog out
     }
     try {
-      if (!(await tmux.isPaneSafeToNudge(session))) return false; // fail-closed
-      await tmux.sendEnter(session);
-      log.info(
-        `[launcher] accepted the ${descriptor.bin} trust dialog for ${name} ` +
-          `(Enter on its default option).`,
-      );
-      return true;
+      if (!(await tmux.isPaneSafeToNudge(session))) return; // fail-closed
+      await send(session);
+      if (key === "Enter") {
+        trust.enterSent = true;
+        log.info(`[launcher] accepted the ${descriptor.bin} trust dialog for ${name} (trusting its folder).`);
+      } else {
+        trust.downSent = true;
+        log.info(`[launcher] ${descriptor.bin} trust dialog for ${name}: moved the selection off "No, exit".`);
+      }
     } catch {
-      return false; // transient tmux failure — the next poll round retries
+      // transient tmux failure — the next poll round retries
     }
   }
 
