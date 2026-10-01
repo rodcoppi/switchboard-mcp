@@ -2248,6 +2248,50 @@ export function createApiRouter(options: ApiOptions): express.Router {
     }
   });
 
+  // GET /api/groups → {ok, groups}: every group, empty ones included (an
+  // empty group has no agent to carry it in /api/agents).
+  router.get("/api/groups", (_req, res) => {
+    res.json({ ok: true, groups: store.listGroups() });
+  });
+
+  // POST /api/groups — body {name: "<group>"}: creates a group with nobody in
+  // it yet ("agency/client" for a client), so it can be set up before its
+  // agents. Repeating it is harmless.
+  router.post("/api/groups", (req, res) => {
+    const name = ((req.body ?? {}) as Record<string, unknown>).name;
+    if (typeof name !== "string" || name.length === 0) {
+      res.status(400).json({ ok: false, error: `Invalid body: expected {"name": "<group>"}.` });
+      return;
+    }
+    let groups;
+    try {
+      groups = store.createGroup(name);
+    } catch (err) {
+      res.status(400).json({ ok: false, error: (err as Error).message });
+      return;
+    }
+    bus.emit({ type: "groups_updated", payload: { groups } });
+    log.info(`[api] group ${name} created.`);
+    res.json({ ok: true, group: name, groups });
+  });
+
+  // DELETE /api/groups/:group — removes an EMPTY group (and its empty
+  // subgroups). 409 while any agent is still in it.
+  router.delete("/api/groups/:group", (req, res) => {
+    const group = req.params.group;
+    let groups;
+    try {
+      groups = store.deleteGroup(group);
+    } catch (err) {
+      const message = (err as Error).message;
+      res.status(message.startsWith("Unknown group") ? 404 : 409).json({ ok: false, error: message });
+      return;
+    }
+    bus.emit({ type: "groups_updated", payload: { groups } });
+    log.info(`[api] group ${group} deleted.`);
+    res.json({ ok: true, groups });
+  });
+
   // POST /api/groups/:group/rename — body {name: "<newName>"}. Renames a group
   // for every agent in it (Store.renameGroup moves them in one write, so the
   // room can never end up split across two names).
@@ -2277,6 +2321,7 @@ export function createApiRouter(options: ApiOptions): express.Router {
     for (const agent of members) {
       bus.emit({ type: "agent_updated", payload: toPublicAgent(agent) });
     }
+    bus.emit({ type: "groups_updated", payload: { groups: store.listGroups() } });
     log.info(`[api] group ${group} renamed to ${next} (${members.length} agent(s)).`);
     res.json({ ok: true, group: next, agents: members.map(toPublicAgent) });
   });

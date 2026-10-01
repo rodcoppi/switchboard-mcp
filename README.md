@@ -313,10 +313,16 @@ switchboard start globex-social --dir ~/clients/globex --group ai-panorama/globe
 The wall bends by exactly one step: the agency's own agents (`ai-panorama`) reach every
 client, and every client reaches the agency — but one client never reaches, lists or sees
 another. A broadcast stays in the sender's own group, so the agency saying "all" to its team
-does not land in every client's room. In the dashboard, the groups panel has a **+ client**
-button under each group (and every card's **Move to group ›** has **New client…**), the rail nests the clients inside their agency, and the agency's tab
-shows the whole family while a client's tab shows that client alone. Renaming the agency
-carries its clients along.
+does not land in every client's room.
+
+In the dashboard, a client can be made **before** any of its agents: every group's header in
+the rail has a **+ client** button — type the name, Enter, and an empty client box appears
+inside the agency, waiting. Drag an agent into it, right-click an agent → **Move to group ›**,
+or use the box's **+ new agent here**. **+ group** at the top of the rail does the same for a
+group of its own. A group stays until you delete it (an empty one offers **delete group**, or
+right-click its header), so emptying a client never makes it vanish. The agency's tab shows
+the whole family, a client's tab shows that client alone, and renaming the agency carries its
+clients along.
 
 You are the operator, so no wall applies to you: you can message any agent from the dashboard.
 

@@ -3254,6 +3254,7 @@
     .group-head .rail-group-name { order: 2; }
     .group-head .tally { order: 3; }
     .group-head .group-rename { order: 4; }
+    .group-head .group-addsub { order: 4; }
     .group-head .unread-badge { order: 5; }
     .group-head .rule { order: 6; }
     /* The colour dot on the head doubles as the "recolour this group" control. */
@@ -3283,6 +3284,75 @@
     }
     .group-head:hover .group-rename { opacity: 0.6; }
     .group-rename:hover { opacity: 1; color: var(--accent); }
+    /* "+ client" stays in sight (faint) — it is how a client is made, and a
+       control that only shows on hover is one nobody finds. */
+    .group-addsub {
+      flex: 0 0 auto;
+      font-family: var(--mono);
+      font-size: var(--fs-xs);
+      font-weight: 500;
+      letter-spacing: 0;
+      text-transform: none;
+      line-height: 1;
+      padding: 3px 6px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text-faint);
+      cursor: pointer;
+      opacity: 0.55;
+      transition: opacity 0.12s var(--ease), color 0.12s var(--ease), border-color 0.12s var(--ease);
+    }
+    .group-head:hover .group-addsub { opacity: 0.9; }
+    .group-addsub:hover { opacity: 1; color: var(--text); border-color: var(--border-strong); }
+    /* An empty group: how to fill it, and a way to drop it. */
+    .rail-group-empty {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin: 2px 6px 8px;
+      padding: 10px 12px;
+      border: 1px dashed var(--border);
+      border-radius: 8px;
+      font-family: var(--sans);
+      font-size: var(--fs-xs);
+      line-height: 1.45;
+      color: var(--text-faint);
+    }
+    .rail-group-empty-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+    .rail-group-empty-btn {
+      font-family: var(--sans);
+      font-size: var(--fs-xs);
+      color: var(--text-dim);
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 4px 8px;
+      cursor: pointer;
+    }
+    .rail-group-empty-btn:hover { color: var(--text); border-color: var(--border-strong); }
+    .rail-group-empty-btn.danger:hover,
+    .rail-group-empty-btn.danger[data-confirming="1"] { color: var(--danger); border-color: var(--danger); }
+    /* Naming a new group, in place. */
+    .rail-new-group {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin: 0 0 10px;
+      padding: 8px 10px;
+      border: 1px solid var(--border-strong);
+      border-radius: 10px;
+      background: var(--bg-elev);
+    }
+    .rail-new-group.sub { margin: 4px 6px 8px; border-radius: 8px; }
+    .rail-new-prefix { flex: 0 0 auto; font-family: var(--mono); font-size: var(--fs-xs); color: var(--text-faint); }
+    .rail-new-group .rail-new-input {
+      font-size: var(--fs-sm);
+      font-weight: 500;
+      padding: 5px 7px;
+      border-color: var(--border-strong);
+    }
+    .rail-new-group .rail-new-input.invalid { border-color: var(--danger); }
+    .group-menu .am-group-dot { margin-left: 0; }
     /* The rename input sits where the name was, inside the head. */
     .group-head .agent-rename-input {
       font-family: var(--mono);
@@ -3965,7 +4035,7 @@
              agents listed below them. Groups was up in the tab strip, which is
              about which SCREEN you are looking at — a different question. -->
         <button class="btn groups-open" id="groups-open" type="button"
-          title="Create a group, and move agents between rooms">+ group</button>
+          title="Create a group — it waits in the rail for its agents">+ group</button>
         <button class="btn launcher-open" id="launcher-open" type="button"
           title="Launch a new agent">+ agent</button>
         <!-- It sits in the HEAD, not in #agents: renderAgents() wipes that
@@ -4164,6 +4234,7 @@
       msgIds: new Set(),   // dedup guard for message_created vs bootstrap
       filter: null,        // active agent-name filter, or null
       group: null,         // active group tab, or null for "all groups"
+      groups: new Set(),   // every group the hub keeps, empty ones included
       search: "",          // free-text filter over the transcript, or ""
       railSearch: "",      // free-text filter over the agent rail, or ""
       unseen: new Set(),   // agents that finished a turn you haven't opened yet
@@ -5557,7 +5628,7 @@
         },
         {
           kind: "action", mark: "+", name: "New group", desc: "create a room",
-          run: () => { closePalette(); openGroups(); },
+          run: () => { closePalette(); startNewGroupInline(null); },
         },
       ];
     }
@@ -5711,6 +5782,7 @@
     /** Every group that has an agent, in the operator's order (else sorted). */
     function allGroups() {
       const present = new Set([...state.agents.values()].map(groupOf));
+      for (const g of state.groups) present.add(g); // created, still empty
       // A subgroup implies its parent, even with nobody in the parent itself.
       for (const g of [...present]) {
         const parent = parentOfGroup(g);
@@ -5753,7 +5825,7 @@
         parts.join("\u0002"),
         state.filter || "", state.railSearch || "", screenState.name || "",
         [...state.reopening].sort().join(","), [...state.unseen].sort().join(","),
-        [...collapsedGroups].sort().join(","),
+        [...collapsedGroups].sort().join(","), allGroups().join(","), state.group || "",
       ].join("\u0003");
     }
 
@@ -5827,7 +5899,13 @@
           box.dataset.group = group;
           box.style.setProperty("--group-color", groupColor(group));
           box.appendChild(buildGroupHead(group, inGroup));
-          if (!collapsedGroups.has(group)) appendAgentCards(box, inGroup);
+          if (!collapsedGroups.has(group)) {
+            appendAgentCards(box, inGroup);
+            // A group made ahead of its agents says how to fill it, instead
+            // of sitting there as a header over nothing.
+            const hasClients = groups.some((g) => parentOfGroup(g) === group);
+            if (!query && inGroup.length === 0 && !hasClients && group !== DEFAULT_GROUP) box.appendChild(buildEmptyGroupHint(group));
+          }
           return { box, count: inGroup.length };
         };
         for (const group of groups) {
@@ -5918,14 +5996,35 @@
       }
       // A recolour control living on the head: a swatch you click to open a
       // native colour picker. `default` is the non-room and stays neutral.
+      let swatch = null;
       if (group !== DEFAULT_GROUP) {
-        const swatch = el("span", "group-swatch");
+        swatch = el("span", "group-swatch");
         swatch.title = `Recolour the ${group} group`;
         swatch.addEventListener("click", (e) => {
           e.stopPropagation(); // do not fold the group
           openColorPicker(swatch, groupColor(group), (c) => c && setGroupColor(group, c));
         });
         head.appendChild(swatch);
+      }
+      // "+" makes a client of this group, right inside it — no panel, no
+      // agent needed first (owner, 01/10: "deixa as coisas mais simples").
+      if (group !== DEFAULT_GROUP && !parentOfGroup(group)) {
+        const add = el("span", "group-addsub", "+ client");
+        add.title = `New client inside ${groupLabelOf(group)}`;
+        add.addEventListener("click", (e) => {
+          e.stopPropagation(); // do not fold
+          startNewGroupInline(group);
+        });
+        head.appendChild(add);
+      }
+      // Right-click the head: the same few things, in a menu.
+      if (group !== DEFAULT_GROUP) {
+        head.addEventListener("contextmenu", (ev) => {
+          if (ev.shiftKey) return;
+          ev.preventDefault();
+          ev.stopPropagation();
+          openGroupMenu(group, head, { nameSpan, swatch }, { x: ev.clientX, y: ev.clientY });
+        });
       }
       if (unread > 0) {
         const badge = el("span", "unread-badge", String(unread));
@@ -5940,6 +6039,180 @@
         renderAgents();
       });
       return head;
+    }
+
+    /** What an empty group shows: how to fill it, and a way to drop it. */
+    function buildEmptyGroupHint(group) {
+      const hint = el("div", "rail-group-empty");
+      hint.appendChild(el("span", null, "No agents yet — drag one in, or right-click an agent → Move to group."));
+      const actions = el("div", "rail-group-empty-actions");
+      const launch = el("button", "rail-group-empty-btn", "+ new agent here");
+      launch.type = "button";
+      launch.title = `Launch a new agent straight into ${groupLabelOf(group)}`;
+      launch.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        openLauncherInGroup(group);
+      });
+      const del = el("button", "rail-group-empty-btn danger", "delete group");
+      del.type = "button";
+      del.title = `Delete the empty ${groupLabelOf(group)} group`;
+      del.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        if (del.dataset.confirming !== "1") {
+          del.dataset.confirming = "1";
+          del.textContent = "delete? click again";
+          setTimeout(() => {
+            if (!del.isConnected) return;
+            del.dataset.confirming = "";
+            del.textContent = "delete group";
+          }, 4000);
+          return;
+        }
+        deleteGroup(group);
+      });
+      actions.append(launch, del);
+      hint.appendChild(actions);
+      return hint;
+    }
+
+    /** The launcher, with its group field already set to `group`. */
+    function openLauncherInGroup(group) {
+      $("#launcher-open").click();
+      $("#launch-group").value = group;
+    }
+
+    /**
+     * Names a new group right in the rail, where it will appear: inside its
+     * agency for a client (`parent`), at the top for a group of its own.
+     * Enter creates it — empty, waiting for its agents; Esc or leaving the
+     * field cancels. The field carries .agent-rename-input, which is what
+     * holds the rail's rebuilds off while you type.
+     */
+    function startNewGroupInline(parent) {
+      const container = $("#agents");
+      if (parent && collapsedGroups.has(parent)) {
+        collapsedGroups.delete(parent);
+        renderAgents();
+      }
+      const old = container.querySelector(".rail-new-group");
+      if (old) old.remove();
+      const row = el("form", `rail-new-group${parent ? " sub" : ""}`);
+      if (parent) row.appendChild(el("span", "rail-new-prefix", `${groupLabelOf(parent)} /`));
+      const input = el("input", "agent-rename-input rail-new-input");
+      input.type = "text";
+      input.maxLength = 31;
+      input.placeholder = parent ? "client name, Enter" : "group name, Enter";
+      input.setAttribute("aria-label", parent ? `New client of ${groupLabelOf(parent)}` : "New group");
+      input.autocomplete = "off";
+      input.spellcheck = false;
+      bindAgentNameSanitizer(input); // one segment either way: the "/" is ours
+      row.appendChild(input);
+      let done = false;
+      const cancel = () => {
+        if (done) return;
+        done = true;
+        row.remove();
+        renderAgents();
+      };
+      row.addEventListener("submit", async (ev) => {
+        ev.preventDefault();
+        const leaf = sanitizeAgentNameInput(input.value, false);
+        if (leaf.length < 2) {
+          input.value = "";
+          input.placeholder = "at least 2 letters";
+          input.classList.add("invalid");
+          return;
+        }
+        const name = parent ? `${parent}/${leaf}` : leaf;
+        if (allGroups().includes(name)) {
+          toast(`"${groupLabelOf(name)}" already exists.`, "warn");
+          return;
+        }
+        done = true;
+        row.remove();
+        if (await createGroup(name)) {
+          toast(parent ? `Client "${leaf}" created in ${groupLabelOf(parent)}.` : `Group "${leaf}" created.`, "ok");
+        } else {
+          renderAgents();
+        }
+      });
+      input.addEventListener("keydown", (ev) => {
+        if (ev.key !== "Escape") return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        cancel();
+      });
+      input.addEventListener("blur", () => {
+        // Submitting also blurs; give it the moment to set `done` first.
+        setTimeout(() => {
+          if (document.activeElement !== input) cancel();
+        }, 150);
+      });
+      const box = parent ? container.querySelector(`.rail-group[data-group="${CSS.escape(parent)}"]`) : null;
+      if (parent && !box) return;
+      if (box) box.appendChild(row);
+      else container.prepend(row);
+      row.scrollIntoView({ block: "nearest" });
+      input.focus();
+    }
+
+    /** Right-click on a group's head: new client, new agent, rename, colour, delete. */
+    function openGroupMenu(group, head, parts, point) {
+      closeMenus();
+      const menu = el("div", "agent-menu group-menu");
+      menu.tabIndex = -1;
+      menu.setAttribute("role", "menu");
+      menu.addEventListener("click", (ev) => ev.stopPropagation());
+      const top = el("div", "am-head");
+      const dot = el("span", "am-group-dot");
+      dot.style.background = groupColor(group);
+      top.append(dot, el("span", "am-title", groupLabelOf(group)));
+      if (parentOfGroup(group)) top.appendChild(el("span", "am-sub", `client of ${groupLabelOf(parentOfGroup(group))}`));
+      menu.appendChild(top);
+      const page = el("div", "am-page");
+      if (!parentOfGroup(group)) {
+        page.appendChild(
+          agentMenuRow({ icon: "plus", label: "New client…", cls: "new-client-btn", title: `A client inside ${groupLabelOf(group)} — it reaches this group, never another client` }, () => {
+            closeMenus();
+            startNewGroupInline(group);
+          }),
+        );
+      }
+      page.appendChild(
+        agentMenuRow({ icon: "wake", label: "New agent here…", cls: "new-agent-here-btn", title: `Launch a new agent straight into ${groupLabelOf(group)}` }, () => {
+          closeMenus();
+          openLauncherInGroup(group);
+        }),
+      );
+      page.appendChild(el("div", "am-sep"));
+      page.appendChild(
+        agentMenuRow({ icon: "rename", label: "Rename…", cls: "group-relabel-btn", title: "The name the board shows for this group — emoji welcome" }, () => {
+          closeMenus();
+          startRailRelabel(group, parts.nameSpan);
+        }),
+      );
+      if (parts.swatch) {
+        page.appendChild(
+          agentMenuRow({ icon: "look", label: "Colour…", cls: "group-colour-btn" }, () => {
+            closeMenus();
+            openColorPicker(parts.swatch, groupColor(group), (c) => c && setGroupColor(group, c));
+          }),
+        );
+      }
+      const empty = ![...state.agents.values()].some((a) => inGroupFamily(groupOf(a), group));
+      if (empty) {
+        page.appendChild(el("div", "am-sep"));
+        page.appendChild(
+          agentMenuRow({ icon: "remove", label: "Delete group", cls: "group-delete-btn danger-item", title: "Only an empty group can go — its empty clients go with it" }, (item) => {
+            if (!armMenuRow(item, "Delete? Click again")) return;
+            closeMenus();
+            deleteGroup(group);
+          }),
+        );
+      }
+      menu.appendChild(page);
+      floatMenu(menu, head, null, point);
+      menu.focus({ preventScroll: true });
     }
 
     function renderGroupTabs() {
@@ -6319,24 +6592,9 @@
       const parent = parentOfGroup(group);
       return parent ? `${groupLabelOf(parent)} › ${groupLabelOf(group)}` : groupLabelOf(group);
     }
-    /** Every group an agent could be moved to: the rail's order, then empty drafts, "default" last. */
+    /** Every group an agent could be moved to: the rail's order, "default" last. */
     function groupsForMenu() {
-      const out = allGroups().filter((g) => g !== DEFAULT_GROUP);
-      for (const g of draftGroups) {
-        if (out.includes(g)) continue;
-        const parent = parentOfGroup(g);
-        if (parent && out.includes(parent)) {
-          // After the parent's last subgroup, so the family stays together.
-          let at = out.indexOf(parent) + 1;
-          while (at < out.length && parentOfGroup(out[at]) === parent) at++;
-          out.splice(at, 0, g);
-        } else {
-          if (parent) out.push(parent);
-          out.push(g);
-        }
-      }
-      out.push(DEFAULT_GROUP);
-      return out;
+      return [...allGroups().filter((g) => g !== DEFAULT_GROUP), DEFAULT_GROUP];
     }
 
     function buildAgentMenu(agent, online, nameEl) {
@@ -7179,11 +7437,56 @@
     // into one without retyping the name from memory.
     // =====================================================================
 
-    // Groups with no agent in them yet. The hub only knows a group because an
-    // agent is in it, so a group you just created has nowhere to live until you
-    // move someone in — it is kept here, in the page, so it can appear in the
-    // pickers meanwhile. Nothing is lost on reload but an empty room.
-    const draftGroups = new Set();
+    /**
+     * Creates a group on the hub — empty, waiting for its agents ("agency/
+     * client" for a client). It used to be a draft kept in the page, gone the
+     * moment the panel closed, so a client could not be set up before its
+     * first agent (owner, 01/10). Resolves true when the group exists.
+     */
+    async function createGroup(name) {
+      try {
+        const res = await fetch("/api/groups", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ name }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok || !body.ok) {
+          toast(`Could not create the group: ${body.error || `HTTP ${res.status}`}`, "warn");
+          return false;
+        }
+        // groups_updated arrives over SSE too; applying it here keeps this tab snappy.
+        setKnownGroups(body.groups);
+        const parent = parentOfGroup(name);
+        if (parent) collapsedGroups.delete(parent); // show the new client where it was made
+        renderAgents();
+        if (!$("#groups-box").hidden) renderGroupsPanel();
+        return true;
+      } catch (err) {
+        toast(`Could not create the group: ${err && err.message ? err.message : err}`, "warn");
+        return false;
+      }
+    }
+
+    /** Deletes an EMPTY group (the hub refuses one with agents in it). */
+    async function deleteGroup(group) {
+      try {
+        const res = await fetch(`/api/groups/${encodeURIComponent(group)}`, { method: "DELETE" });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok || !body.ok) {
+          toast(`Could not delete the group: ${body.error || `HTTP ${res.status}`}`, "warn");
+          return;
+        }
+        setKnownGroups(body.groups);
+        if (state.group && inGroupFamily(state.group, group)) state.group = null;
+        renderAgents();
+        renderFeed();
+        if (!$("#groups-box").hidden) renderGroupsPanel();
+        toast(`Group "${groupLabelOf(group)}" deleted.`);
+      } catch (err) {
+        toast(`Could not delete the group: ${err && err.message ? err.message : err}`, "warn");
+      }
+    }
 
     function openGroups(focusAgent) {
       $("#groups-box").hidden = false;
@@ -7200,12 +7503,11 @@
 
     function closeGroups() {
       $("#groups-box").hidden = true;
-      draftGroups.clear(); // an empty group nobody joined was never real
     }
 
     function panelGroups() {
       // Same order as the rail: each parent followed by its subgroups.
-      const all = [...new Set([...allGroups(), ...draftGroups])];
+      const all = [...allGroups()];
       for (const g of [...all]) {
         const parent = parentOfGroup(g);
         if (parent && !all.includes(parent)) all.push(parent);
@@ -7238,7 +7540,22 @@
         rename.type = "button";
         rename.title = `Rename "${group}" — every agent in it moves along`;
         rename.addEventListener("click", () => startGroupRename(group, head, rename));
-        if (members.length > 0) head.appendChild(rename);
+        head.appendChild(rename); // an empty group is real now, so it can be renamed too
+        const familyEmpty = ![...state.agents.values()].some((a) => inGroupFamily(groupOf(a), group));
+        if (familyEmpty && group !== DEFAULT_GROUP) {
+          const del = el("button", "groups-rename groups-delete", "delete");
+          del.type = "button";
+          del.title = `Delete the empty "${group}" group`;
+          del.addEventListener("click", () => {
+            if (del.dataset.confirming !== "1") {
+              del.dataset.confirming = "1";
+              del.textContent = "sure?";
+              return;
+            }
+            deleteGroup(group);
+          });
+          head.appendChild(del);
+        }
         // A client of this group: prefill "group/" in the create field.
         if (!parentOfGroup(group) && group !== DEFAULT_GROUP) {
           const addSub = el("button", "groups-rename groups-addsub", "+ client");
@@ -7257,7 +7574,7 @@
 
         if (members.length === 0) {
           box.appendChild(
-            el("div", "groups-empty", "Nobody here yet — move an agent in with the pickers below."),
+            el("div", "groups-empty", "Nobody here yet — move an agent in with a picker below, or drag one into it in the rail."),
           );
         }
         for (const agent of members) box.appendChild(buildGroupMemberRow(agent, groups));
@@ -10351,7 +10668,6 @@
         // agent_updated arrives over SSE too; applying it here keeps the
         // clicking tab snappy.
         mergeAgent(body.agent);
-        draftGroups.delete(group); // it has a member now, so the hub knows it
         renderAgents();
         renderFeed(); // the transcript is filtered by group — the card just moved
         if (!$("#groups-box").hidden) renderGroupsPanel();
@@ -10938,6 +11254,11 @@
         case "agent_removed":
           dropAgent(event.payload.name);
           break;
+        case "groups_updated":
+          setKnownGroups(event.payload.groups);
+          renderAgents();
+          if (!$("#groups-box").hidden) renderGroupsPanel();
+          break;
       }
     }
 
@@ -11366,9 +11687,21 @@
     }
 
     async function loadAgents() {
-      const res = await fetch("/api/agents");
+      const [res, groupsRes] = await Promise.all([fetch("/api/agents"), fetch("/api/groups").catch(() => null)]);
       const list = await res.json();
       for (const agent of list) mergeAgent(agent);
+      // An empty group has no agent to carry it, so the groups come on their own.
+      const body = groupsRes && groupsRes.ok ? await groupsRes.json().catch(() => null) : null;
+      if (body && Array.isArray(body.groups)) setKnownGroups(body.groups);
+    }
+
+    /**
+     * The hub's list of groups. `default` is left out: it is the absence of a
+     * group, shown only while somebody is in it — kept here, it would linger
+     * as an empty "Desagrupados" box after its last agent moved out.
+     */
+    function setKnownGroups(list) {
+      state.groups = new Set((list || []).filter((g) => g !== DEFAULT_GROUP));
     }
 
     async function loadMessages() {
@@ -12730,16 +13063,18 @@
       // ---- end dictation ---------------------------------------------------
 
       // Groups panel wiring.
-      $("#groups-open").addEventListener("click", () => {
-        if ($("#groups-box").hidden) openGroups();
-        else closeGroups();
+      // "+ group" names the group right at the top of the rail; the panel
+      // (rename ids, move several agents) stays one click away in the menus.
+      $("#groups-open").addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        startNewGroupInline(null);
       });
       $("#groups-close").addEventListener("click", closeGroups);
       // Backdrop closes, the card does not — same contract as the launcher.
       $("#groups-box").addEventListener("click", (ev) => {
         if (ev.target === $("#groups-box")) closeGroups();
       });
-      $("#groups-create").addEventListener("click", () => {
+      $("#groups-create").addEventListener("click", async () => {
         const input = $("#groups-new");
         const name = sanitizeGroupNameInput(input.value, false);
         if (name === "") {
@@ -12750,12 +13085,9 @@
           toast(`The group "${name}" already exists.`, "warn");
           return;
         }
-        // The hub learns a group from the agents in it, so a new one is only a
-        // box on screen until you move somebody into it.
-        draftGroups.add(name);
+        if (!(await createGroup(name))) return;
         input.value = "";
-        renderGroupsPanel();
-        toast(`Group "${name}" is ready — move an agent into it to make it real.`);
+        toast(`Group "${name}" created — it waits in the rail for its agents.`);
       });
       bindGroupNameSanitizer($("#groups-new"));
       $("#groups-new").addEventListener("keydown", (ev) => {

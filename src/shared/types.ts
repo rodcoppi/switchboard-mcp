@@ -278,9 +278,19 @@ export interface AgentRemovedEvent {
   payload: { name: string };
 }
 
+/**
+ * The list of groups changed by itself — created, deleted or renamed — which
+ * no agent_updated would carry when the group is empty. Payload: every group.
+ */
+export interface GroupsUpdatedEvent {
+  type: "groups_updated";
+  payload: { groups: string[] };
+}
+
 export type SseEvent =
   | AgentUpdatedEvent
   | MessageCreatedEvent
   | MessageReadEvent
   | NudgeSentEvent
-  | AgentRemovedEvent;
+  | AgentRemovedEvent
+  | GroupsUpdatedEvent;

@@ -10,6 +10,9 @@
 //   low volume, synchronous is acceptable and interleaving-proof.
 // - agents.json: full snapshot rewritten on every change via temp file +
 //   fs.renameSync in the SAME directory (atomic on the same filesystem).
+// - groups.json: the groups that exist, written the same way. A group stays
+//   until it is deleted, even with nobody in it, so a client can be set up
+//   before its first agent arrives.
 // - Boot: loads agents.json (if present) and replays messages.jsonl line by
 //   line to rebuild unread state. Corrupted lines are logged and SKIPPED,
 //   never crash the hub.
@@ -201,14 +204,26 @@ export class Store {
   // boot). The next append then starts on a fresh line so a valid record is
   // never glued to torn bytes.
   private needsLeadingNewline = false;
+  /**
+   * Every group that exists, whether or not anyone is in it (owner, 01/10:
+   * "quero poder criar um subgrupo antes de por um agente"). A group used to
+   * exist only because an agent was in it, so an empty one had nowhere to
+   * live and a client could not be set up ahead of its agents. Now a group is
+   * like a folder: created, filled, emptied, and gone only when deleted.
+   * `default` is never listed — it is the absence of a group.
+   */
+  private groups = new Set<string>();
+  private readonly groupsPath: string;
 
   constructor(baseDir: string = defaultBaseDir(), logger: StoreLogger = console) {
     this.baseDir = baseDir;
     this.messagesPath = path.join(baseDir, "messages.jsonl");
     this.agentsPath = path.join(baseDir, "agents.json");
+    this.groupsPath = path.join(baseDir, "groups.json");
     this.log = logger;
     fs.mkdirSync(baseDir, { recursive: true });
     this.loadAgentsSnapshot();
+    this.loadGroups();
     this.replayMessages();
   }
 
@@ -263,6 +278,7 @@ export class Store {
       // working — otherwise anyone who ever saw it could join as this agent.
       existing.token = generateAgentToken();
       this.saveAgentsSnapshot();
+      if (input.group !== undefined) this.rememberGroup(input.group);
       return existing;
     }
 
@@ -295,6 +311,7 @@ export class Store {
     };
     this.agents.set(agent.name, agent);
     this.saveAgentsSnapshot();
+    if (input.group !== undefined) this.rememberGroup(input.group);
     return agent;
   }
 
@@ -432,18 +449,101 @@ export class Store {
     // make "agency/client" into "studio/client", or the clients would be left
     // under a parent that no longer exists — outside its wall.
     const children = this.listAgents().filter((a) => parentGroup(resolveGroup(a.group)) === from);
-    if (members.length === 0 && children.length === 0) {
-      throw new Error(`Unknown group: "${from}". No agent belongs to it.`);
+    const emptyChildren = [...this.groups].filter((g) => parentGroup(g) === from);
+    if (!this.listGroups().includes(from)) {
+      throw new Error(`Unknown group: "${from}".`);
     }
-    if (children.length > 0 && parentGroup(to) !== null) {
+    if ((children.length > 0 || emptyChildren.length > 0) && parentGroup(to) !== null) {
       throw new Error(
         `Cannot make "${from}" a subgroup: it has subgroups of its own, and groups go one level deep.`,
       );
     }
+    const moved = (g: string) => (g === from ? to : parentGroup(g) === from ? `${to}/${g.slice(from.length + 1)}` : g);
     for (const agent of members) agent.group = to;
-    for (const agent of children) agent.group = `${to}/${resolveGroup(agent.group).slice(from.length + 1)}`;
+    for (const agent of children) agent.group = moved(resolveGroup(agent.group));
+    this.groups = new Set([...this.groups].map(moved));
+    this.groups.add(to);
     this.saveAgentsSnapshot();
+    this.saveGroups();
     return [...members, ...children];
+  }
+
+  /**
+   * Creates a group with nobody in it yet. Creating one that exists is not an
+   * error (the click that made it may simply have been repeated).
+   */
+  createGroup(name: string): string[] {
+    if (name === DEFAULT_GROUP || !GROUP_NAME_RE.test(name)) {
+      throw new Error(
+        `Invalid group name: "${name}". Use lowercase letters, digits and hyphens ` +
+          `(2 to 31 characters, starting with a letter or digit), with at most one ` +
+          `"/" for a subgroup: "agency" or "agency/client".`,
+      );
+    }
+    this.rememberGroup(name);
+    return this.listGroups();
+  }
+
+  /**
+   * Deletes an EMPTY group, with its empty subgroups. Refused while any agent
+   * is in it or in one of its subgroups: the agents would be left in a group
+   * that no longer shows anywhere.
+   */
+  deleteGroup(name: string): string[] {
+    if (!this.listGroups().includes(name)) throw new Error(`Unknown group: "${name}".`);
+    const inside = this.listAgents().filter((a) => {
+      const g = resolveGroup(a.group);
+      return g === name || parentGroup(g) === name;
+    });
+    if (inside.length > 0) {
+      throw new Error(
+        `Group "${name}" is not empty: ${inside.map((a) => a.name).join(", ")} ` +
+          `${inside.length === 1 ? "is" : "are"} still in it. Move ${inside.length === 1 ? "it" : "them"} out first.`,
+      );
+    }
+    for (const g of [...this.groups]) if (g === name || parentGroup(g) === name) this.groups.delete(g);
+    this.saveGroups();
+    return this.listGroups();
+  }
+
+  /** Adds a group to the persistent list — a subgroup brings its parent along. */
+  private rememberGroup(group: string): void {
+    if (group === DEFAULT_GROUP || !GROUP_NAME_RE.test(group)) return;
+    const parent = parentGroup(group);
+    const before = this.groups.size;
+    this.groups.add(group);
+    if (parent) this.groups.add(parent);
+    if (this.groups.size !== before) this.saveGroups();
+  }
+
+  private saveGroups(): void {
+    const tempPath = this.groupsPath + ".tmp";
+    fs.writeFileSync(tempPath, JSON.stringify([...this.groups].sort(), null, 2) + "\n");
+    fs.renameSync(tempPath, this.groupsPath);
+  }
+
+  /**
+   * Boot: the saved list, plus every group an agent is in right now (an
+   * install from before groups.json, or one whose file was lost, gets its
+   * groups back from the agents themselves). A bad file is logged and
+   * skipped, never fatal.
+   */
+  private loadGroups(): void {
+    let saved: unknown = [];
+    if (fs.existsSync(this.groupsPath)) {
+      try {
+        saved = JSON.parse(fs.readFileSync(this.groupsPath, "utf8"));
+      } catch (err) {
+        this.log.warn(`[store] groups.json corrupted (${String(err)}) — rebuilding it from the agents.`);
+      }
+    }
+    const names = Array.isArray(saved) ? saved : [];
+    for (const g of [...names, ...this.listAgents().map((a) => a.group)]) {
+      if (typeof g !== "string" || g === DEFAULT_GROUP || !GROUP_NAME_RE.test(g)) continue;
+      this.groups.add(g);
+      const parent = parentGroup(g);
+      if (parent) this.groups.add(parent);
+    }
   }
 
   /** Everyone `name` can reach: its group, its parent and its own subgroups. */
@@ -454,9 +554,14 @@ export class Store {
     return this.listAgents().filter((a) => groupsTouch(mine, resolveGroup(a.group)));
   }
 
-  /** Every group that currently has an agent in it, sorted for a stable UI. */
+  /**
+   * Every group: the created ones (empty or not), plus `default` while an
+   * agent is in it. Sorted for a stable UI.
+   */
   listGroups(): string[] {
-    return [...new Set(this.listAgents().map((a) => resolveGroup(a.group)))].sort();
+    const all = new Set(this.groups);
+    for (const a of this.listAgents()) all.add(resolveGroup(a.group));
+    return [...all].sort();
   }
 
   /**
@@ -505,6 +610,7 @@ export class Store {
 
     Object.assign(agent, cleaned);
     this.saveAgentsSnapshot();
+    if (typeof cleaned.group === "string") this.rememberGroup(cleaned.group);
     return agent;
   }
 

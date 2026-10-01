@@ -1888,3 +1888,42 @@ describe("the agent menu (⋯ or right-click)", () => {
     expect(embeddedFunctionSource("closeMenus")).toContain("if (wasOpen) queueMicrotask(renderAgents)");
   });
 });
+
+describe("groups made ahead of their agents (rail)", () => {
+  // Owner, 01/10: "quero poder criar um subgrupo antes de por um agente.
+  // deixa as coisas mais simples". Groups live on the hub now, not as page
+  // drafts that vanished when the panel closed.
+  it("creates groups on the hub — no page-only drafts left", () => {
+    expect(script).not.toContain("draftGroups");
+    expect(embeddedFunctionSource("createGroup")).toContain('fetch("/api/groups"');
+    expect(embeddedFunctionSource("allGroups")).toContain("for (const g of state.groups) present.add(g)");
+  });
+
+  it("puts '+ client' on every agency's head, naming it right in the rail", () => {
+    const head = embeddedFunctionSource("buildGroupHead");
+    expect(head).toContain('el("span", "group-addsub", "+ client")');
+    expect(head).toContain("startNewGroupInline(group)");
+    // The field freezes the rail's rebuilds while typing, like every rename.
+    expect(embeddedFunctionSource("startNewGroupInline")).toContain('"agent-rename-input rail-new-input"');
+  });
+
+  it("makes '+ group' name the group in place instead of opening a panel", () => {
+    expect(script).toMatch(/\$\("#groups-open"\)\.addEventListener\("click", \(ev\) => \{[\s\S]{0,80}startNewGroupInline\(null\)/);
+  });
+
+  it("tells an empty group how to fill it, and lets it be deleted", () => {
+    const hint = embeddedFunctionSource("buildEmptyGroupHint");
+    expect(hint).toContain("openLauncherInGroup(group)");
+    expect(hint).toContain("deleteGroup(group)");
+    expect(embeddedFunctionSource("deleteGroup")).toContain("method: \"DELETE\"");
+  });
+
+  it("never keeps an empty 'Desagrupados' around", () => {
+    expect(embeddedFunctionSource("setKnownGroups")).toContain("g !== DEFAULT_GROUP");
+  });
+
+  it("redraws when the groups change with nobody moving", () => {
+    expect(embeddedFunctionSource("railSignature")).toContain("allGroups().join(\",\")");
+    expect(script).toContain('case "groups_updated":');
+  });
+});
