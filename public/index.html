@@ -1325,6 +1325,7 @@
       user-select: none;
     }
     .launcher-toggle input { accent-color: var(--accent); margin: 0; }
+    .launcher-toggle[hidden] { display: none; }
     /* Agent-type choice: a 2-button segmented control. Radio inputs do the
        state (keyboard + form semantics for free); the label is the visible
        segment and :checked drives its look — no JS class juggling. */
@@ -1383,6 +1384,15 @@
     .launch-btn:disabled { opacity: 0.5; cursor: default; box-shadow: none; }
 
     /* ----------------------------- Dir picker ---------------------------- */
+    .launcher-dirmode { align-self: flex-start; }
+    .launcher-preview {
+      margin-top: 6px;
+      font-family: var(--mono);
+      font-size: var(--fs-xs);
+      color: var(--text-faint);
+      word-break: break-all;
+    }
+    .launcher-preview b { color: var(--text-dim); font-weight: 600; }
     .launcher-dir-row { display: flex; gap: 7px; }
     .launcher-dir-row .launch-input { flex: 1 1 auto; min-width: 0; }
     .dirpicker-browse { flex: 0 0 auto; font-size: var(--fs-xs); padding: 5px 11px; }
@@ -11466,17 +11476,76 @@
       return checked && checked.value === "codex" ? "codex" : "claude";
     }
 
+    // "New folder": name it and the hub creates it, instead of having to make
+    // the folder somewhere else first (owner, 04/10). The directory field then
+    // means WHERE it goes; the last place used is remembered, since new
+    // projects tend to land side by side (every client under clients/).
+    const NEW_FOLDER_PARENT_KEY = "sb.launch.newFolderParent";
+    const DIR_MODE_KEY = "sb.launch.dirMode";
+
+    function launchDirMode() {
+      return $("#launch-dirmode-new").checked ? "new" : "existing";
+    }
+
+    /** A folder name as typed, minus what no folder name may hold. */
+    function cleanFolderName(raw) {
+      return raw.replace(/[\\/:*?"<>|]/g, "").replace(/^\.+/, "").trim();
+    }
+
+    /** Where the new folder will be: the parent plus the name, one slash between. */
+    function newFolderPath() {
+      const parent = $("#launch-dir").value.trim().replace(/[\\/]+$/, "");
+      const leaf = cleanFolderName($("#launch-newfolder").value);
+      return parent && leaf ? `${parent}/${leaf}` : "";
+    }
+
+    function renderLaunchDirMode() {
+      const isNew = launchDirMode() === "new";
+      $("#launch-newfolder-row").hidden = !isNew;
+      $("#launch-dir-label").textContent = isNew ? "create it inside" : "directory (absolute path)";
+      $("#launch-dir").placeholder = isNew
+        ? "/home/you/projects — the folder the new one goes in"
+        : "/home/you/project — \\\\wsl$\\… and C:\\… accepted too";
+      // A brand-new folder has no conversation to continue.
+      $("#launch-continue").closest(".launcher-toggle").hidden = isNew;
+      if (isNew && !$("#launch-dir").value.trim()) {
+        $("#launch-dir").value = localStorage.getItem(NEW_FOLDER_PARENT_KEY) || "~/projects";
+      }
+      renderNewFolderPreview();
+    }
+
+    function renderNewFolderPreview() {
+      const preview = $("#launch-dir-preview");
+      preview.textContent = "";
+      const full = newFolderPath();
+      if (!full) {
+        preview.textContent = "Type a name — the folder is created when you launch.";
+        return;
+      }
+      preview.append("Creates ", el("b", null, full));
+    }
+
     function closeLauncher() {
       $("#launcher-box").hidden = true;
       dirpickerClose();
-      for (const id of ["#launch-dir", "#launch-name", "#launch-role", "#launch-group"]) {
+      for (const id of ["#launch-dir", "#launch-name", "#launch-role", "#launch-group", "#launch-newfolder"]) {
         $(id).value = "";
       }
     }
 
     async function launchAgent(ev) {
       ev.preventDefault();
-      const dir = $("#launch-dir").value.trim();
+      const createDir = launchDirMode() === "new";
+      if (createDir && !$("#launch-dir").value.trim()) {
+        toast("Say where the new folder goes — e.g. ~/projects.", "warn");
+        return;
+      }
+      if (createDir && !cleanFolderName($("#launch-newfolder").value)) {
+        toast("Name the new folder first.", "warn");
+        $("#launch-newfolder").focus();
+        return;
+      }
+      const dir = createDir ? newFolderPath() : $("#launch-dir").value.trim();
       if (dir.length === 0) {
         toast("Directory is required: the absolute path the agent should work in.", "warn");
         return;
@@ -11497,10 +11566,11 @@
         // auto-window on every launch was noise you had to close.)
         const payload = {
           dir,
-          continue: $("#launch-continue").checked,
+          continue: createDir ? false : $("#launch-continue").checked,
           openTerminal: false,
           agentType: selectedAgentType(),
         };
+        if (createDir) payload.createDir = true;
         if (name) payload.name = name;
         if (role) payload.role = role;
         if (group) payload.group = group;
@@ -11515,7 +11585,9 @@
           return;
         }
         const agentName = data.agent && data.agent.name ? data.agent.name : name || dir;
-        if (data.fallback) {
+        if (createDir) localStorage.setItem(NEW_FOLDER_PARENT_KEY, $("#launch-dir").value.trim());
+        if (data.createdDir) toast(`Created the folder ${dir}.`, "ok");
+        if (data.fallback && !createDir) {
           toast(
             `No resumable conversation in ${dir} — opened a fresh session for ${agentName}.`,
             "warn",
@@ -11883,8 +11955,19 @@
       // Launch agent (lightbox).
       $("#launcher-open").addEventListener("click", () => {
         $("#launcher-box").hidden = false;
-        $("#launch-dir").focus();
+        if (localStorage.getItem(DIR_MODE_KEY) === "new") $("#launch-dirmode-new").checked = true;
+        renderLaunchDirMode();
+        (launchDirMode() === "new" ? $("#launch-newfolder") : $("#launch-dir")).focus();
       });
+      for (const radio of document.querySelectorAll('#launch-dirmode input[name="dirMode"]')) {
+        radio.addEventListener("change", () => {
+          localStorage.setItem(DIR_MODE_KEY, launchDirMode());
+          renderLaunchDirMode();
+          if (launchDirMode() === "new") $("#launch-newfolder").focus();
+        });
+      }
+      $("#launch-dir").addEventListener("input", renderNewFolderPreview);
+      $("#launch-newfolder").addEventListener("input", renderNewFolderPreview);
       $("#launcher-close").addEventListener("click", closeLauncher);
       // Clicking the backdrop closes; clicking the card must not.
       $("#launcher-box").addEventListener("click", (ev) => {
@@ -13241,8 +13324,15 @@
       </div>
         <form class="launcher" id="launcher" autocomplete="off">
           <div class="launcher-title">Launch agent</div>
+          <div class="launcher-segmented launcher-dirmode" id="launch-dirmode"
+            title="Work in a folder you already have, or name a new one and the hub creates it.">
+            <input type="radio" name="dirMode" id="launch-dirmode-existing" value="existing" checked />
+            <label class="launcher-segment" for="launch-dirmode-existing">Existing folder</label>
+            <input type="radio" name="dirMode" id="launch-dirmode-new" value="new" />
+            <label class="launcher-segment" for="launch-dirmode-new">New folder</label>
+          </div>
           <div>
-            <label class="launcher-label" for="launch-dir">directory (absolute path)</label>
+            <label class="launcher-label" for="launch-dir" id="launch-dir-label">directory (absolute path)</label>
             <div class="launcher-dir-row">
               <input class="launch-input" id="launch-dir" name="dir"
                 placeholder="/home/you/project — \\wsl$\… and C:\… accepted too"
@@ -13263,6 +13353,12 @@
                 </button>
               </div>
             </div>
+          </div>
+          <div id="launch-newfolder-row" hidden>
+            <label class="launcher-label" for="launch-newfolder">new folder name</label>
+            <input class="launch-input" id="launch-newfolder" name="newfolder"
+              placeholder="e.g. acme-site" spellcheck="false" />
+            <div class="launcher-preview" id="launch-dir-preview"></div>
           </div>
           <div class="launcher-grid">
             <div>

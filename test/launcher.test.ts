@@ -279,3 +279,65 @@ describe("kickoff answers claude's trust dialog (it defaults to \"No, exit\")", 
     expect(keys).toEqual(["Down", "Enter on Yes"]);
   });
 });
+
+describe("launching into a NEW folder (createDir)", () => {
+  // Owner, 04/10: "daria pra ter a opcao de eu escrever o nome da pasta e dai
+  // ele ja cria a pasta?" — the launcher used to need the folder made first.
+  let dir: string;
+  let launcher: Launcher;
+  let store: Store;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "switchboard-newdir-unit-"));
+    const log = createLogger({ level: "error", filePath: path.join(dir, "logs", "hub.log"), stdout: false });
+    store = new Store(dir, log);
+    const sessions = new Set<string>();
+    const tmux: LauncherTmux = {
+      hasSession: async (s) => sessions.has(s),
+      killSession: async (s) => {
+        sessions.delete(s);
+      },
+      newSession: async (s) => {
+        sessions.add(s);
+      },
+      capturePane: async () => "? for shortcuts",
+      nudgeSession: async () => ({ sent: true }),
+    };
+    launcher = createLauncher({
+      store, tmux, config: { ...DEFAULTS }, log, bus: new EventBus(), settleMs: 1, sleep: async () => {}, claudeBin: "/bin/true",
+    });
+  });
+
+  afterEach(() => {
+    launcher.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("creates the folder, then launches in it", async () => {
+    const target = path.join(dir, "Acme Site");
+    const result = await launcher.launchAgent({ dir: target, createDir: true, group: "ai-panorama/acme" });
+    expect(fs.statSync(target).isDirectory()).toBe(true);
+    expect(result.createdDir).toBe(true);
+    expect(result.agent.cwd).toBe(target);
+    expect(result.agent.name).toBe("acme-site");
+  });
+
+  it("uses a folder that already exists instead of failing", async () => {
+    const target = path.join(dir, "already");
+    fs.mkdirSync(target);
+    const result = await launcher.launchAgent({ dir: target, createDir: true });
+    expect(result.createdDir).toBe(false);
+  });
+
+  it("creates ONE level only — a missing parent is an error, nothing made", async () => {
+    const target = path.join(dir, "typo", "acme");
+    await expect(launcher.launchAgent({ dir: target, createDir: true })).rejects.toThrow(/the folder it goes in .* does not exist/);
+    expect(fs.existsSync(path.join(dir, "typo"))).toBe(false);
+  });
+
+  it("takes the new folder back out when the launch is refused", async () => {
+    const target = path.join(dir, "hub"); // "hub" → session sb-hub, reserved
+    await expect(launcher.launchAgent({ dir: target, createDir: true })).rejects.toThrow(/sb-hub/);
+    expect(fs.existsSync(target)).toBe(false);
+  });
+});

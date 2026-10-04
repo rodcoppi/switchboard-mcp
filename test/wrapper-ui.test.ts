@@ -1927,3 +1927,24 @@ describe("groups made ahead of their agents (rail)", () => {
     expect(script).toContain('case "groups_updated":');
   });
 });
+
+describe("the launcher's New folder mode", () => {
+  it("joins where it goes with the typed name and asks the hub to create it", () => {
+    expect(html).toContain('id="launch-dirmode-new" value="new"');
+    expect(embeddedFunctionSource("newFolderPath")).toContain("`${parent}/${leaf}`");
+    const launch = embeddedFunctionSource("launchAgent");
+    expect(launch).toContain("if (createDir) payload.createDir = true;");
+    expect(launch).toContain("continue: createDir ? false :"); // nothing to continue in a new folder
+  });
+
+  it("strips what no folder name may hold, and shows the path before creating it", () => {
+    const clean = embeddedFunctionWith<(raw: string) => string>("cleanFolderName", []);
+    expect(clean('Acme: "Site"/v2 ')).toBe("Acme Sitev2");
+    expect(clean("..hidden")).toBe("hidden");
+    expect(embeddedFunctionSource("renderNewFolderPreview")).toContain('preview.append("Creates "');
+  });
+
+  it("remembers where the last new folder went", () => {
+    expect(script).toContain('localStorage.setItem(NEW_FOLDER_PARENT_KEY, $("#launch-dir").value.trim())');
+  });
+});

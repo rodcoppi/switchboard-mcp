@@ -168,6 +168,13 @@ export interface LaunchInput {
    * invisibly in a detached session "might as well not exist".
    */
   openTerminal?: boolean;
+  /**
+   * true → `dir` is a NEW project: its last segment is created (one level —
+   * the folder it goes in must already exist) before the launch. A folder
+   * that already exists is simply used. Owner, 04/10: "daria pra ter a opcao
+   * de eu escrever o nome da pasta e dai ele ja cria a pasta?"
+   */
+  createDir?: boolean;
 }
 
 export interface LaunchResult {
@@ -183,6 +190,8 @@ export interface LaunchResult {
   fallback: boolean;
   /** Present when openTerminal was requested: did a window actually open? */
   terminalOpened?: boolean;
+  /** true when createDir made the folder (false: it already existed). */
+  createdDir?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -354,7 +363,69 @@ export function createLauncher(options: LauncherOptions): Launcher {
     }
   }
 
+  /**
+   * The launch, plus the new-folder case: make the folder, launch in it, and
+   * take the folder back out if the launch is refused — an empty folder left
+   * behind by a typo'd name is litter the operator never asked for.
+   */
   async function launchAgent(input: LaunchInput): Promise<LaunchResult> {
+    if (!input.createDir) return launchInExistingDir(input);
+    const dir = createProjectDir(typeof input.dir === "string" ? input.dir.trim() : "");
+    try {
+      const result = await launchInExistingDir({ ...input, dir: dir.path });
+      return { ...result, createdDir: dir.created };
+    } catch (err) {
+      if (dir.created) {
+        try {
+          fs.rmdirSync(dir.path); // only ever an EMPTY folder — rmdir refuses anything else
+        } catch {
+          /* something already wrote into it: leave it */
+        }
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Creates the new project folder: exactly ONE level. The folder it goes in
+   * must exist, so a typo in that part fails loudly instead of quietly
+   * building a tree of folders somewhere unexpected.
+   */
+  function createProjectDir(rawDir: string): { path: string; created: boolean } {
+    if (rawDir === "") {
+      throw new LaunchError(`Missing "dir": name the new folder and where it goes.`);
+    }
+    const target = path.normalize(expandHome(normalizeIncomingPath(rawDir)));
+    if (!path.isAbsolute(target)) {
+      throw new LaunchError(`"dir" must be an absolute path (got "${rawDir}").`);
+    }
+    const parent = path.dirname(target);
+    const leaf = path.basename(target);
+    if (target === parent || leaf === "" || leaf === "." || leaf === "..") {
+      throw new LaunchError(`Name the new folder: "${rawDir}" has no folder name at its end.`);
+    }
+    let parentIsDir = false;
+    try {
+      parentIsDir = fs.statSync(parent).isDirectory();
+    } catch {
+      parentIsDir = false;
+    }
+    if (!parentIsDir) {
+      throw new LaunchError(
+        `Cannot create ${target}: the folder it goes in (${parent}) does not exist.`,
+      );
+    }
+    try {
+      fs.mkdirSync(target);
+      log.info(`[launcher] created the project folder ${target}.`);
+      return { path: target, created: true };
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "EEXIST") return { path: target, created: false };
+      throw new LaunchError(`Could not create ${target}: ${(err as Error).message}`);
+    }
+  }
+
+  async function launchInExistingDir(input: LaunchInput): Promise<LaunchResult> {
     // 0. Which CLI. api.ts validates the incoming value, so anything unknown
     // reaching here resolves to the default rather than throwing.
     const descriptor = agentTypeDescriptor(input.agentType);

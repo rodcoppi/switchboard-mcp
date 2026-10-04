@@ -870,7 +870,7 @@ export function createApiRouter(options: ApiOptions): express.Router {
         return;
       }
     }
-    for (const key of ["continue", "openTerminal"] as const) {
+    for (const key of ["continue", "openTerminal", "createDir"] as const) {
       if (raw[key] !== undefined && typeof raw[key] !== "boolean") {
         res.status(400).json({
           ok: false,
@@ -907,6 +907,7 @@ export function createApiRouter(options: ApiOptions): express.Router {
         openTerminal: (raw.openTerminal as boolean | undefined) ?? false,
         agentType: raw.agentType as AgentType | undefined,
         group: raw.group as string | undefined,
+        createDir: (raw.createDir as boolean | undefined) ?? false,
       });
       log.info(
         `[api] launch: agent ${result.agent.name} launched from the dashboard ` +
@@ -921,6 +922,7 @@ export function createApiRouter(options: ApiOptions): express.Router {
         ...(result.terminalOpened === undefined
           ? {}
           : { terminalOpened: result.terminalOpened }),
+        ...(result.createdDir === undefined ? {} : { createdDir: result.createdDir }),
       });
     } catch (err) {
       if (err instanceof LaunchError) {
