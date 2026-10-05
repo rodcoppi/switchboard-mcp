@@ -3999,6 +3999,139 @@
          the pulse was the flourish, the colour is the information. */
       .unread-badge, .tab-unread { opacity: 1 !important; }
     }
+  
+    /* --- Recent dock: the agents you have been working with, as faces ---- */
+    .recent-dock {
+      flex: 0 0 76px;
+      width: 76px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      padding: 12px 0;
+      border-right: 1px solid var(--border);
+      background: var(--bg);
+      overflow-y: auto;
+      overflow-x: hidden;
+      scrollbar-width: none;
+    }
+    .recent-dock::-webkit-scrollbar { display: none; }
+    .recent-dock.collapsed { flex-basis: 14px; width: 14px; padding: 0; }
+    .dock-show {
+      width: 100%;
+      height: 100%;
+      padding: 0;
+      border: none;
+      background: transparent;
+      color: var(--text-faint);
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .dock-show:hover { background: var(--bg-hover); color: var(--text); }
+    .dock-spacer { flex: 1 1 auto; }
+    .dock-hide {
+      flex: 0 0 auto;
+      width: 30px;
+      height: 26px;
+      padding: 0;
+      border: 1px solid transparent;
+      border-radius: var(--radius-sm);
+      background: transparent;
+      color: var(--text-faint);
+      font-size: 14px;
+      cursor: pointer;
+    }
+    .dock-hide:hover { color: var(--text); border-color: var(--border); }
+    .dock-item {
+      position: relative;
+      flex: 0 0 auto;
+      width: 66px;
+      min-height: 46px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 1px;
+      padding: 0;
+      border: none;
+      border-radius: 14px;
+      background: transparent;
+      color: var(--text-dim);
+      cursor: pointer;
+      transition: background 0.15s var(--ease), border-radius 0.15s var(--ease);
+    }
+    .dock-item:hover { background: var(--bg-hover); border-radius: 12px; }
+    .dock-item:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--border-strong); }
+    /* Where you are: a bar on the edge, like a selected tab. */
+    .dock-item.active { background: var(--bg-elev-2); }
+    .dock-item.active::before {
+      content: "";
+      position: absolute;
+      left: -7px;
+      top: 9px;
+      bottom: 9px;
+      width: 3px;
+      border-radius: 0 3px 3px 0;
+      background: var(--text);
+    }
+    .dock-item .sb-face-host { width: 38px; height: 38px; }
+    .dock-name {
+      max-width: 62px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-family: var(--mono);
+      font-size: 9.5px;
+      line-height: 1.2;
+      color: var(--text-faint);
+    }
+    .dock-item:hover .dock-name, .dock-item.active .dock-name { color: var(--text); }
+    .dock-item.offline .sb-face-host { opacity: 0.55; }
+    .dock-item { padding: 5px 0 4px; }
+    .dock-home { font-size: 17px; font-family: var(--mono); }
+    .dock-sep { flex: 0 0 auto; width: 26px; height: 1px; margin: 2px 0; background: var(--border); }
+    .dock-empty {
+      margin-top: 6px;
+      padding: 0 6px;
+      font-family: var(--sans);
+      font-size: 10px;
+      line-height: 1.35;
+      text-align: center;
+      color: var(--text-faint);
+    }
+    .dock-badge {
+      position: absolute;
+      top: 3px;
+      right: 9px;
+      min-width: 10px;
+      height: 10px;
+      border-radius: 6px;
+      border: 2px solid var(--bg);
+      background: var(--accent-bright);
+    }
+    .dock-badge.ask {
+      min-width: 16px;
+      height: 16px;
+      top: 0;
+      right: 6px;
+      background: var(--unread-bg);
+      color: var(--unread-fg);
+      font: 700 10px/12px var(--mono);
+      text-align: center;
+    }
+    .dock-key {
+      position: absolute;
+      top: 3px;
+      left: 5px;
+      font: 600 9px/1 var(--mono);
+      color: var(--text-faint);
+      opacity: 0;
+      transition: opacity 0.12s var(--ease);
+    }
+    .recent-dock:hover .dock-key { opacity: 0.8; }
+    @media (max-width: 640px) {
+      .recent-dock { display: none; }
+    }
   </style>
 </head>
 <body>
@@ -4035,6 +4168,7 @@
   </header>
 
   <div class="layout">
+    <nav class="recent-dock" id="recent-dock" aria-label="Recent agents"></nav>
     <aside class="sidebar">
       <div class="sidebar-resizer" id="sidebar-resizer" role="separator"
         aria-orientation="vertical" title="Drag to resize · double-click to reset"></div>
@@ -5326,6 +5460,213 @@
       return entry.host;
     }
 
+    // =====================================================================
+    // Recent dock — a thin column of the agents you have been working with
+    // =====================================================================
+    // Owner, 04/10: "eu to trabalhando com um agente que ta la embaixo na
+    // lista e outro la em cima" — the rail is ordered by group, so two agents
+    // you are switching between can sit a whole scroll apart. The dock keeps
+    // the ones you opened lately as faces in a column at the far left: one
+    // click (or Alt+1…9) and you are there.
+    //
+    // An agent already in the dock KEEPS ITS PLACE when you go back to it, so
+    // a position can be learned (re-sorting on every visit would swap the two
+    // you alternate between each time). A new one enters at the top; when the
+    // dock is full, the one you have not opened for longest leaves.
+    const RECENT_KEY = "sb.recentAgents";
+    const RECENT_MAX = 9;
+    let recentAgents = loadRecent(); // [{ name, at }] in display order
+    const dockFaces = new Map(); // name -> { host, face, state }
+    // Folded away on request (owner: "deixa uma opcao de dar hide nela"): it
+    // shrinks to a thin strip with a "›" that brings it back, and Alt+1…9
+    // keep working either way.
+    const DOCK_HIDDEN_KEY = "sb.recentDockHidden";
+    let dockHidden = localStorage.getItem(DOCK_HIDDEN_KEY) === "1";
+    function setDockHidden(hidden) {
+      dockHidden = hidden;
+      try { localStorage.setItem(DOCK_HIDDEN_KEY, hidden ? "1" : "0"); } catch { /* private mode */ }
+      renderRecentDock();
+    }
+
+    function loadRecent() {
+      try {
+        const v = JSON.parse(localStorage.getItem(RECENT_KEY) || "[]");
+        return Array.isArray(v)
+          ? v.filter((e) => e && typeof e.name === "string" && typeof e.at === "number").slice(0, RECENT_MAX)
+          : [];
+      } catch {
+        return [];
+      }
+    }
+    function saveRecent() {
+      try { localStorage.setItem(RECENT_KEY, JSON.stringify(recentAgents)); } catch { /* private mode */ }
+    }
+
+    /**
+     * The dock after you work with `name` (pure): a known agent keeps its place
+     * and only refreshes its time; a new one enters on top, and a full dock
+     * lets go of the one opened longest ago — not the one that came in first.
+     */
+    function nextRecent(list, name, now, max) {
+      if (list.some((e) => e.name === name)) {
+        return list.map((e) => (e.name === name ? { name, at: now } : e));
+      }
+      const kept = list.slice();
+      while (kept.length >= max) {
+        let oldest = 0;
+        for (let i = 1; i < kept.length; i++) if (kept[i].at < kept[oldest].at) oldest = i;
+        kept.splice(oldest, 1);
+      }
+      return [{ name, at: now }, ...kept];
+    }
+
+    /** You worked with `name` just now: remember it. */
+    function noteRecent(name) {
+      recentAgents = nextRecent(recentAgents, name, Date.now(), RECENT_MAX);
+      saveRecent();
+      renderRecentDock();
+    }
+
+    function forgetRecent(name) {
+      const before = recentAgents.length;
+      recentAgents = recentAgents.filter((e) => e.name !== name);
+      if (recentAgents.length !== before) saveRecent();
+    }
+
+    function dockFaceHost(agent, stateKey) {
+      if (!Faces) return el("span", "sb-face-host");
+      const color = chatColor(agent.name) || Faces.DEFAULT_COLOR;
+      const shape = blobShapeOf(agent.name);
+      let entry = dockFaces.get(agent.name);
+      if (!entry) {
+        const host = el("span", "sb-face-host");
+        const face = Faces.createFace(host, { color, shape, state: stateKey, seed: `dock-${agent.name}` });
+        entry = { host, face, state: stateKey };
+        dockFaces.set(agent.name, entry);
+        return host;
+      }
+      entry.face.setColor(color);
+      entry.face.setShape(shape);
+      if (entry.state !== stateKey) {
+        const reaction = faceReactionFor(entry.state, stateKey);
+        entry.state = stateKey;
+        entry.face.setState(stateKey);
+        if (reaction) entry.face.react(reaction);
+      }
+      return entry.host;
+    }
+
+    let lastDockSignature = "";
+    function renderRecentDock() {
+      const dock = $("#recent-dock");
+      if (!dock) return;
+      // Agents removed from the hub leave the dock too.
+      const gone = recentAgents.filter((e) => !state.agents.has(e.name));
+      if (gone.length && state.agents.size) for (const e of gone) forgetRecent(e.name);
+      const items = recentAgents.filter((e) => state.agents.has(e.name));
+      // Same rule as the rail: rebuild only when what it SHOWS changed — a
+      // rebuild cancels the faces' animations mid-move.
+      const signature = [
+        dockHidden ? "hidden" : "shown",
+        screenState.name || "",
+        ...items.map((e) => {
+          const a = state.agents.get(e.name);
+          return [e.name, a.status, blobStateOf(a), displayOf(a), state.unseen.has(e.name) ? "u" : "", a.blocked ? "b" : "", chatColor(e.name) || "", blobShapeOf(e.name)].join("\u0001");
+        }),
+      ].join("\u0002");
+      if (signature === lastDockSignature && dock.firstChild) return;
+      lastDockSignature = signature;
+      for (const [name, entry] of dockFaces) {
+        if (dockHidden || !items.some((e) => e.name === name)) {
+          entry.face.destroy();
+          dockFaces.delete(name);
+        }
+      }
+      dock.textContent = "";
+      dock.classList.toggle("collapsed", dockHidden);
+      if (dockHidden) {
+        const show = el("button", "dock-show", "›");
+        show.type = "button";
+        show.title = "Show the recent agents column";
+        show.setAttribute("aria-label", show.title);
+        show.addEventListener("click", () => setDockHidden(false));
+        dock.appendChild(show);
+        return;
+      }
+
+      // Home: back to the transcript of what they said to each other.
+      const home = el("button", `dock-item dock-home${screenState.name === null ? " active" : ""}`, "⇄");
+      home.type = "button";
+      home.title = "Agent traffic";
+      home.addEventListener("click", () => {
+        if (screenState.name) closeScreen();
+      });
+      dock.appendChild(home);
+      const hide = el("button", "dock-hide", "‹");
+      hide.type = "button";
+      hide.title = "Hide this column — a thin strip stays to bring it back";
+      hide.setAttribute("aria-label", "Hide the recent agents column");
+      hide.addEventListener("click", () => setDockHidden(true));
+      if (items.length === 0) {
+        dock.append(el("div", "dock-empty", "agents you open land here"), el("div", "dock-spacer"), hide);
+        return;
+      }
+      dock.appendChild(el("div", "dock-sep"));
+
+      items.forEach((e, i) => {
+        const agent = state.agents.get(e.name);
+        const item = el("button", "dock-item");
+        item.type = "button";
+        item.dataset.name = e.name;
+        if (screenState.name === e.name) item.classList.add("active");
+        if (agent.status !== "online") item.classList.add("offline");
+        const news = state.unseen.has(e.name);
+        item.title =
+          `${displayOf(agent)} — ${agent.status === "online" ? (agent.blocked ? "waiting on a question" : news ? "has something new" : agentActivityWord(agent)) : "asleep"}` +
+          (i < 9 ? `  (Alt+${i + 1})` : "");
+        item.setAttribute("aria-label", displayOf(agent));
+        item.appendChild(dockFaceHost(agent, blobStateOf(agent)));
+        // The name, short: faces share the default colour until someone picks
+        // one, so a column of identical green blobs would say nothing.
+        item.appendChild(el("span", "dock-name", displayOf(agent)));
+        if (agent.blocked) item.appendChild(el("span", "dock-badge ask", "?"));
+        else if (news) item.appendChild(el("span", "dock-badge news"));
+        if (i < 9) item.appendChild(el("span", "dock-key", String(i + 1)));
+        item.addEventListener("click", () => openScreen(e.name));
+        // Right-click: the agent's own menu, same as on its card.
+        item.addEventListener("contextmenu", (ev) => {
+          const card = document.querySelector(`.agent-card[data-name="${CSS.escape(e.name)}"]`);
+          if (!card || ev.shiftKey) return;
+          ev.preventDefault();
+          card.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: ev.clientX, clientY: ev.clientY, button: 2 }));
+        });
+        dock.appendChild(item);
+      });
+      dock.append(el("div", "dock-spacer"), hide);
+    }
+
+    /** "working" / "idle" for the dock's tooltip. */
+    function agentActivityWord(agent) {
+      return agent.activity === "working" ? "working" : "idle";
+    }
+
+    // Alt+1…9 jumps to the dock's agent in that place; Alt+0 back to the traffic.
+    document.addEventListener("keydown", (ev) => {
+      if (!ev.altKey || ev.ctrlKey || ev.metaKey || ev.shiftKey) return;
+      if (!/^Digit[0-9]$/.test(ev.code)) return;
+      const n = Number(ev.code.slice(5));
+      if (n === 0) {
+        ev.preventDefault();
+        if (screenState.name) closeScreen();
+        return;
+      }
+      const items = recentAgents.filter((e) => state.agents.has(e.name));
+      const target = items[n - 1];
+      if (!target) return;
+      ev.preventDefault();
+      openScreen(target.name);
+    });
+
     /** Agents that are gone take their face with them. */
     function pruneFaces() {
       for (const [name, entry] of faceHosts) {
@@ -5845,6 +6186,7 @@
       // menu guard below: that guard protects the rail's DOM, and the panel
       // must not stay wrong just because a card's ⋯ menu happens to be open.
       syncScreenPresence();
+      renderRecentDock(); // its own signature: cheap when nothing it shows changed
       const container = $("#agents");
       // A rebuild while a card's ⋯ menu is open closes it in the operator's
       // face — and the idle/working poll re-renders every ~2.5s, which made the
@@ -7817,6 +8159,7 @@
       if (screenState.name === name) return;
       closeScreen({ keepTabs: true });
       screenState.name = name;
+      noteRecent(name);
       // On a folded phone the stacked rail took most of the screen from the
       // conversation (~110px of chat was left). With an agent open the rail
       // steps aside there; ☰ brings it back to switch (see setupRailToggle).

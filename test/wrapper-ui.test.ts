@@ -1948,3 +1948,57 @@ describe("the launcher's New folder mode", () => {
     expect(script).toContain('localStorage.setItem(NEW_FOLDER_PARENT_KEY, $("#launch-dir").value.trim())');
   });
 });
+
+describe("the recent dock", () => {
+  // Owner, 04/10: two agents in use, one at the top of the rail and one at
+  // the bottom. A column of the agents opened lately, as faces, one click away.
+  const next = embeddedFunctionWith<
+    (list: Array<{ name: string; at: number }>, name: string, now: number, max: number) => Array<{ name: string; at: number }>
+  >("nextRecent", []);
+
+  it("sits at the far left, before the rail", () => {
+    expect(html.indexOf('id="recent-dock"')).toBeLessThan(html.indexOf('<aside class="sidebar">'));
+    expect(embeddedFunctionSource("openScreen")).toContain("noteRecent(name)");
+  });
+
+  it("puts a new agent on top", () => {
+    const out = next([{ name: "a", at: 1 }], "b", 2, 9);
+    expect(out.map((e) => e.name)).toEqual(["b", "a"]);
+  });
+
+  it("keeps an agent's place when you go back to it", () => {
+    const list = [{ name: "b", at: 2 }, { name: "a", at: 1 }];
+    expect(next(list, "a", 3, 9).map((e) => e.name)).toEqual(["b", "a"]);
+    expect(next(list, "a", 3, 9)[1].at).toBe(3);
+  });
+
+  it("when full, lets go of the one opened longest ago — not the oldest arrival", () => {
+    // "c" came in first but was opened just now; "a" has been idle longest.
+    const list = [{ name: "a", at: 5 }, { name: "b", at: 6 }, { name: "c", at: 9 }];
+    const tweaked = [{ name: "b", at: 6 }, { name: "a", at: 2 }, { name: "c", at: 9 }];
+    expect(next(tweaked, "d", 10, 3).map((e) => e.name)).toEqual(["d", "b", "c"]);
+    expect(next(list, "d", 10, 3)).toHaveLength(3);
+  });
+
+  it("jumps with Alt+1…9 and back to the traffic with Alt+0", () => {
+    expect(script).toContain("if (!/^Digit[0-9]$/.test(ev.code)) return;");
+    expect(script).toContain("openScreen(target.name)");
+  });
+
+  it("can be hidden to a thin strip, remembered across reloads", () => {
+    const render = embeddedFunctionSource("renderRecentDock");
+    expect(render).toContain('dock.classList.toggle("collapsed", dockHidden)');
+    expect(render).toContain("setDockHidden(false)");
+    expect(render).toContain("setDockHidden(true)");
+    expect(script).toContain('localStorage.setItem(DOCK_HIDDEN_KEY, hidden ? "1" : "0")');
+    expect(styles).toMatch(/\.recent-dock\.collapsed \{[^}]*width: 14px/);
+  });
+
+  it("names every face — they share one colour until someone picks", () => {
+    expect(embeddedFunctionSource("renderRecentDock")).toContain('el("span", "dock-name", displayOf(agent))');
+  });
+
+  it("steps aside on a phone", () => {
+    expect(styles).toMatch(/@media \(max-width: 640px\) \{\s*\.recent-dock \{ display: none; \}/);
+  });
+});
