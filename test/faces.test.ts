@@ -105,3 +105,33 @@ describe("the look the owner asked for (29/09)", () => {
     expect(dashboard).toMatch(/\.agent-portrait\.blob > \.sb-face-host \{ width: 56px; height: 56px/);
   });
 });
+
+describe("the faz-tudo's costume", () => {
+  // Owner, 05/10: "põe o boneco do faz-tudo ter um chapéu, aqueles óculos de
+  // um olho só e um bigode".
+  it("offers a gentleman kit: top hat, monocle, moustache", async () => {
+    // @ts-expect-error — plain browser JS module, no type declarations
+    const { COSTUMES } = await import("../public/faces/faces.js");
+    expect(COSTUMES.gentleman).toEqual({ hat: true, monocle: true, moustache: true });
+  });
+
+  it("puts the monocle on the right eye and hides it when that eye turns away", () => {
+    expect(engineSrc).toContain("const re = eyeAt[1];");
+    expect(engineSrc).toContain('monocle.setAttribute("opacity", re.visible ? "1" : "0");');
+  });
+
+  it("gives the hat a light rim — near-black on the board's near-black vanished", () => {
+    expect(engineSrc).toMatch(/fill: COSTUME_INK, \.\.\.rim/);
+  });
+
+  it("can be put on and taken off a live face", () => {
+    expect(engineSrc).toContain("setCostume(next) {");
+  });
+
+  it("is worn by the faz-tudo only, everywhere its face appears", () => {
+    expect(dashboard).toContain('return agent && agent.everywhere ? "gentleman" : null;');
+    const calls = [...dashboard.matchAll(/Faces\.createFace\([\s\S]*?\)\)?;?\n/g)].map((m) => m[0]);
+    expect(calls.length).toBeGreaterThanOrEqual(4);
+    for (const call of calls) expect(call, call).toContain("costume: costumeOf(agent)");
+  });
+});

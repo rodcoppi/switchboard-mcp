@@ -97,6 +97,10 @@
         <select id="shape"></select>
       </div>
       <div>
+        <h3>Costume</h3>
+        <select id="costume"><option value="">none</option></select>
+      </div>
+      <div>
         <h3>Options</h3>
         <label class="row"><input type="checkbox" id="follow" checked /> eyes follow the pointer</label>
         <label class="row"><input type="checkbox" id="motion" /> ignore the OS "reduce motion" setting</label>
@@ -120,7 +124,7 @@
     </section>
   </main>
   <script type="module">
-    import { createFace, STATES, REACTIONS, SHAPES, DEFAULT_COLOR, DEFAULT_SHAPE, forceMotion } from "/faces/faces.js";
+    import { createFace, STATES, REACTIONS, SHAPES, COSTUMES, DEFAULT_COLOR, DEFAULT_SHAPE, forceMotion } from "/faces/faces.js";
 
     const COLORS = [DEFAULT_COLOR, "#60a5fa", "#a78bfa", "#f472b6", "#fb923c", "#facc15", "#2dd4bf", "#f4f4f5", "#1e293b"];
     const $ = (s) => document.querySelector(s);
@@ -194,6 +198,21 @@
       for (const f of all) f.setShape(shape);
     });
 
+    // costumes
+    let costume = localStorage.getItem("lab.costume") || "";
+    for (const c of Object.keys(COSTUMES)) {
+      const o = el("option", "", c);
+      o.value = c;
+      if (c === costume) o.selected = true;
+      $("#costume").appendChild(o);
+    }
+    $("#costume").addEventListener("change", (e) => {
+      costume = e.target.value;
+      localStorage.setItem("lab.costume", costume);
+      for (const f of all) f.setCostume(costume || null);
+    });
+    for (const f of all) f.setCostume(costume || null);
+
     $("#follow").addEventListener("change", (e) => hero.follow(e.target.checked));
     $("#motion").addEventListener("change", (e) => forceMotion(e.target.checked));
 
@@ -220,7 +239,7 @@
       for (let i = 0; i < 24; i++) {
         const box = el("div");
         $("#stress").appendChild(box);
-        all.push(createFace(box, { color, shape, state: STATES[i % STATES.length], seed: `stress-${all.length}` }));
+        all.push(createFace(box, { color, shape, state: STATES[i % STATES.length], seed: `stress-${all.length}`, costume: costume || null }));
       }
     });
     // fps
@@ -236,6 +255,7 @@
     };
     requestAnimationFrame(count);
     paintAll();
+    for (const f of all) f.setCostume(costume || null); // the grid and rail came after the picker
   </script>
 </body>
 </html>

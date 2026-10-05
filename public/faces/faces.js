@@ -132,6 +132,16 @@ function intensityColor(base, i) {
 }
 
 // Accent colours — the "other colours in some places".
+/** Dress-up kits a face can wear (createFace option `costume`, or setCostume). */
+export const COSTUMES = {
+  gentleman: { hat: true, monocle: true, moustache: true },
+};
+const COSTUME_INK = "#16161b";
+const COSTUME_RIM = "#6b6b78";
+const COSTUME_BAND = "#b4232c";
+const COSTUME_GOLD = "#d6a73a";
+const COSTUME_MOUSTACHE = "#2b1b12";
+
 const ACCENT = {
   blush: "#f472b6",
   sweat: "#7dd3fc",
@@ -436,6 +446,37 @@ export function createFace(host, options = {}) {
   const dots = [0, 1, 2].map(() => svg("circle", { r: "3", fill: ACCENT.dots, opacity: "0" }, accents));
   const star = "M0,-5 C0.8,-1.2 1.2,-0.8 5,0 C1.2,0.8 0.8,1.2 0,5 C-0.8,1.2 -1.2,0.8 -5,0 C-1.2,-0.8 -0.8,-1.2 0,-5Z";
   const sparkles = [0, 1, 2].map(() => svg("path", { d: star, fill: ACCENT.sparkle, opacity: "0" }, accents));
+
+  // ---- costume: dress-up some faces wear — the faz-tudo's gentleman kit:
+  // top hat, monocle, handlebar moustache (owner, 05/10: "põe o boneco do
+  // faz-tudo ter um chapéu, aqueles óculos de um olho só e um bigode"). Drawn
+  // over the eyes and under the accents ("!" and "?" stay readable), placed
+  // every frame with the body's own lean, lift and squash.
+  const costumeG = svg("g", { class: "sb-costume" });
+  root.insertBefore(costumeG, accents);
+  const hat = svg("g", {}, costumeG);
+  // A near-black hat vanished against the board's near-black cards, leaving a
+  // floating red band: a light rim keeps its silhouette.
+  const rim = { stroke: COSTUME_RIM, "stroke-width": "1.4", "stroke-linejoin": "round" };
+  svg("path", { d: "M-12.5,-3 L-11.5,-23 Q0,-25.5 11.5,-23 L12.5,-3 Z", fill: COSTUME_INK, ...rim }, hat);
+  svg("rect", { x: "-12.6", y: "-8.6", width: "25.2", height: "4.6", fill: COSTUME_BAND }, hat);
+  svg("rect", { x: "-20", y: "-4", width: "40", height: "5", rx: "2.5", fill: COSTUME_INK, ...rim }, hat);
+  svg("path", { d: "M-6.5,-20.5 L-7,-11", stroke: "rgba(255,255,255,0.2)", "stroke-width": "1.8", "stroke-linecap": "round", fill: "none" }, hat);
+  const monocle = svg("g", {}, costumeG);
+  const monocleChain = svg("path", { fill: "none", stroke: COSTUME_GOLD, "stroke-width": "1.1", "stroke-dasharray": "1.6 1.3", "stroke-linecap": "round" }, monocle);
+  const monocleRing = svg("circle", { fill: "rgba(255,255,255,0.16)", stroke: COSTUME_GOLD, "stroke-width": "2.2" }, monocle);
+  const moustache = svg("path", {
+    d: "M0,-1 C-3,-4.5 -8,-4.5 -11,-1.5 C-13.5,1 -16.5,0.5 -18,-2.5 C-17.5,3 -12.5,6 -7.5,4.2 C-4.5,3.2 -2,2 0,1 C2,2 4.5,3.2 7.5,4.2 C12.5,6 17.5,3 18,-2.5 C16.5,0.5 13.5,1 11,-1.5 C8,-4.5 3,-4.5 0,-1 Z",
+    fill: COSTUME_MOUSTACHE,
+  }, costumeG);
+  let costume = COSTUMES[options.costume] ? options.costume : null;
+  const applyCostume = () => {
+    const kit = costume ? COSTUMES[costume] : {};
+    hat.setAttribute("display", kit.hat ? "inline" : "none");
+    monocle.setAttribute("display", kit.monocle ? "inline" : "none");
+    moustache.setAttribute("display", kit.moustache ? "inline" : "none");
+  };
+  applyCostume();
 
   host.appendChild(root);
 
@@ -817,6 +858,7 @@ export function createFace(host, options = {}) {
       const thick = Math.max(4.2, minPx * 1.3);
       const RS = R * 0.95; // the sphere the eyes sit on
       const moveDeg = (Math.atan2(mvY, mvX) * 180) / Math.PI;
+      const eyeAt = {}; // where each eye landed — the monocle sits on the right one
       for (const [side, eye, glint, blush] of [[-1, eyeL, glintL, blushL], [1, eyeR, glintR, blushR]]) {
         // the eye as a point on the sphere, facing us at rest, then turned
         const x0 = side * gap / 2;
@@ -854,6 +896,50 @@ export function createFace(host, options = {}) {
         blush.setAttribute("cx", (wx + side * 3).toFixed(2));
         blush.setAttribute("cy", (wy + h / 2 + 6).toFixed(2));
         blush.setAttribute("opacity", (accent.blush.x * 0.6 * (visible ? 1 : 0)).toFixed(3));
+        eyeAt[side] = { wx, wy, w, h, visible };
+      }
+
+      // ---- costume
+      if (costume) {
+        const lean = `rotate(${rotDeg.toFixed(2)},${(CX + ox).toFixed(2)},${pivotY})`;
+        // The hat sits on the crown of the head, cocked a little, and rides
+        // every hop and squash.
+        const crownY = pivotY + (CY - R - pivotY) * sy + oy;
+        hat.setAttribute(
+          "transform",
+          `${lean} translate(${(CX + ox + 3.5).toFixed(2)},${(crownY + 5).toFixed(2)}) rotate(-11) scale(${(1.08 + 0.12 * sx).toFixed(3)},${(1.08 + 0.12 * sy).toFixed(3)})`,
+        );
+        // The monocle rings the right eye, wherever the gaze takes it, and
+        // goes when that eye turns out of sight.
+        const re = eyeAt[1];
+        const mr = Math.max(re.w, re.h) * 0.46 + 4;
+        monocleRing.setAttribute("cx", re.wx.toFixed(2));
+        monocleRing.setAttribute("cy", re.wy.toFixed(2));
+        monocleRing.setAttribute("r", mr.toFixed(2));
+        const cx0 = re.wx + mr * 0.62;
+        const cy0 = re.wy + mr * 0.78;
+        monocleChain.setAttribute(
+          "d",
+          `M${cx0.toFixed(2)},${cy0.toFixed(2)} Q${(cx0 + 3).toFixed(2)},${(cy0 + 14).toFixed(2)} ${(cx0 + 9).toFixed(2)},${(cy0 + 17).toFixed(2)}`,
+        );
+        monocle.setAttribute("transform", lean);
+        monocle.setAttribute("opacity", re.visible ? "1" : "0");
+        // The moustache under the eyes, following the gaze a little, on the
+        // face's front; it twitches while the agent is writing.
+        const my0 = baseY + Math.max(eh, minPx) / 2 + 8 - CY;
+        const mz0 = Math.sqrt(Math.max(RS * RS - my0 * my0, 1));
+        const [mxr, myr, mzr] = turn3(0, my0, mz0);
+        const mFore = mzr / RS;
+        const mx = CX + mxr + sp.gazeX.x * 3 * facing;
+        const myw = CY + myr;
+        const twitch = state === "speaking" ? Math.sin(clock * 16) * 0.9 : 0;
+        const mwx = CX + (mx - CX) * sx + ox;
+        const mwy = pivotY + (myw - pivotY) * sy + oy + twitch;
+        moustache.setAttribute(
+          "transform",
+          `${lean} translate(${mwx.toFixed(2)},${mwy.toFixed(2)}) scale(${(0.82 * clamp(mFore / (mz0 / RS), 0.2, 1)).toFixed(3)},0.82)`,
+        );
+        moustache.setAttribute("opacity", mFore > 0.1 ? "1" : "0");
       }
 
       // ---- accents, each in its own place and colour
@@ -923,6 +1009,16 @@ export function createFace(host, options = {}) {
       shape = next;
       shapeT = 1; // (animated below when motion is allowed)
       if (motionAllowed()) shapeT = 0;
+      dirty = true;
+      wake();
+      return face;
+    },
+    /** Dress-up: a name from COSTUMES (the faz-tudo wears "gentleman"), or null. */
+    setCostume(next) {
+      const value = COSTUMES[next] ? next : null;
+      if (value === costume) return face;
+      costume = value;
+      applyCostume();
       dirty = true;
       wake();
       return face;

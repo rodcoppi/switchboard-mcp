@@ -4693,7 +4693,7 @@
       const previewBox = el("div", "look-preview");
       const preview = Faces.createFace(previewBox, {
         color: chatColor(name) || Faces.DEFAULT_COLOR, shape: blobShapeOf(name),
-        state: "idle", seed: `${name}:look`, follow: "pointer",
+        state: "idle", seed: `${name}:look`, follow: "pointer", costume: costumeOf(agent),
       });
       faces.push(preview);
       previewBox.addEventListener("click", () => preview.react("poke"));
@@ -4759,6 +4759,7 @@
         tile.append(box, el("span", "look-shape-name", sh));
         faces.push(Faces.createFace(box, {
           color: chatColor(name) || Faces.DEFAULT_COLOR, shape: sh, state: "idle", seed: `${name}:${sh}`,
+          costume: costumeOf(agent),
         }));
         tile.addEventListener("click", () => {
           blobShapes.set(name, sh);
@@ -5522,6 +5523,14 @@
     }
 
     /** The face host for an agent's card, created once, updated every render. */
+    /**
+     * What a face wears: the faz-tudo dresses as a gentleman — top hat,
+     * monocle, moustache (owner, 05/10). Everyone else, nothing.
+     */
+    function costumeOf(agent) {
+      return agent && agent.everywhere ? "gentleman" : null;
+    }
+
     function agentFaceHost(agent, stateKey) {
       if (!Faces) return el("span", "sb-face-host");
       let entry = faceHosts.get(agent.name);
@@ -5529,13 +5538,14 @@
       const shape = blobShapeOf(agent.name);
       if (!entry) {
         const host = el("span", "sb-face-host");
-        const face = Faces.createFace(host, { color, shape, state: stateKey, seed: agent.name, follow: "pointer" });
+        const face = Faces.createFace(host, { color, shape, state: stateKey, seed: agent.name, follow: "pointer", costume: costumeOf(agent) });
         entry = { host, face, state: stateKey };
         faceHosts.set(agent.name, entry);
         return host;
       }
       entry.face.setColor(color);
       entry.face.setShape(shape);
+      if (entry.face.setCostume) entry.face.setCostume(costumeOf(agent));
       if (entry.state !== stateKey) {
         const from = entry.state;
         entry.state = stateKey;
@@ -5636,13 +5646,14 @@
       let entry = dockFaces.get(agent.name);
       if (!entry) {
         const host = el("span", "sb-face-host");
-        const face = Faces.createFace(host, { color, shape, state: stateKey, seed: `dock-${agent.name}` });
+        const face = Faces.createFace(host, { color, shape, state: stateKey, seed: `dock-${agent.name}`, costume: costumeOf(agent) });
         entry = { host, face, state: stateKey };
         dockFaces.set(agent.name, entry);
         return host;
       }
       entry.face.setColor(color);
       entry.face.setShape(shape);
+      if (entry.face.setCostume) entry.face.setCostume(costumeOf(agent));
       if (entry.state !== stateKey) {
         const reaction = faceReactionFor(entry.state, stateKey);
         entry.state = stateKey;
