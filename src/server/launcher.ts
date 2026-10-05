@@ -37,6 +37,14 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
+import {
+  currentSessionOf,
+  isTracked,
+  sessionHookSettings,
+  sharesFolderWithTracked,
+  transcriptFor,
+} from "./sessions.js";
 import {
   toPublicAgent,
   type Agent,
@@ -175,6 +183,11 @@ export interface LaunchInput {
    * de eu escrever o nome da pasta e dai ele ja cria a pasta?"
    */
   createDir?: boolean;
+  /**
+   * Launches a CHILD of this agent: same folder, its own conversation, drawn
+   * under the parent. Recorded on the agent; a relaunch preserves it.
+   */
+  parent?: string;
 }
 
 export interface LaunchResult {
@@ -504,6 +517,7 @@ export function createLauncher(options: LauncherOptions): Launcher {
         tmuxSession: session,
         agentType: descriptor.type, // always stated → a relaunch can switch type
         group: input.group, // undefined → preserve the stored group (same rule)
+        parent: input.parent, // undefined → preserve (a child stays a child)
       });
     } catch (err) {
       throw new LaunchError((err as Error).message);
@@ -555,6 +569,34 @@ export function createLauncher(options: LauncherOptions): Launcher {
     // nothing resumable) — reporting success there would be a lie.
     const wantContinue = input.continueConversation === true;
 
+    /**
+     * The conversation flags for an agent that SHARES its folder with a child
+     * (see sessions.ts) — `claude -c` there resumes whoever spoke last, so it
+     * is never used: a child resumes its own session by id (or starts one
+     * under a fresh id), and its parent resumes the newest conversation no
+     * child claims. null → the standard argv.
+     */
+    function sessionArgs(withContinue: boolean): string[] | null {
+      if (descriptor.type !== "claude") return null;
+      const all = store.listAgents();
+      if (isTracked(agent)) {
+        const hook = ["--settings", sessionHookSettings(store.baseDir, name)];
+        const own = currentSessionOf(store.baseDir, agent);
+        if (withContinue && own && transcriptFor(store.baseDir, agent, all)) {
+          return ["--resume", own, ...hook];
+        }
+        // Fresh: an id that has no conversation yet is reused (the hook may
+        // already have logged it); otherwise a new one.
+        const fresh = own && !transcriptFor(store.baseDir, agent, all) ? own : randomUUID();
+        agent = store.updateAgent(name, { sessionId: fresh });
+        return ["--session-id", fresh, ...hook];
+      }
+      if (!sharesFolderWithTracked(agent, all)) return null;
+      if (!withContinue) return [];
+      const mine = transcriptFor(store.baseDir, agent, all);
+      return mine ? ["--resume", path.basename(mine, ".jsonl")] : [];
+    }
+
     async function createSession(withContinue: boolean): Promise<void> {
       // The adapter owns the argv shape, so codex gets `resume --last` +
       // bypass-after-the-subcommand while claude gets `-c` + its own bypass —
@@ -562,9 +604,12 @@ export function createLauncher(options: LauncherOptions): Launcher {
       // UNLESS the operator pinned custom launch args on the record (a
       // `--resume <id>` master session, special channel flags): then those
       // ARE the argv, verbatim, and the continue flag does not apply.
+      const pinned = agent.cliArgs?.trim() ? null : sessionArgs(withContinue);
       const claudeArgs = agent.cliArgs?.trim()
         ? agent.cliArgs
-        : descriptor.buildArgs({ continueConversation: withContinue });
+        : pinned
+          ? descriptor.buildArgs({ continueConversation: false, extraArgs: pinned })
+          : descriptor.buildArgs({ continueConversation: withContinue });
       try {
         await tmux.newSession(
           session,

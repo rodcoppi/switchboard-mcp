@@ -513,23 +513,41 @@
       flex-direction: column;
       gap: 4px;
     }
-    /* Engine siblings (claude + its codex on the same folder) read as ONE
-       project: joined vertically (no gap, shared rounded corners) with a
-       "linked" bracket down the left so it is clear they are two engines of the
-       same thing. */
-    .agent-card.pair-top {
-      margin-bottom: 0;
-      border-bottom-left-radius: 0;
-      border-bottom-right-radius: 0;
-      border-bottom: 1px dashed var(--border);
+    /* A FAMILY: an agent's codex engine sibling and its children hang under
+       it as smaller satellites, joined by a connector — one project, read as
+       one thing. */
+    .agent-card.has-satellites { margin-bottom: 6px; }
+    .agent-card.satellite {
+      margin-left: 26px;
+      margin-bottom: 6px;
+      padding: 7px 12px 7px 14px;
+      gap: 9px;
     }
-    .agent-card.pair-bottom {
-      border-top-left-radius: 0;
-      border-top-right-radius: 0;
-      border-top: none;
+    .agent-card.satellite + .agent-card:not(.satellite) { margin-top: 10px; }
+    .agent-card.satellite .agent-portrait.blob { width: 30px; height: 30px; }
+    .agent-card.satellite .agent-portrait.blob > .sb-face-host { width: 40px; height: 40px; margin: -5px; }
+    .agent-card.satellite .agent-role { -webkit-line-clamp: 1; }
+    .agent-card.satellite .agent-name { font-size: calc(var(--fs-name) - 1px); }
+    .sat-link {
+      position: absolute;
+      left: -15px;
+      top: -8px;
+      height: calc(50% + 8px);
+      width: 11px;
+      border-left: 1px solid var(--border-strong);
+      border-bottom: 1px solid var(--border-strong);
+      border-bottom-left-radius: 7px;
+      pointer-events: none;
     }
-    .agent-card.pair-top::after,
-    .agent-card.pair-bottom::after { display: none; }
+    /* Not the last satellite: the line runs on down to the next one. */
+    .agent-card.satellite:not(.satellite-last) .sat-link::after {
+      content: "";
+      position: absolute;
+      left: -1px;
+      top: 100%;
+      height: calc(100% + 6px);
+      border-left: 1px solid var(--border-strong);
+    }
 
     /* Drag handle — the ONLY reorder grip, revealed on hover on the left edge. */
     .card-grab {
@@ -3382,6 +3400,11 @@
       box-shadow: none;
     }
     .rail-group .agent-card:last-child { border-bottom-color: transparent; }
+    /* A family inside a room: the satellites step in, and no rule cuts the
+       family in two — only its last member closes it. */
+    .rail-group .agent-card.satellite { margin: 0 0 0 26px; }
+    .rail-group .agent-card.has-satellites,
+    .rail-group .agent-card.satellite:not(.satellite-last) { border-bottom-color: transparent; }
     .rail-group .agent-card:hover {
       border-color: transparent;
       border-bottom-color: var(--border-soft);
@@ -5392,7 +5415,8 @@
      * information. A shape means something only when someone chose it.
      */
     function blobShapeOf(name) {
-      const chosen = blobShapes.get(name);
+      const root = blobShapes.has(name) ? null : familyRootOf(state.agents.get(name));
+      const chosen = blobShapes.get(name) || (root && blobShapes.get(root.name));
       // Round unless picked (owner, 29/09: "deixa por padrão todos redondos").
       return chosen && BLOB_SHAPE_NAMES.includes(chosen) ? chosen : "circle";
     }
@@ -5967,7 +5991,12 @@
     // Per-chat colour: tints the card's left cable-end. Unset => no tint (the
     // cable stays the default patchbay behaviour). Also a viewer preference.
     function chatColor(name) {
-      return localStorage.getItem("sb.chatColor." + name) || null;
+      const own = localStorage.getItem("sb.chatColor." + name);
+      if (own) return own;
+      // A child (or a codex engine sibling) wears its root's colour until it
+      // is given its own — same family, same colour.
+      const root = familyRootOf(state.agents.get(name));
+      return root ? localStorage.getItem("sb.chatColor." + root.name) || null : null;
     }
     function setChatColor(name, color) {
       if (color) localStorage.setItem("sb.chatColor." + name, color);
@@ -6700,30 +6729,49 @@
       }
     }
 
-    // Appends cards, keeping engine SIBLINGS (a claude + its "-codex" in the
-    // same cwd) adjacent and visually joined — same project, two engines. No
-    // wrapper element: they stay DIRECT children of the box so drag-reorder
-    // (which walks ":scope > .agent-card") still works; the join is CSS via
-    // .pair-top/.pair-bottom classes.
+    /**
+     * The agent a SATELLITE hangs under: a child's parent, or the Claude agent
+     * a "-codex" engine sibling belongs to. null for everyone else.
+     */
+    function familyRootOf(agent) {
+      if (!agent) return null;
+      if (agent.parent && state.agents.has(agent.parent)) return state.agents.get(agent.parent);
+      const pair = enginePairOf(agent.name);
+      if (pair && pair.codex.name === agent.name) return pair.claude;
+      return null;
+    }
+
+    // Appends cards, each agent followed by its FAMILY: its codex engine
+    // sibling and its children, drawn under it as smaller satellites with a
+    // connector (owner, 05/10: "fica um boneco menor da mesma cor que ele em
+    // baixo dele" — and the codex versions grouped the same way). No wrapper
+    // element: every card stays a DIRECT child of the box, so drag-reorder
+    // (which walks ":scope > .agent-card") still works.
     function appendAgentCards(box, list) {
-      const done = new Set();
+      const here = new Set(list.map((a) => a.name));
+      const satellitesOf = new Map(); // root name -> its satellites, in list order
       for (const agent of list) {
-        if (done.has(agent.name)) continue;
-        const pair = enginePairOf(agent.name);
-        const bothHere =
-          pair && list.some((a) => a.name === pair.claude.name) && list.some((a) => a.name === pair.codex.name);
-        if (bothHere) {
-          const top = buildAgentCard(pair.claude);
-          top.classList.add("pair-top");
-          const bottom = buildAgentCard(pair.codex);
-          bottom.classList.add("pair-bottom");
-          box.append(top, bottom);
-          done.add(pair.claude.name);
-          done.add(pair.codex.name);
-        } else {
-          box.appendChild(buildAgentCard(agent));
-          done.add(agent.name);
-        }
+        const root = familyRootOf(agent);
+        if (!root || !here.has(root.name) || root.name === agent.name) continue;
+        if (!satellitesOf.has(root.name)) satellitesOf.set(root.name, []);
+        satellitesOf.get(root.name).push(agent);
+      }
+      const placed = new Set([...satellitesOf.values()].flat().map((a) => a.name));
+      for (const agent of list) {
+        if (placed.has(agent.name)) continue; // drawn under its root
+        const card = buildAgentCard(agent);
+        box.appendChild(card);
+        const sats = satellitesOf.get(agent.name) || [];
+        if (sats.length) card.classList.add("has-satellites");
+        // The engine sibling first (same conversation's other brain), then children.
+        sats.sort((x, y) => (x.parent ? 1 : 0) - (y.parent ? 1 : 0));
+        sats.forEach((sat, i) => {
+          const satCard = buildAgentCard(sat);
+          satCard.classList.add("satellite");
+          if (i === sats.length - 1) satCard.classList.add("satellite-last");
+          satCard.prepend(el("span", "sat-link"));
+          box.appendChild(satCard);
+        });
       }
     }
 
@@ -7048,6 +7096,51 @@
       return [...allGroups().filter((g) => g !== DEFAULT_GROUP), DEFAULT_GROUP];
     }
 
+    /** The first free "<parent>-<n>" — the same rule as the hub's nextChildName. */
+    function suggestChildName(parent) {
+      for (let n = 1; n < 1000; n++) {
+        const suffix = `-${n}`;
+        const candidate = `${parent.slice(0, 31 - suffix.length).replace(/-+$/, "")}${suffix}`;
+        if (!state.agents.has(candidate)) return candidate;
+      }
+      return `${parent}-child`;
+    }
+
+    /**
+     * Opens a child of `parent`. What was typed is both: its address, made
+     * name-shaped ("Revisor de Copy" → "revisor-de-copy"), and — when that
+     * changed it — the name the board shows, emoji and spaces kept. Empty →
+     * the hub picks "<parent>-<n>".
+     */
+    async function createChild(parent, typed) {
+      const body = {};
+      const id = sanitizeAgentNameInput(typed, false);
+      if (typed && id.length < 2) {
+        toast("That name has no letters or digits to make an address from — try another.", "warn");
+        return;
+      }
+      if (id) body.name = id;
+      if (typed && typed !== id) body.displayName = typed;
+      toast(`Opening a child of ${displayOf(parent)}…`);
+      try {
+        const res = await fetch(`/api/agents/${encodeURIComponent(parent)}/children`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.ok) {
+          toast(`Could not open the child: ${data.error || `HTTP ${res.status}`}`, "warn", 7000);
+          return;
+        }
+        if (data.agent) mergeAgent(data.agent);
+        renderAgents();
+        toast(`${displayOf(data.agent ? data.agent.name : id)} is up, under ${displayOf(parent)}.`, "ok");
+      } catch (err) {
+        toast(`Could not open the child: ${err && err.message ? err.message : err}`, "warn");
+      }
+    }
+
     function buildAgentMenu(agent, online, nameEl) {
       const menu = el("div", "agent-menu");
       menu.hidden = true;
@@ -7082,7 +7175,13 @@
         for (const p of pages) p.hidden = p !== page;
         refitMenu(menu);
         if (!focus) return;
-        const first = page.querySelector(".agent-menu-item:not(.am-back)") || page.querySelector(".agent-menu-item");
+        // A page with a field (New child) opens ON the field: typing straight
+        // away must land in it, not press the focused row (a space on "Back"
+        // went back, and the next space pressed "Wake").
+        const first =
+          page.querySelector("input, select") ||
+          page.querySelector(".agent-menu-item:not(.am-back)") ||
+          page.querySelector(".agent-menu-item");
         if (first) first.focus({ preventScroll: true });
       };
       const subPage = (title) => {
@@ -7176,6 +7275,17 @@
           ),
         );
       }
+      // A CHILD: a second Claude session in the same folder, drawn under this
+      // agent, killed when its job is done (owner, 05/10). Not offered on a
+      // child itself — a family is one level deep.
+      if (agentTypeOf(agent) === "claude" && !agent.parent && !agent.name.endsWith("-codex")) {
+        main.appendChild(
+          agentMenuRow(
+            { icon: "plus", label: "New child…", cls: "child-btn", next: true, title: `A second session in ${agent.name}'s folder, with its own conversation — shown under it, killed when done` },
+            () => show(childPage),
+          ),
+        );
+      }
       // Start over: same agent, blank conversation (the old one stays on disk,
       // reachable with /resume). Confirms first.
       main.appendChild(
@@ -7216,19 +7326,28 @@
         );
       }
       // Remove: always offered. Online, it stops the session first. The
-      // messages stay either way.
+      // messages stay either way. On a child it is "Kill" — the end of its job.
+      const isChild = Boolean(agent.parent);
       main.appendChild(
         agentMenuRow(
           {
-            icon: "remove", label: online ? "Stop & remove" : "Remove", cls: "remove-btn danger-item",
-            title: online
-              ? `Stop "${agent.name}" (kills its tmux session) and remove it from the Hub (messages are kept)`
-              : "Remove this agent from the Hub registry (messages are kept)",
+            icon: "remove",
+            label: isChild ? "Kill" : online ? "Stop & remove" : "Remove",
+            cls: "remove-btn danger-item",
+            title: isChild
+              ? `Stop "${agent.name}" and remove it — its job is done (its conversation stays on disk)`
+              : online
+                ? `Stop "${agent.name}" (kills its tmux session) and remove it from the Hub (messages are kept)`
+                : "Remove this agent from the Hub registry (messages are kept)",
           },
           async (item) => {
-            if (!armMenuRow(item, "Remove? Click again")) return;
+            if (!armMenuRow(item, isChild ? "Kill? Click again" : "Remove? Click again")) return;
             closeMenus();
-            if (online) {
+            // A child is ALWAYS stopped first: the menu may have been built a
+            // moment after its launch, before the rail knew it was up, and a
+            // "remove" alone left its session running with nobody to see it.
+            // Stopping a session that is already gone is a harmless no-op.
+            if (online || isChild) {
               try {
                 const res = await fetch(`/api/agents/${encodeURIComponent(agent.name)}/stop`, { method: "POST" });
                 const body = await res.json().catch(() => ({}));
@@ -7345,6 +7464,38 @@
           input.focus({ preventScroll: true });
         });
         return row;
+      }
+
+      // --- Page: new child -------------------------------------------------
+      const childPage = subPage("New child");
+      childPage.appendChild(
+        el("div", "am-hint", `Same folder, its own conversation. It appears under ${displayOf(agent)}; kill it when the job is done.`),
+      );
+      {
+        const form = el("form", "am-new");
+        const input = el("input", "am-new-name am-child-name");
+        input.type = "text";
+        input.maxLength = 48;
+        input.placeholder = suggestChildName(agent.name);
+        input.setAttribute("aria-label", "Name of the child");
+        input.autocomplete = "off";
+        input.spellcheck = false;
+        const go = el("button", "am-new-go", "Create");
+        go.type = "submit";
+        form.append(input, go);
+        form.addEventListener("keydown", (ev) => {
+          if (ev.key !== "Escape") return;
+          ev.preventDefault();
+          ev.stopPropagation(); // Esc goes back, not out of the whole menu
+          show(main);
+        });
+        form.addEventListener("submit", (ev) => {
+          ev.preventDefault();
+          const typed = input.value.trim();
+          closeMenus();
+          createChild(agent.name, typed);
+        });
+        childPage.appendChild(form);
       }
 
       // --- Page: more ------------------------------------------------------

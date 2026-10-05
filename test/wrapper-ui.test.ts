@@ -1880,7 +1880,7 @@ describe("the agent menu (⋯ or right-click)", () => {
   });
 
   it("asks before removing or starting blank", () => {
-    expect(menu).toContain('if (!armMenuRow(item, "Remove? Click again")) return;');
+    expect(menu).toContain('if (!armMenuRow(item, isChild ? "Kill? Click again" : "Remove? Click again")) return;');
     expect(menu).toContain('if (!armMenuRow(item, "Start blank? Click again")) return;');
   });
 
@@ -2033,5 +2033,54 @@ describe("taking an agent out of the recent dock", () => {
   it("shows the hold filling up, and only on hover", () => {
     expect(styles).toMatch(/\.dock-remove\.holding \.dock-remove-ring \{[^}]*transition: stroke-dashoffset 2s linear/);
     expect(styles).toMatch(/\.dock-item:hover \.dock-remove \{ opacity: 1; pointer-events: auto; \}/);
+  });
+});
+
+describe("an agent's family on the rail (children and its codex)", () => {
+  // Owner, 05/10: a child "fica um boneco menor da mesma cor que ele em baixo
+  // dele" — and the codex versions grouped the same way.
+  it("draws an agent's codex sibling and children under it, as satellites", () => {
+    const append = embeddedFunctionSource("appendAgentCards");
+    expect(append).toContain("familyRootOf(agent)");
+    expect(append).toContain('satCard.classList.add("satellite")');
+    expect(append).toContain('satCard.prepend(el("span", "sat-link"))');
+    const root = embeddedFunctionSource("familyRootOf");
+    expect(root).toContain("agent.parent && state.agents.has(agent.parent)");
+    expect(root).toContain("pair.codex.name === agent.name");
+  });
+
+  it("gives a satellite a smaller face, stepped in under its root", () => {
+    expect(styles).toMatch(/\.agent-card\.satellite \.agent-portrait\.blob > \.sb-face-host \{ width: 40px; height: 40px;/);
+    expect(styles).toMatch(/\.rail-group \.agent-card\.satellite \{ margin: 0 0 0 26px; \}/);
+  });
+
+  it("wears its root's colour and shape until given its own", () => {
+    expect(embeddedFunctionSource("chatColor")).toContain('localStorage.getItem("sb.chatColor." + root.name)');
+    expect(embeddedFunctionSource("blobShapeOf")).toContain("blobShapes.get(root.name)");
+  });
+});
+
+describe("opening and killing a child", () => {
+  const menu = embeddedFunctionSource("buildAgentMenu");
+
+  it("offers New child on a Claude agent, never on a child", () => {
+    expect(menu).toContain('if (agentTypeOf(agent) === "claude" && !agent.parent && !agent.name.endsWith("-codex"))');
+    expect(menu).toContain("createChild(agent.name, typed)");
+  });
+
+  it("keeps what was typed as the name shown, and makes an address out of it", () => {
+    const create = embeddedFunctionSource("createChild");
+    expect(create).toContain("sanitizeAgentNameInput(typed, false)");
+    expect(create).toContain("if (typed && typed !== id) body.displayName = typed;");
+    expect(create).toContain("/children`");
+  });
+
+  it("calls it Kill on a child, and always stops it before removing", () => {
+    expect(menu).toContain('label: isChild ? "Kill" :');
+    expect(menu).toContain("if (online || isChild) {");
+  });
+
+  it("opens a page with a field ON the field, so typing never presses a row", () => {
+    expect(menu).toContain('page.querySelector("input, select") ||');
   });
 });

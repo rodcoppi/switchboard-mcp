@@ -39,6 +39,20 @@ export interface Agent {
    * survives restarts. Absent → the UI shows `name`.
    */
   displayName?: string;
+  /**
+   * A CHILD's parent: the agent it was opened from — same folder, its own
+   * conversation (owner, 05/10). The rail draws a child under its parent.
+   * Absent on everyone else. One level only: a child's child belongs to the
+   * root.
+   */
+  parent?: string;
+  /**
+   * The Claude session id this agent was launched with (`--session-id`), for
+   * an agent that must keep ITS conversation apart from others in the same
+   * folder. What it is in NOW comes from its session log (sessions.ts); this
+   * is the fallback before the first hook fires.
+   */
+  sessionId?: string;
   role: string; // free-form description, e.g. "backend da API de pagamentos"
   tmuxSession: string; // e.g. "sb-alpha" (prefix + name)
   cwd: string; // directory where the agent CLI was opened

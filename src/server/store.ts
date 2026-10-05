@@ -179,6 +179,8 @@ export interface RegisterAgentInput {
    * room and into `default`, where it could then reach everyone.
    */
   group?: string;
+  /** A child's parent (see Agent.parent). undefined preserves the stored value. */
+  parent?: string;
 }
 
 export class Store {
@@ -262,6 +264,7 @@ export class Store {
       existing.role = input.role ?? existing.role; // omitted → preserve (PRD 8)
       existing.agentType = input.agentType ?? existing.agentType; // omitted → preserve
       existing.group = input.group ?? existing.group; // omitted → preserve
+      existing.parent = input.parent ?? existing.parent; // omitted → preserve
       existing.tmuxSession = input.tmuxSession;
       existing.cwd = input.cwd;
       // Registration happens BEFORE the new Claude Code opens (D4), so at
@@ -308,6 +311,7 @@ export class Store {
       ...(input.agentType === undefined ? {} : { agentType: input.agentType }),
       // Same rule for the group: absent reads back as DEFAULT_GROUP.
       ...(input.group === undefined ? {} : { group: input.group }),
+      ...(input.parent === undefined ? {} : { parent: input.parent }),
     };
     this.agents.set(agent.name, agent);
     this.saveAgentsSnapshot();
@@ -409,6 +413,8 @@ export class Store {
     // from the same config key.
     agent.tmuxSession = loadConfig(this.baseDir).tmuxSessionPrefix + newName;
     this.agents.set(newName, agent);
+    // Its children keep calling it their parent under the new name.
+    for (const other of this.agents.values()) if (other.parent === oldName) other.parent = newName;
     this.saveAgentsSnapshot();
     return agent;
   }
@@ -980,6 +986,8 @@ function isAgent(value: unknown): value is Agent {
     // record — the first join claims the name and generates one).
     (v.token === undefined || typeof v.token === "string") &&
     // displayName is optional: what the UI shows; `name` stays the protocol id.
-    (v.displayName === undefined || typeof v.displayName === "string")
+    (v.displayName === undefined || typeof v.displayName === "string") &&
+    (v.parent === undefined || typeof v.parent === "string") &&
+    (v.sessionId === undefined || typeof v.sessionId === "string")
   );
 }

@@ -29,7 +29,7 @@ import {
   type SseEvent,
 } from "../shared/types.js";
 import type { Logger } from "./log.js";
-import { GROUP_NAME_RE, groupsTouch, resolveGroup, type Store } from "./store.js";
+import { AGENT_NAME_RE, GROUP_NAME_RE, groupsTouch, resolveGroup, type Store } from "./store.js";
 import { discoverSkills } from "./skills.js";
 // Value imports for the instanceof mapping and the /api/fs/dirs path
 // translation below. No runtime cycle: launcher.ts imports this module with
@@ -41,6 +41,7 @@ import { PreviewError, rawMime, readPreview, resolveInScope } from "./fileprevie
 import { isOpenable, refusalFor, type FileOpener } from "./fileopen.js";
 import { MAX_STT_BYTES, SttError, type SttProxy } from "./stt.js";
 import { contextUsageFrom, parseConversation, projectDirForCwd } from "./conversation.js";
+import { renameSessionLog, transcriptFor } from "./sessions.js";
 import readline from "node:readline";
 import {
   codexUsageSnapshot,
@@ -122,6 +123,20 @@ export function reachableFrom(store: Store, from: string): string[] {
     .filter((a) => groupsTouch(resolveGroup(a.group), resolveGroup(sender.group)))
     .map((a) => a.name)
     .sort();
+}
+
+/**
+ * The first free "<parent>-<n>" for a new child, the parent's part shortened
+ * when needed so the whole stays a valid name (31 characters at most).
+ */
+export function nextChildName(store: Store, parent: string): string {
+  for (let n = 1; n < 1000; n++) {
+    const suffix = `-${n}`;
+    const base = parent.slice(0, 31 - suffix.length).replace(/-+$/, "");
+    const candidate = `${base}${suffix}`;
+    if (!store.getAgent(candidate)) return candidate;
+  }
+  return `${parent.slice(0, 22)}-${Date.now().toString(36).slice(-6)}`;
 }
 
 /**
@@ -831,6 +846,78 @@ export function createApiRouter(options: ApiOptions): express.Router {
     }
   });
 
+  // POST /api/agents/:name/children — body {name?, displayName?}: opens a
+  // CHILD of the agent — a fresh Claude session in the SAME folder, in the
+  // same group, drawn under its parent; killed (stop + remove) when its job is
+  // done (owner, 05/10). Its conversation is kept apart from the parent's by
+  // session id (see sessions.ts). One level: asking a child for a child gives
+  // its parent another one. `name` is the child's address (default
+  // "<parent>-<n>"); `displayName` is what the board shows, changeable later.
+  router.post("/api/agents/:name/children", async (req, res) => {
+    if (!launcher) {
+      res.status(501).json({ ok: false, error: "Launching is not available in this hub (no tmux layer)." });
+      return;
+    }
+    const asked = store.getAgent(req.params.name);
+    if (!asked) {
+      res.status(404).json({ ok: false, error: `Unknown agent: "${req.params.name}".` });
+      return;
+    }
+    const root = (asked.parent && store.getAgent(asked.parent)) || asked;
+    if (resolveAgentType(root.agentType) !== "claude") {
+      res.status(400).json({
+        ok: false,
+        error: `Children are Claude sessions: "${root.name}" runs ${resolveAgentType(root.agentType)}. Open the child from its Claude agent.`,
+      });
+      return;
+    }
+    const raw = (req.body ?? {}) as Record<string, unknown>;
+    for (const key of ["name", "displayName"] as const) {
+      if (raw[key] !== undefined && typeof raw[key] !== "string") {
+        res.status(400).json({ ok: false, error: `Invalid body: field "${key}" must be a string when present.` });
+        return;
+      }
+    }
+    const wanted = typeof raw.name === "string" ? raw.name.trim() : "";
+    const name = wanted || nextChildName(store, root.name);
+    if (!AGENT_NAME_RE.test(name)) {
+      res.status(400).json({
+        ok: false,
+        error: `Invalid name: "${name}". Lowercase letters, digits and hyphens, 2 to 31 characters.`,
+      });
+      return;
+    }
+    if (store.getAgent(name)) {
+      res.status(409).json({ ok: false, error: `"${name}" is already taken — pick another name for the child.` });
+      return;
+    }
+    const displayName = typeof raw.displayName === "string" ? raw.displayName.trim().slice(0, 64) : "";
+    try {
+      const result = await launcher.launchAgent({
+        dir: root.cwd,
+        name,
+        group: root.group,
+        agentType: "claude",
+        continueConversation: false,
+        openTerminal: false,
+        parent: root.name,
+      });
+      let child = store.getAgent(name)!;
+      if (displayName && displayName !== name) {
+        child = store.updateAgent(name, { displayName });
+        bus.emit({ type: "agent_updated", payload: toPublicAgent(child) });
+      }
+      log.info(`[api] child ${name} of ${root.name} launched in ${root.cwd}.`);
+      res.status(201).json({ ok: true, agent: toPublicAgent(child), replaced: result.replaced });
+    } catch (err) {
+      if (err instanceof LaunchError) {
+        res.status(err.status).json({ ok: false, error: err.message });
+        return;
+      }
+      res.status(500).json({ ok: false, error: (err as Error).message });
+    }
+  });
+
   // POST /api/agents/launch — the dashboard's "Launch agent" form: the hub
   // itself creates the agent's tmux session running claude (server-side
   // sibling of `switchboard wire`). Body {dir, name?, role?, continue?}.
@@ -1514,17 +1601,10 @@ export function createApiRouter(options: ApiOptions): express.Router {
     }
     const wanted = Math.max(0, Math.min(64, Number(req.query.i ?? 0) | 0));
 
-    let file: string;
-    try {
-      const dir = projectDirForCwd(agent.cwd);
-      const jsonls = fs
-        .readdirSync(dir)
-        .filter((f) => f.endsWith(".jsonl"))
-        .map((f) => path.join(dir, f))
-        .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
-      if (!jsonls.length) throw new Error("no transcript");
-      file = jsonls[0];
-    } catch {
+    // THIS agent's conversation — not simply the folder's newest, which a
+    // child working in the same folder would make someone else's.
+    const file = transcriptFor(store.baseDir, agent, store.listAgents());
+    if (!file) {
       res.status(404).json({ ok: false, error: "No transcript for this agent yet." });
       return;
     }
@@ -2046,16 +2126,10 @@ export function createApiRouter(options: ApiOptions): express.Router {
       file = rollout;
     } else {
       const dir = projectDirForCwd(agent.cwd);
-      // The active session = the most-recently-modified .jsonl in the project dir.
-      try {
-        const jsonls = fs
-          .readdirSync(dir)
-          .filter((f) => f.endsWith(".jsonl"))
-          .map((f) => path.join(dir, f))
-          .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
-        if (jsonls.length === 0) throw new Error("no conversation log yet");
-        file = jsonls[0];
-      } catch {
+      // The active session = this agent's conversation: the newest in the
+      // folder that no child claims, or a child's own (see sessions.ts).
+      const mine = transcriptFor(store.baseDir, agent, store.listAgents());
+      if (!mine) {
         res.status(404).json({
           ok: false,
           error:
@@ -2064,6 +2138,7 @@ export function createApiRouter(options: ApiOptions): express.Router {
         });
         return;
       }
+      file = mine;
     }
 
     res.writeHead(200, {
@@ -2378,6 +2453,13 @@ export function createApiRouter(options: ApiOptions): express.Router {
     if (renamed.name !== name) {
       bus.emit({ type: "agent_removed", payload: { name } });
       log.info(`[api] agent renamed: ${name} → ${renamed.name}.`); // never the token
+      // A child's record of its conversations follows it, or the new name
+      // would start with none and see its parent's chat.
+      renameSessionLog(store.baseDir, name, renamed.name);
+      // Its children now call it by the new name (Store.renameAgent).
+      for (const child of store.listAgents()) {
+        if (child.parent === renamed.name) bus.emit({ type: "agent_updated", payload: toPublicAgent(child) });
+      }
     }
     bus.emit({ type: "agent_updated", payload: toPublicAgent(renamed) });
     res.json({ ok: true, agent: toPublicAgent(renamed) });
