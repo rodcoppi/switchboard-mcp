@@ -2002,3 +2002,36 @@ describe("the recent dock", () => {
     expect(styles).toMatch(/@media \(max-width: 640px\) \{\s*\.recent-dock \{ display: none; \}/);
   });
 });
+
+describe("taking an agent out of the recent dock", () => {
+  // Owner, 04/10: an "×" on hover that must be HELD 2s, so nothing goes by
+  // accident — and no ⇄ button on top ("isso eu praticamente nunca uso").
+  const x = embeddedFunctionSource("dockRemoveButton");
+
+  it("has no agent-traffic button any more", () => {
+    expect(embeddedFunctionSource("renderRecentDock")).not.toContain("dock-home");
+  });
+
+  it("removes only after a 2-second hold, never on a click", () => {
+    expect(script).toContain("const DOCK_HOLD_MS = 2000;");
+    expect(x).toContain("setTimeout(() => {");
+    expect(x).toContain("forgetRecent(name)");
+    // The release must not open the agent underneath.
+    expect(x).toMatch(/addEventListener\("click", \(ev\) => \{\s*ev\.preventDefault\(\);\s*ev\.stopPropagation\(\);/);
+  });
+
+  it("cancels when you let go early or slide off", () => {
+    expect(x).toContain('["pointerup", "pointercancel", "lostpointercapture"]');
+    expect(x).toContain('addEventListener("pointermove"');
+    expect(x).toContain("cancelDockHold()");
+  });
+
+  it("holds the dock still mid-hold — a rebuild would lose the release", () => {
+    expect(embeddedFunctionSource("renderRecentDock")).toContain("if (!dock || dockHold) return;");
+  });
+
+  it("shows the hold filling up, and only on hover", () => {
+    expect(styles).toMatch(/\.dock-remove\.holding \.dock-remove-ring \{[^}]*transition: stroke-dashoffset 2s linear/);
+    expect(styles).toMatch(/\.dock-item:hover \.dock-remove \{ opacity: 1; pointer-events: auto; \}/);
+  });
+});

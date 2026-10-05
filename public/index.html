@@ -4067,7 +4067,7 @@
     .dock-item.active::before {
       content: "";
       position: absolute;
-      left: -7px;
+      left: -5px;
       top: 9px;
       bottom: 9px;
       width: 3px;
@@ -4088,8 +4088,41 @@
     .dock-item:hover .dock-name, .dock-item.active .dock-name { color: var(--text); }
     .dock-item.offline .sb-face-host { opacity: 0.55; }
     .dock-item { padding: 5px 0 4px; }
-    .dock-home { font-size: 17px; font-family: var(--mono); }
-    .dock-sep { flex: 0 0 auto; width: 26px; height: 1px; margin: 2px 0; background: var(--border); }
+    /* The "×" that takes an agent out of the dock — shown on hover, removes
+       only when held: the ring fills over the 2s hold. */
+    .dock-remove {
+      position: absolute;
+      top: 1px;
+      right: 4px;
+      width: 20px;
+      height: 20px;
+      display: grid;
+      place-items: center;
+      border-radius: 50%;
+      background: var(--bg-elev-2);
+      box-shadow: 0 0 0 1px var(--border);
+      color: var(--text-faint);
+      cursor: pointer;
+      opacity: 0;
+      pointer-events: none;
+      touch-action: none;
+      transition: opacity 0.12s var(--ease), color 0.12s var(--ease);
+    }
+    .dock-item:hover .dock-remove { opacity: 1; pointer-events: auto; }
+    .dock-item:hover .dock-badge { opacity: 0; }
+    .dock-remove:hover, .dock-remove.holding { color: var(--danger); }
+    .dock-remove svg { position: absolute; inset: 0; width: 20px; height: 20px; transform: rotate(-90deg); }
+    .dock-remove-ring {
+      fill: none;
+      stroke: var(--danger);
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-dasharray: 53.41;
+      stroke-dashoffset: 53.41;
+      transition: stroke-dashoffset 0.15s var(--ease);
+    }
+    .dock-remove.holding .dock-remove-ring { stroke-dashoffset: 0; transition: stroke-dashoffset 2s linear; }
+    .dock-remove-x { position: relative; font: 600 13px/1 var(--sans); }
     .dock-empty {
       margin-top: 6px;
       padding: 0 6px;
@@ -5557,9 +5590,13 @@
     }
 
     let lastDockSignature = "";
+    // A hold on an "×" in progress: the dock is not rebuilt under it — a
+    // rebuild would drop the button being held, its release would never
+    // arrive, and the removal would go through after the finger let go.
+    let dockHold = null; // { name, timer, x }
     function renderRecentDock() {
       const dock = $("#recent-dock");
-      if (!dock) return;
+      if (!dock || dockHold) return;
       // Agents removed from the hub leave the dock too.
       const gone = recentAgents.filter((e) => !state.agents.has(e.name));
       if (gone.length && state.agents.size) for (const e of gone) forgetRecent(e.name);
@@ -5594,14 +5631,6 @@
         return;
       }
 
-      // Home: back to the transcript of what they said to each other.
-      const home = el("button", `dock-item dock-home${screenState.name === null ? " active" : ""}`, "⇄");
-      home.type = "button";
-      home.title = "Agent traffic";
-      home.addEventListener("click", () => {
-        if (screenState.name) closeScreen();
-      });
-      dock.appendChild(home);
       const hide = el("button", "dock-hide", "‹");
       hide.type = "button";
       hide.title = "Hide this column — a thin strip stays to bring it back";
@@ -5611,8 +5640,6 @@
         dock.append(el("div", "dock-empty", "agents you open land here"), el("div", "dock-spacer"), hide);
         return;
       }
-      dock.appendChild(el("div", "dock-sep"));
-
       items.forEach((e, i) => {
         const agent = state.agents.get(e.name);
         const item = el("button", "dock-item");
@@ -5632,6 +5659,7 @@
         if (agent.blocked) item.appendChild(el("span", "dock-badge ask", "?"));
         else if (news) item.appendChild(el("span", "dock-badge news"));
         if (i < 9) item.appendChild(el("span", "dock-key", String(i + 1)));
+        item.appendChild(dockRemoveButton(e.name, displayOf(agent)));
         item.addEventListener("click", () => openScreen(e.name));
         // Right-click: the agent's own menu, same as on its card.
         item.addEventListener("contextmenu", (ev) => {
@@ -5648,6 +5676,77 @@
     /** "working" / "idle" for the dock's tooltip. */
     function agentActivityWord(agent) {
       return agent.activity === "working" ? "working" : "idle";
+    }
+
+    // Taking an agent out of the dock: an "×" on hover that has to be HELD
+    // for 2s (owner, 04/10: "tem que segurar o clique pelo menos 2 seg pra
+    // deletar, pra nao deletar sem querer"). A ring fills while you hold;
+    // letting go early, or sliding off, cancels. The agent itself is
+    // untouched — it just leaves the dock until you open it again.
+    const DOCK_HOLD_MS = 2000;
+
+    function dockRemoveButton(name, label) {
+      const x = el("span", "dock-remove");
+      x.setAttribute("role", "button");
+      x.setAttribute("aria-label", `Hold to take ${label} out of the dock`);
+      x.title = "Hold 2s to take it out of the dock";
+      const NS = "http://www.w3.org/2000/svg";
+      const svg = document.createElementNS(NS, "svg");
+      svg.setAttribute("viewBox", "0 0 20 20");
+      svg.setAttribute("aria-hidden", "true");
+      const ring = document.createElementNS(NS, "circle");
+      ring.setAttribute("class", "dock-remove-ring");
+      ring.setAttribute("cx", "10");
+      ring.setAttribute("cy", "10");
+      ring.setAttribute("r", "8.5");
+      svg.appendChild(ring);
+      x.append(svg, el("span", "dock-remove-x", "×"));
+      x.addEventListener("pointerdown", (ev) => {
+        if (ev.button !== 0) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        try { x.setPointerCapture(ev.pointerId); } catch { /* fine without */ }
+        cancelDockHold();
+        x.classList.add("holding");
+        dockHold = {
+          name,
+          x,
+          timer: setTimeout(() => {
+            dockHold = null;
+            forgetRecent(name);
+            lastDockSignature = "";
+            renderRecentDock();
+          }, DOCK_HOLD_MS),
+        };
+      });
+      for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) {
+        x.addEventListener(type, () => {
+          if (dockHold && dockHold.x === x) cancelDockHold();
+        });
+      }
+      // Sliding off the "×" mid-hold is a change of mind.
+      x.addEventListener("pointermove", (ev) => {
+        if (!dockHold || dockHold.x !== x) return;
+        const r = x.getBoundingClientRect();
+        const pad = 6;
+        if (ev.clientX < r.left - pad || ev.clientX > r.right + pad || ev.clientY < r.top - pad || ev.clientY > r.bottom + pad) {
+          cancelDockHold();
+        }
+      });
+      // The release must not count as a click on the agent underneath.
+      x.addEventListener("click", (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+      });
+      return x;
+    }
+
+    function cancelDockHold() {
+      if (!dockHold) return;
+      clearTimeout(dockHold.timer);
+      dockHold.x.classList.remove("holding");
+      dockHold = null;
+      renderRecentDock(); // anything that changed during the hold lands now
     }
 
     // Alt+1…9 jumps to the dock's agent in that place; Alt+0 back to the traffic.
