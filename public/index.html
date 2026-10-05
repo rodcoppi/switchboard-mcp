@@ -4952,6 +4952,7 @@
         screenState.name !== incoming.name
       ) {
         markUnseen(incoming.name);
+        riseInDock(incoming.name);
       }
       // The same two moments, as a SYSTEM notification — the only way to learn
       // about them with the phone in your pocket. Only live transitions count
@@ -5526,10 +5527,12 @@
     // the ones you opened lately as faces in a column at the far left: one
     // click (or Alt+1…9) and you are there.
     //
-    // An agent already in the dock KEEPS ITS PLACE when you go back to it, so
-    // a position can be learned (re-sorting on every visit would swap the two
-    // you alternate between each time). A new one enters at the top; when the
-    // dock is full, the one you have not opened for longest leaves.
+    // Ordered by CONVERSATION (owner, 05/10: "tem que mudar a ordem ... quando
+    // for o último que falei" / "quando o bot manda msg e eu não vejo ele tem
+    // que ir pra cima"): the agent you just sent a message to, and one of them
+    // answering while you look elsewhere, rises to the top. Merely opening one
+    // to look does not reshuffle the column under your cursor. A new one
+    // enters at the top; when the dock is full, the one idle longest leaves.
     const RECENT_KEY = "sb.recentAgents";
     const RECENT_MAX = 9;
     let recentAgents = loadRecent(); // [{ name, at }] in display order
@@ -5560,12 +5563,15 @@
     }
 
     /**
-     * The dock after you work with `name` (pure): a known agent keeps its place
-     * and only refreshes its time; a new one enters on top, and a full dock
-     * lets go of the one opened longest ago — not the one that came in first.
+     * The dock after something happened with `name` (pure). `rise`: a message
+     * went either way — it moves to the top. Without it (you opened it), a
+     * known agent keeps its place and only refreshes its time. A new one
+     * enters on top, and a full dock lets go of the one idle longest — not
+     * the one that came in first.
      */
-    function nextRecent(list, name, now, max) {
+    function nextRecent(list, name, now, max, rise = false) {
       if (list.some((e) => e.name === name)) {
+        if (rise) return [{ name, at: now }, ...list.filter((e) => e.name !== name)];
         return list.map((e) => (e.name === name ? { name, at: now } : e));
       }
       const kept = list.slice();
@@ -5577,11 +5583,16 @@
       return [{ name, at: now }, ...kept];
     }
 
-    /** You worked with `name` just now: remember it. */
-    function noteRecent(name) {
-      recentAgents = nextRecent(recentAgents, name, Date.now(), RECENT_MAX);
+    /** You opened `name` (or, with `rise`, talked with it) just now: remember it. */
+    function noteRecent(name, rise = false) {
+      recentAgents = nextRecent(recentAgents, name, Date.now(), RECENT_MAX, rise);
       saveRecent();
       renderRecentDock();
+    }
+
+    /** One of the dock's agents answered while you looked elsewhere: up it goes. */
+    function riseInDock(name) {
+      if (recentAgents.some((e) => e.name === name)) noteRecent(name, true);
     }
 
     function forgetRecent(name) {
@@ -5643,6 +5654,10 @@
           dockFaces.delete(name);
         }
       }
+      // Where each face was, so a reorder can SLIDE instead of jump.
+      const before = new Map(
+        [...dock.querySelectorAll(".dock-item[data-name]")].map((n) => [n.dataset.name, n.getBoundingClientRect().top]),
+      );
       dock.textContent = "";
       dock.classList.toggle("collapsed", dockHidden);
       if (dockHidden) {
@@ -5695,6 +5710,22 @@
         dock.appendChild(item);
       });
       dock.append(el("div", "dock-spacer"), hide);
+      slideDockItems(dock, before);
+    }
+
+    /** FLIP: each face starts where it was and glides to its new place. */
+    function slideDockItems(dock, before) {
+      if (!before.size || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+      for (const item of dock.querySelectorAll(".dock-item[data-name]")) {
+        const was = before.get(item.dataset.name);
+        if (was === undefined) continue;
+        const delta = was - item.getBoundingClientRect().top;
+        if (Math.abs(delta) < 1) continue;
+        item.animate(
+          [{ transform: `translateY(${delta}px)` }, { transform: "translateY(0)" }],
+          { duration: 260, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" },
+        );
+      }
     }
 
     /** "working" / "idle" for the dock's tooltip. */
@@ -8614,6 +8645,7 @@
             `agent's prompt; clear it below or press Enter in the terminal.`,
         );
       }
+      noteRecent(name, true); // you just talked to it: top of the dock
     }
 
     function mountTerminal(name) {

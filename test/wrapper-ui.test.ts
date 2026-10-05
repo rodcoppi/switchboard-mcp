@@ -1953,7 +1953,7 @@ describe("the recent dock", () => {
   // Owner, 04/10: two agents in use, one at the top of the rail and one at
   // the bottom. A column of the agents opened lately, as faces, one click away.
   const next = embeddedFunctionWith<
-    (list: Array<{ name: string; at: number }>, name: string, now: number, max: number) => Array<{ name: string; at: number }>
+    (list: Array<{ name: string; at: number }>, name: string, now: number, max: number, rise?: boolean) => Array<{ name: string; at: number }>
   >("nextRecent", []);
 
   it("sits at the far left, before the rail", () => {
@@ -2082,5 +2082,38 @@ describe("opening and killing a child", () => {
 
   it("opens a page with a field ON the field, so typing never presses a row", () => {
     expect(menu).toContain('page.querySelector("input, select") ||');
+  });
+});
+
+
+describe("the recent dock follows the conversation", () => {
+  // Owner, 05/10: "tem que mudar a ordem ... quando for o último que falei" and
+  // "quando o bot manda msg e eu não vejo ele tem que ir pra cima".
+  const next = embeddedFunctionWith<
+    (list: Array<{ name: string; at: number }>, name: string, now: number, max: number, rise?: boolean) => Array<{ name: string; at: number }>
+  >("nextRecent", []);
+  const list = [{ name: "a", at: 3 }, { name: "b", at: 2 }, { name: "c", at: 1 }];
+
+  it("a message moves the agent to the top, the rest step down in order", () => {
+    expect(next(list, "c", 9, 9, true).map((e) => e.name)).toEqual(["c", "a", "b"]);
+  });
+
+  it("just opening one does not reshuffle the column", () => {
+    expect(next(list, "c", 9, 9).map((e) => e.name)).toEqual(["a", "b", "c"]);
+  });
+
+  it("rises when you send it a message", () => {
+    expect(embeddedFunctionSource("sendChatMessage")).toContain("noteRecent(name, true);");
+  });
+
+  it("rises when it answers while you look elsewhere — only if it is in the dock", () => {
+    expect(script).toMatch(/markUnseen\(incoming\.name\);\s*riseInDock\(incoming\.name\);/);
+    expect(embeddedFunctionSource("riseInDock")).toContain("if (recentAgents.some((e) => e.name === name))");
+  });
+
+  it("slides the faces to their new places instead of jumping", () => {
+    const slide = embeddedFunctionSource("slideDockItems");
+    expect(slide).toContain("translateY(${delta}px)");
+    expect(slide).toContain("prefers-reduced-motion: reduce");
   });
 });
