@@ -2117,3 +2117,29 @@ describe("the recent dock follows the conversation", () => {
     expect(slide).toContain("prefers-reduced-motion: reduce");
   });
 });
+
+describe("the faz-tudo on the board", () => {
+  it("sits pinned above the rooms, and no room is made around it", () => {
+    const render = embeddedFunctionSource("renderAgents");
+    expect(render).toContain('const pinned = matching.filter((a) => a.everywhere);');
+    expect(render).toContain('el("div", "rail-pinned")');
+    expect(embeddedFunctionSource("allGroups")).toContain(".filter((a) => !a.everywhere)");
+  });
+
+  it("is offered once, made on first use, then opened", () => {
+    expect(embeddedFunctionSource("renderAgents")).toContain("buildAssistantSetup()");
+    const open = embeddedFunctionSource("openAssistant");
+    expect(open).toContain('fetch("/api/assistant", { method: "POST" })');
+    expect(open).toContain("openScreen(body.agent.name)");
+  });
+
+  it("has its own 'new session' button — two clicks, a fresh launch", () => {
+    expect(html).toContain('id="screen-fresh"');
+    expect(embeddedFunctionSource("renderScreenStatus")).toContain("fresh.hidden = !(open && open.everywhere);");
+    expect(script).toMatch(/\$\("#screen-fresh"\)\.addEventListener[\s\S]{0,1400}reopenAgent\(agent, el\("button"\), true\)/);
+  });
+
+  it("is in the command palette", () => {
+    expect(script).toContain('name: "Faz-tudo", desc: "your assistant — reaches every agent"');
+  });
+});

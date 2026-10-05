@@ -62,6 +62,15 @@ export function parentGroup(group: string): string | null {
  * one client's agents never reach another client's (owner, 30/09: "cliente ↔ AI
  * Panorama, cliente ≠ cliente").
  */
+/**
+ * Whether two agents may talk: the group rule (groupsTouch), lifted for the
+ * operator's assistant — it reaches everyone and everyone can answer it.
+ */
+export function agentsTouch(a: Agent, b: Agent): boolean {
+  if (a.everywhere || b.everywhere) return true;
+  return groupsTouch(resolveGroup(a.group), resolveGroup(b.group));
+}
+
 export function groupsTouch(a: string, b: string): boolean {
   return a === b || parentGroup(a) === b || parentGroup(b) === a;
 }
@@ -556,8 +565,7 @@ export class Store {
   listReachable(name: string): Agent[] {
     const self = this.getAgent(name);
     if (!self) return [];
-    const mine = resolveGroup(self.group);
-    return this.listAgents().filter((a) => groupsTouch(mine, resolveGroup(a.group)));
+    return this.listAgents().filter((a) => agentsTouch(self, a));
   }
 
   /**
@@ -583,7 +591,7 @@ export class Store {
     const sender = this.getAgent(from);
     const recipient = this.getAgent(to);
     if (!sender || !recipient) return false;
-    return groupsTouch(resolveGroup(sender.group), resolveGroup(recipient.group));
+    return agentsTouch(sender, recipient);
   }
 
   /**
@@ -988,6 +996,7 @@ function isAgent(value: unknown): value is Agent {
     // displayName is optional: what the UI shows; `name` stays the protocol id.
     (v.displayName === undefined || typeof v.displayName === "string") &&
     (v.parent === undefined || typeof v.parent === "string") &&
-    (v.sessionId === undefined || typeof v.sessionId === "string")
+    (v.sessionId === undefined || typeof v.sessionId === "string") &&
+    (v.everywhere === undefined || typeof v.everywhere === "boolean")
   );
 }

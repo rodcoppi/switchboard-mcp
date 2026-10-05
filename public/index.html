@@ -4188,6 +4188,32 @@
     @media (max-width: 640px) {
       .recent-dock { display: none; }
     }
+  
+    /* --- The assistant (faz-tudo): pinned above the rooms ---------------- */
+    .rail-pinned { margin-bottom: 12px; }
+    .rail-pinned .agent-card {
+      border-color: color-mix(in srgb, var(--accent) 22%, var(--border));
+      background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 5%, var(--bg-elev)), var(--bg-elev));
+    }
+    .assistant-setup {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      width: 100%;
+      margin-bottom: 12px;
+      padding: 11px 14px;
+      border: 1px dashed var(--border-strong);
+      border-radius: var(--radius);
+      background: transparent;
+      color: var(--text-dim);
+      font-family: var(--sans);
+      font-size: var(--fs-sm);
+      cursor: pointer;
+      text-align: left;
+    }
+    .assistant-setup:hover { color: var(--text); border-color: var(--text-faint); background: var(--bg-hover); }
+    .assistant-setup-mark { font-size: 15px; color: var(--accent); }
+    .screen-fresh.confirming { color: var(--warn); border-color: var(--warn); }
   </style>
 </head>
 <body>
@@ -4323,6 +4349,8 @@
             <div class="screen-modes engine-tabs" id="engine-tabs"></div>
           </div>
           <span class="screen-hint" id="screen-hint"></span>
+          <button class="btn screen-fresh" id="screen-fresh" type="button" hidden
+            title="Wipe this conversation and start the assistant clean">new session</button>
           <button class="btn" id="screen-window" type="button"
             title="Open this agent in a real Windows terminal window instead">open window</button>
           <button class="dirpicker-close" id="screen-close" type="button"
@@ -6137,6 +6165,10 @@
           run: () => { closePalette(); $("#launcher-open").click(); },
         },
         {
+          kind: "action", mark: "✦", name: "Faz-tudo", desc: "your assistant — reaches every agent",
+          run: () => { closePalette(); openAssistant(null); },
+        },
+        {
           kind: "action", mark: "+", name: "New group", desc: "create a room",
           run: () => { closePalette(); startNewGroupInline(null); },
         },
@@ -6291,7 +6323,9 @@
 
     /** Every group that has an agent, in the operator's order (else sorted). */
     function allGroups() {
-      const present = new Set([...state.agents.values()].map(groupOf));
+      // The assistant is in no room (it reaches all of them): its group would
+      // otherwise conjure an empty "Desagrupados" box around nobody.
+      const present = new Set([...state.agents.values()].filter((a) => !a.everywhere).map(groupOf));
       for (const g of state.groups) present.add(g); // created, still empty
       // A subgroup implies its parent, even with nobody in the parent itself.
       for (const g of [...present]) {
@@ -6373,7 +6407,22 @@
       // nor a mid-word rebuild can take it away.
       const query = state.railSearch.trim();
       const roster = sortedAgents();
-      const agents = query ? roster.filter((a) => agentMatchesQuery(a, query)) : roster;
+      const matching = query ? roster.filter((a) => agentMatchesQuery(a, query)) : roster;
+      // The assistant (faz-tudo) is in no room — it reaches all of them — so
+      // it sits pinned above the groups instead of inside one.
+      const pinned = matching.filter((a) => a.everywhere);
+      const agents = matching.filter((a) => !a.everywhere);
+      if (pinned.length) {
+        const slot = el("div", "rail-pinned");
+        for (const a of pinned) slot.appendChild(buildAgentCard(a));
+        container.appendChild(slot);
+      } else if (!query && roster.length && !roster.some((a) => a.everywhere)) {
+        container.appendChild(buildAssistantSetup());
+      }
+      if (agents.length === 0 && pinned.length) {
+        renderHeader();
+        return;
+      }
       if (agents.length === 0) {
         container.appendChild(
           el(
@@ -6724,6 +6773,40 @@
       menu.appendChild(page);
       floatMenu(menu, head, null, point);
       menu.focus({ preventScroll: true });
+    }
+
+    /** The one-time offer to make the faz-tudo, where it will then live. */
+    function buildAssistantSetup() {
+      const btn = el("button", "assistant-setup");
+      btn.type = "button";
+      btn.title = "An agent for anything, at any hour — it reaches every agent you have";
+      btn.append(el("span", "assistant-setup-mark", "✦"), el("span", null, "Set up your faz-tudo"));
+      btn.addEventListener("click", () => openAssistant(btn));
+      return btn;
+    }
+
+    /**
+     * Opens the faz-tudo: made on first use (its own folder, a brief, the one
+     * agent that reaches everyone), woken when asleep, then shown.
+     */
+    async function openAssistant(btn) {
+      if (btn) btn.disabled = true;
+      try {
+        const res = await fetch("/api/assistant", { method: "POST" });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok || !body.ok) {
+          toast(`Could not open the faz-tudo: ${body.error || `HTTP ${res.status}`}`, "warn", 7000);
+          return;
+        }
+        mergeAgent(body.agent);
+        renderAgents();
+        if (body.created) toast("Your faz-tudo is up — ask it anything; it can reach every agent.", "ok");
+        openScreen(body.agent.name);
+      } catch (err) {
+        toast(`Could not open the faz-tudo: ${err && err.message ? err.message : err}`, "warn");
+      } finally {
+        if (btn) btn.disabled = false;
+      }
     }
 
     function renderGroupTabs() {
@@ -9590,6 +9673,14 @@
 
     function renderScreenStatus() {
       renderScreenIdentity();
+      // "new session" is the assistant's own control: one conversation after
+      // another, each started clean (owner: "um botão que apaga a sessão dele
+      // e abre uma nova limpa").
+      const fresh = $("#screen-fresh");
+      if (fresh) {
+        const open = screenState.name ? state.agents.get(screenState.name) : null;
+        fresh.hidden = !(open && open.everywhere);
+      }
       const box = $("#chat-statusbar");
       if (!box) return;
       const agent = liveScreenAgent();
@@ -12601,6 +12692,30 @@
 
       // The agent's screen.
       $("#screen-close").addEventListener("click", closeScreen);
+      // Two clicks, like every other wipe on the board: the first asks.
+      $("#screen-fresh").addEventListener("click", (ev) => {
+        const btn = ev.currentTarget;
+        const agent = screenState.name ? state.agents.get(screenState.name) : null;
+        if (!agent || !agent.everywhere) return;
+        if (btn.dataset.confirming !== "1") {
+          btn.dataset.confirming = "1";
+          btn.textContent = "wipe it? click again";
+          btn.classList.add("confirming");
+          setTimeout(() => {
+            btn.dataset.confirming = "";
+            btn.textContent = "new session";
+            btn.classList.remove("confirming");
+          }, 4000);
+          return;
+        }
+        btn.dataset.confirming = "";
+        btn.textContent = "new session";
+        btn.classList.remove("confirming");
+        // A fresh launch: the session is replaced and the launcher gives it a
+        // new conversation id, so the chat empties at once (the hub's stream
+        // follows the agent to its new conversation).
+        reopenAgent(agent, el("button"), true);
+      });
       $("#screen-window").addEventListener("click", (ev) => {
         if (screenState.name) openAgentTerminal(screenState.name, ev.currentTarget);
       });

@@ -163,7 +163,7 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
     const terminalOpener = createWindowsTerminalOpener({
       exec: (file, args, opts) => execFileAsync(file, args, opts),
     });
-    launcher = createLauncher({
+    const base = createLauncher({
       store,
       tmux,
       config,
@@ -172,6 +172,20 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
       terminalOpener,
       ...options.launcher,
     });
+    // A launch that succeeded is checked on the spot instead of at the next
+    // 10s poll: until then the board showed a freshly opened agent as "not
+    // running", with a wake button inviting a second launch on top of the
+    // first. The dispatcher still makes the call (and sees the transition
+    // itself, so whatever was queued for the agent goes out as usual).
+    const poller = dispatcher;
+    launcher = {
+      ...base,
+      async launchAgent(input) {
+        const result = await base.launchAgent(input);
+        void poller?.pollOnce().catch((err) => log.error("[hub] post-launch status poll failed:", err));
+        return result;
+      },
+    };
     // Dashboard "stop this agent": the same killSession the CLI's stop uses.
     stopper = (session) => tmux.killSession(session);
     // The preview's "open" button: same WSL interop as the terminal opener, and

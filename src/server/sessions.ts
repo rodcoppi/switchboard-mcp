@@ -92,7 +92,9 @@ export function sessionHistory(baseDir: string, name: string): string[] {
 
 /** Does this agent keep its own conversation (a child, or one pinned to an id)? */
 export function isTracked(agent: Agent): boolean {
-  return Boolean(agent.parent || agent.sessionId);
+  // The assistant too: its "start clean" must show an EMPTY chat at once, not
+  // the folder's newest (the conversation just wiped) until it speaks again.
+  return Boolean(agent.parent || agent.sessionId || agent.everywhere);
 }
 
 /** The conversation a tracked agent is in now: what its hook said last, else the id it was launched with. */

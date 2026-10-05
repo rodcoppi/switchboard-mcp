@@ -29,7 +29,7 @@ import {
   type SseEvent,
 } from "../shared/types.js";
 import type { Logger } from "./log.js";
-import { AGENT_NAME_RE, GROUP_NAME_RE, groupsTouch, resolveGroup, type Store } from "./store.js";
+import { AGENT_NAME_RE, GROUP_NAME_RE, agentsTouch, groupsTouch, resolveGroup, type Store } from "./store.js";
 import { discoverSkills } from "./skills.js";
 // Value imports for the instanceof mapping and the /api/fs/dirs path
 // translation below. No runtime cycle: launcher.ts imports this module with
@@ -120,9 +120,48 @@ export function reachableFrom(store: Store, from: string): string[] {
   const sender = store.getAgent(from);
   if (!sender) return [];
   return all
-    .filter((a) => groupsTouch(resolveGroup(a.group), resolveGroup(sender.group)))
+    .filter((a) => agentsTouch(sender, a))
     .map((a) => a.name)
     .sort();
+}
+
+/** What the assistant's card says it is. */
+export const ASSISTANT_ROLE = "your assistant for anything — reaches every agent";
+
+/**
+ * The assistant's brief, written once into its folder as CLAUDE.md (the
+ * operator may edit it freely afterwards; it is never overwritten).
+ */
+export const ASSISTANT_BRIEF = `# Faz-tudo — the operator's assistant
+
+You are the operator's general-purpose assistant, there at any hour for any
+subject: questions, writing, research, planning, quick sums — whatever comes up.
+
+You are also the ONE agent on this Switchboard that reaches every other agent,
+across every group.
+
+- \`list_agents\` shows all of them: name, role and group.
+- When the operator asks about a project, ask the agent that owns it with
+  \`send_message\`, then wait for its answer with \`check_messages\`. Report
+  what it said; do not guess on its behalf.
+- Do not change another agent's project yourself: ask the agent that owns it.
+- Groups wall clients off from each other on purpose. Carry information from
+  one group to another only when the operator asks you to.
+
+Answer in the language the operator writes in. Be direct and brief.
+`;
+
+/** Where a new assistant lives: beside the operator's projects when there is a ~/projects. */
+export function assistantDir(home: string = os.homedir()): string {
+  const projects = path.join(home, "projects");
+  return fs.existsSync(projects) ? path.join(projects, "faz-tudo") : path.join(home, "faz-tudo");
+}
+
+/** "faz-tudo", or the first free "faz-tudo-<n>" if that name is someone else's. */
+export function freeAssistantName(store: Store): string {
+  if (!store.getAgent("faz-tudo")) return "faz-tudo";
+  for (let n = 2; n < 100; n++) if (!store.getAgent(`faz-tudo-${n}`)) return `faz-tudo-${n}`;
+  return `faz-tudo-${Date.now().toString(36).slice(-5)}`;
 }
 
 /**
@@ -844,6 +883,59 @@ export function createApiRouter(options: ApiOptions): express.Router {
       // Invalid name or MAX_AGENTS cap — store errors are already in English.
       res.status(400).json({ ok: false, error: (err as Error).message });
     }
+  });
+
+  // POST /api/assistant — the operator's FAZ-TUDO (owner, 05/10: "um agente
+  // especial ... que eu falo sobre qualquer assunto a qualquer hora, ele tem
+  // acesso a todos os agentes"). The first call makes it: its own folder with
+  // a brief (CLAUDE.md), registered as the one agent that reaches every
+  // other across the group walls, then launched. Later calls just bring it
+  // back up (resuming its conversation) or report it running. Starting it
+  // clean is the dashboard's "new session" — a fresh launch, which the
+  // launcher gives a brand-new conversation id.
+  router.post("/api/assistant", async (_req, res) => {
+    if (!launcher) {
+      res.status(501).json({ ok: false, error: "Launching is not available in this hub (no tmux layer)." });
+      return;
+    }
+    const existing = store.listAgents().find((a) => a.everywhere);
+    if (existing && existing.status === "online") {
+      res.json({ ok: true, agent: toPublicAgent(existing), created: false });
+      return;
+    }
+    const name = existing ? existing.name : freeAssistantName(store);
+    const dir = existing ? existing.cwd : assistantDir();
+    if (!existing) {
+      try {
+        fs.mkdirSync(dir, { recursive: true });
+        const brief = path.join(dir, "CLAUDE.md");
+        if (!fs.existsSync(brief)) fs.writeFileSync(brief, ASSISTANT_BRIEF);
+        // Registered and marked BEFORE the launch, so its very first start is
+        // already the assistant's: walls lifted, its own conversation id.
+        store.registerAgent({
+          name,
+          tmuxSession: config.tmuxSessionPrefix + name,
+          cwd: dir,
+          agentType: "claude",
+          role: ASSISTANT_ROLE,
+        });
+        store.updateAgent(name, { everywhere: true, displayName: "Faz-tudo" });
+      } catch (err) {
+        res.status(500).json({ ok: false, error: `Could not set up the assistant: ${(err as Error).message}` });
+        return;
+      }
+    }
+    try {
+      await launcher.launchAgent({ dir, name, agentType: "claude", continueConversation: true, openTerminal: false });
+    } catch (err) {
+      const status = err instanceof LaunchError ? err.status : 500;
+      res.status(status).json({ ok: false, error: (err as Error).message });
+      return;
+    }
+    const agent = store.getAgent(name)!;
+    bus.emit({ type: "agent_updated", payload: toPublicAgent(agent) });
+    log.info(`[api] assistant ${name} ${existing ? "woken" : "created"} in ${dir}.`);
+    res.status(existing ? 200 : 201).json({ ok: true, agent: toPublicAgent(agent), created: !existing });
   });
 
   // POST /api/agents/:name/children — body {name?, displayName?}: opens a
@@ -2111,7 +2203,7 @@ export function createApiRouter(options: ApiOptions): express.Router {
     // date tree of rollouts located by scanning for session_meta.cwd.
     const isCodex = resolveAgentType(agent.agentType) === "codex";
     const parser = isCodex ? parseCodexRollout : parseConversation;
-    let file: string;
+    let file: string | null;
     if (isCodex) {
       const rollout = findCodexRolloutForCwd(agent.cwd);
       if (!rollout) {
@@ -2125,20 +2217,13 @@ export function createApiRouter(options: ApiOptions): express.Router {
       }
       file = rollout;
     } else {
-      const dir = projectDirForCwd(agent.cwd);
       // The active session = this agent's conversation: the newest in the
       // folder that no child claims, or a child's own (see sessions.ts).
-      const mine = transcriptFor(store.baseDir, agent, store.listAgents());
-      if (!mine) {
-        res.status(404).json({
-          ok: false,
-          error:
-            `No conversation log for "${agent.name}" yet (looked in ${dir}). ` +
-            `It appears once the agent has talked at least once.`,
-        });
-        return;
-      }
-      file = mine;
+      // None yet (a brand-new agent, a child, a session just wiped clean) is
+      // NOT an error: the stream opens empty and picks the conversation up
+      // the moment it is written. A 404 here made the browser's EventSource
+      // give up for good, so the chat sat on "reconnecting…" forever.
+      file = transcriptFor(store.baseDir, agent, store.listAgents());
     }
 
     res.writeHead(200, {
@@ -2159,6 +2244,10 @@ export function createApiRouter(options: ApiOptions): express.Router {
     // two watch events cannot interleave reads of the same bytes.
     const pump = (initial: boolean): void => {
       if (sending) return;
+      if (file === null) {
+        if (initial) res.write(`data: ${JSON.stringify({ items: [], initial: true, context: null })}\n\n`);
+        return;
+      }
       sending = true;
       try {
         const size = fs.statSync(file).size;
@@ -2207,12 +2296,40 @@ export function createApiRouter(options: ApiOptions): express.Router {
     // backs it up — the pump is idempotent (offset-based), so double-firing is
     // harmless.
     let watcher: fs.FSWatcher | undefined;
-    try {
-      watcher = fs.watch(file, () => pump(false));
-    } catch {
-      /* watch unsupported here; the poll below still delivers */
-    }
-    const poll = setInterval(() => pump(false), 1500);
+    const watch = (): void => {
+      watcher?.close();
+      watcher = undefined;
+      if (file === null) return;
+      try {
+        watcher = fs.watch(file, () => pump(false));
+      } catch {
+        /* watch unsupported here; the poll below still delivers */
+      }
+    };
+    watch();
+    // The agent's conversation can CHANGE under an open chat: a session wiped
+    // clean, a /clear, a first message after none. Each poll re-asks which
+    // conversation is the agent's and, when it moved, starts over on the new
+    // one — `initial: true` makes the page replace what it shows.
+    const follow = (): void => {
+      if (isCodex) return;
+      const live = store.getAgent(agent.name);
+      if (!live) return;
+      const now = transcriptFor(store.baseDir, live, store.listAgents());
+      if (now === file) return;
+      // now === null: its conversation was wiped and the new one is not
+      // written yet — the chat empties right away instead of showing the old.
+      file = now;
+      offset = 0;
+      carry = "";
+      lastContext = null;
+      watch();
+      pump(true);
+    };
+    const poll = setInterval(() => {
+      follow();
+      pump(false);
+    }, 1500);
     poll.unref?.();
 
     req.on("close", () => {

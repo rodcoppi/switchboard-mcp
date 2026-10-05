@@ -53,6 +53,14 @@ export interface Agent {
    * is the fallback before the first hook fires.
    */
   sessionId?: string;
+  /**
+   * The operator's assistant (the "faz-tudo", owner 05/10): the ONE agent
+   * that reaches every other agent across every group wall, and that every
+   * agent can answer. Set only by the operator over REST (POST
+   * /api/assistant) — never via MCP: an agent must not be able to lift its
+   * own wall. Its broadcast still stays in its own group.
+   */
+  everywhere?: boolean;
   role: string; // free-form description, e.g. "backend da API de pagamentos"
   tmuxSession: string; // e.g. "sb-alpha" (prefix + name)
   cwd: string; // directory where the agent CLI was opened
