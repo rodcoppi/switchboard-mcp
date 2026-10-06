@@ -2143,3 +2143,11 @@ describe("the faz-tudo on the board", () => {
     expect(script).toContain('name: "Faz-tudo", desc: "your assistant — reaches every agent"');
   });
 });
+
+describe("relative paths in the chat open where the file really is", () => {
+  it("asks the hub where a relative path is before opening it", () => {
+    expect(embeddedFunctionSource("locateAgentPath")).toContain("/files/locate?path=");
+    expect(embeddedFunctionSource("wireLocalPathLink")).toContain("const real = locate ? (await locate()) || filePath : filePath;");
+    expect(script).toContain("isRelativePath(p) && who ? () => locateAgentPath(who, p) : null");
+  });
+});

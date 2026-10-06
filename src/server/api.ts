@@ -639,6 +639,89 @@ async function findDropOrigin(
   return matches.length === 1 ? matches[0].full : null;
 }
 
+/**
+ * Where a RELATIVE path an agent wrote really is (owner, 06/10: "nunca
+ * funciona essa merda"). Agents write paths relative to wherever they were
+ * working — the video editor said `53/_trabalho/S53-SEM-CAPA.mp4`, relative to
+ * a Shorts folder on OneDrive it had named earlier — and the board joined
+ * them to the agent's own folder, which gave "File not found" every time the
+ * work happened anywhere else.
+ *
+ * In order: the agent's folder (what it usually means); then the agent's own
+ * conversation, where it almost always wrote the full path before — the
+ * latest absolute path there that ENDS in this relative one and exists; then
+ * the folders the board already knows. Nothing is returned that does not
+ * exist, and the caller still scope-checks whatever it opens.
+ */
+export function locateRelativePath(
+  rel: string,
+  cwd: string,
+  transcript: string | null,
+  roots: readonly string[],
+): string | null {
+  const clean = rel.trim().replace(/^\.\/+/, "");
+  if (!clean || clean.startsWith("/") || clean.startsWith("~") || clean.split("/").includes("..")) return null;
+  const isFile = (p: string): boolean => {
+    try {
+      return fs.statSync(p).isFile();
+    } catch {
+      return false;
+    }
+  };
+  if (cwd) {
+    const direct = path.join(cwd, clean);
+    if (isFile(direct)) return direct;
+  }
+  if (transcript) {
+    let text = "";
+    try {
+      // The tail is where the recent work is (and transcripts reach hundreds of MB).
+      const TAIL = 24 * 1024 * 1024;
+      const size = fs.statSync(transcript).size;
+      const fd = fs.openSync(transcript, "r");
+      try {
+        const len = Math.min(size, TAIL);
+        const buf = Buffer.alloc(len);
+        fs.readSync(fd, buf, 0, len, size - len);
+        text = buf.toString("utf8");
+      } finally {
+        fs.closeSync(fd);
+      }
+    } catch {
+      text = "";
+    }
+    const startRe = /(?:\/(?:mnt|home|tmp|root|opt|srv|var|Users)\/|~\/)/g;
+    // What to look for: the whole relative path, then its folders, longest
+    // first — the agent often wrote the folder's full path while working on
+    // OTHER files in it ("…/00 Shorts/53/_trabalho/S53-PREVIA-leve.mp4") and
+    // only ever named this one relatively.
+    const parts = clean.split("/");
+    const needles = [clean];
+    for (let k = parts.length - 1; k >= 1; k--) needles.push(parts.slice(0, k).join("/") + "/");
+    for (const needle of needles) {
+      let at = text.lastIndexOf(needle);
+      for (let tries = 0; at !== -1 && tries < 400; tries++) {
+        const before = text.slice(Math.max(0, at - 400), at);
+        // Every place an absolute path could START in front of the match, the
+        // nearest first; the piece up to the match must be one clean path.
+        const starts = [...before.matchAll(startRe)].map((m) => m.index ?? 0).reverse();
+        for (const s of starts) {
+          const head = before.slice(s);
+          if (!head.endsWith("/") || /["`'\n\r\t<>|]|\\n/.test(head)) continue;
+          const candidate = (head + clean).replace(/^~(?=\/)/, os.homedir());
+          if (isFile(candidate)) return candidate;
+        }
+        at = at > 0 ? text.lastIndexOf(needle, at - 1) : -1;
+      }
+    }
+  }
+  for (const root of roots) {
+    const candidate = path.join(root, clean);
+    if (isFile(candidate)) return candidate;
+  }
+  return null;
+}
+
 function findMentionedFile(
   filename: string,
   agentCwd: string,
@@ -2061,6 +2144,39 @@ export function createApiRouter(options: ApiOptions): express.Router {
         fallback: true,
       });
     }
+  });
+
+  // GET /api/agents/:name/files/locate?path=<relative path> — where a relative
+  // path the agent wrote really is (see locateRelativePath). The dashboard
+  // asks when such a link is clicked, then previews the answer as usual
+  // (scope-checked there like any other path).
+  router.get("/api/agents/:name/files/locate", (req, res) => {
+    const agent = store.getAgent(String(req.params.name));
+    if (!agent) {
+      res.status(404).json({ ok: false, error: `Unknown agent: "${req.params.name}".` });
+      return;
+    }
+    const rel = typeof req.query.path === "string" ? req.query.path : "";
+    if (!rel.trim() || rel.length > 1024) {
+      res.status(400).json({ ok: false, error: "Expected ?path=<a relative path>." });
+      return;
+    }
+    const transcript = !agent.cwd
+      ? null
+      : resolveAgentType(agent.agentType) === "codex"
+        ? findCodexRolloutForCwd(agent.cwd)
+        : transcriptFor(store.baseDir, agent, store.listAgents());
+    const found = locateRelativePath(rel, agent.cwd || "", transcript, fileScopeRoots());
+    if (!found) {
+      res.status(404).json({
+        ok: false,
+        error:
+          `Could not find ${rel}: it is not under ${agent.cwd || "the agent's folder"}, and ` +
+          `${agent.name} never wrote its full path. Ask it for the full path.`,
+      });
+      return;
+    }
+    res.json({ ok: true, path: found });
   });
 
   // GET /api/agents/:name/files/resolve?file=<basename>&hint=downloads — turns

@@ -10907,12 +10907,16 @@
       return filePath ? { path: filePath, line: hashLine } : null;
     }
 
-    function wireLocalPathLink(link, filePath, line) {
+    function wireLocalPathLink(link, filePath, line, locate) {
       link.dataset.fullPath = filePath; // used by attachImageThumbs
-      const open = (ev) => {
+      const open = async (ev) => {
         ev.preventDefault();
         ev.stopPropagation();
-        openInlineFile(filePath, line);
+        // A relative path is found where it really is (locate), falling back
+        // to the agent's folder — see locateAgentPath.
+        const real = locate ? (await locate()) || filePath : filePath;
+        if (real !== filePath) link.dataset.fullPath = real;
+        openInlineFile(real, line);
       };
       link.classList.add("path-link");
       link.removeAttribute("href");
@@ -10956,7 +10960,8 @@
             const full = resolveAgentPath(p, screenState.name);
             const link = el("span", "path-link", p); // shows what the agent wrote
             link.dataset.fullPath = full; // the thumbnail needs the resolved one
-            wireLocalPathLink(link, full, null);
+            const who = screenState.name;
+            wireLocalPathLink(link, full, null, isRelativePath(p) && who ? () => locateAgentPath(who, p) : null);
             container.appendChild(link);
             last = match.index + p.length;
           }
@@ -11682,6 +11687,34 @@
      * just 404s. Absolute and "~" paths pass through untouched; with no agent
      * context the raw text goes to the server, which judges it.
      */
+    function isRelativePath(p) {
+      return !p.startsWith("/") && !p.startsWith("~");
+    }
+
+    /**
+     * Where a relative path an agent wrote REALLY is — its folder first, else
+     * the full path it wrote earlier in its own conversation (agents name a
+     * file relative to wherever they were working, often far from their own
+     * folder; owner, 06/10: "nunca funciona essa merda"). Remembered per agent
+     * and path; null when the hub could not find it.
+     */
+    const locatedPaths = new Map();
+    async function locateAgentPath(agentName, rel) {
+      const key = `${agentName}\u0001${rel}`;
+      if (locatedPaths.has(key)) return locatedPaths.get(key);
+      try {
+        const res = await fetch(
+          `/api/agents/${encodeURIComponent(agentName)}/files/locate?path=${encodeURIComponent(rel)}`,
+        );
+        const data = await res.json().catch(() => ({}));
+        const found = res.ok && data.ok ? data.path : null;
+        if (found) locatedPaths.set(key, found); // a miss is asked again: the file may appear
+        return found;
+      } catch {
+        return null;
+      }
+    }
+
     function resolveAgentPath(p, agentName) {
       if (p.startsWith("/") || p.startsWith("~")) return p;
       const a = agentName ? state.agents.get(agentName) : null;
@@ -11713,9 +11746,10 @@
             const full = resolveAgentPath(p, fromAgent);
             const link = el("span", "path-link", p);
             link.title = `Preview ${full}`;
-            link.addEventListener("click", (ev) => {
+            link.addEventListener("click", async (ev) => {
               ev.stopPropagation(); // the card click toggles the feed filter
-              openPreview(full);
+              const real = isRelativePath(p) && fromAgent ? (await locateAgentPath(fromAgent, p)) || full : full;
+              openPreview(real);
             });
             el2.appendChild(link);
             last = match.index + p.length;
