@@ -1562,91 +1562,11 @@
     .groups-open { margin-left: auto; flex: none; }
     .launcher-open { margin-left: 6px; flex: none; }
 
-    /* --------------------------- the tab strip ---------------------------
-       Messages and every open agent, side by side. */
-    .tabs {
-      flex: 0 0 auto;
-      display: flex;
-      align-items: stretch;
-      gap: 2px;
-      padding: 0 12px;
-      background: var(--bg-elev);
-      border-bottom: 1px solid var(--border);
-    }
-    .tab-strip { display: flex; align-items: stretch; gap: 2px; min-width: 0; overflow-x: auto; }
-
-    .tab {
-      position: relative;
-      display: flex;
-      align-items: center;
-      gap: 7px;
-      flex: none;
-      max-width: 220px;
-      padding: 9px 12px;
-      background: transparent;
-      border: none;
-      /* The active tab is joined to the panel below it by an amber underline —
-         a tab is a thing you are INSIDE, not a button you pressed. */
-      border-bottom: 2px solid transparent;
-      color: var(--text-faint);
-      font-family: var(--mono);
-      font-size: var(--fs-sm);
-      cursor: pointer;
-      user-select: none;
-      white-space: nowrap;
-      transition: color 0.12s var(--ease), border-color 0.12s var(--ease);
-    }
-    .tab:hover { color: var(--text); }
-    .tab::after {
-      content: "";
-      position: absolute;
-      left: 12px;
-      right: 12px;
-      bottom: -2px;
-      height: 2px;
-      border-radius: 2px 2px 0 0;
-      background: var(--accent);
-      transform: scaleX(0);
-      transform-origin: center;
-      opacity: 0;
-      transition: transform 0.18s var(--ease), opacity 0.18s var(--ease);
-    }
-    .tab.active { color: var(--accent); border-bottom-color: transparent; }
-    .tab.active::after { transform: scaleX(1); opacity: 1; }
-    .tab-mark { color: var(--accent); font-weight: 700; }
-    /* The hub tab (the agents' own chat) is not an agent — give it a standing
-       pill look so it reads as the fixed room, distinct from the agent tabs. */
-    .tab-hub {
-      margin: 0 6px 0 0;
-      padding: 9px 12px;
-      border: none;
-      border-bottom: 2px solid transparent;
-      border-radius: 0;
-      background: transparent;
-      font-weight: 600;
-      letter-spacing: 0.2px;
-    }
-    .tab-hub.active {
-      background: transparent;
-      border-bottom-color: transparent;
-    }
-    .tab-hub:hover { color: var(--text); background: var(--bg-hover); }
-    .tab .name { overflow: hidden; text-overflow: ellipsis; }
-    .tab .dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
-    .tab .dot.online { background: var(--online); }
-    .tab .dot.offline { background: var(--offline); }
-    .tab-close {
-      margin-left: 2px;
-      padding: 0 3px;
-      background: none;
-      border: none;
-      color: var(--text-faint);
-      font-size: 12px;
-      line-height: 1;
-      cursor: pointer;
-      border-radius: 3px;
-    }
-    .tab-close:hover { color: var(--danger); background: var(--bg-hover); }
+    /* The traffic button in the header (the tab bar is gone). */
+    .traffic-btn { display: inline-flex; align-items: center; gap: 6px; margin-left: 12px; }
+    .traffic-btn .traffic-mark { font-family: var(--mono); font-weight: 700; color: var(--text-faint); }
+    .traffic-btn.active { color: var(--text); border-color: var(--border-strong); background: var(--bg-hover); }
+    .traffic-btn.active .traffic-mark { color: var(--text); }
     .tab-unread {
       min-width: 18px;
       padding: 1px 5px;
@@ -4226,6 +4146,15 @@
         <span class="dot"></span><span id="conn-label">connecting</span>
       </span>
     </div>
+    <!-- The agent traffic, from anywhere: it used to be the first tab of a tab
+         bar the owner never used ("tira todo esse cabeçalho ... e essas abas
+         pode tirar tudo", 08/10). Lit while it is what you are looking at; the
+         count is everything still unread across the board. -->
+    <button class="btn traffic-btn active" id="traffic-btn" type="button"
+      title="The traffic between your agents — what they send each other (Alt+0)">
+      <span class="traffic-mark" aria-hidden="true">⇄</span><span>traffic</span>
+      <span class="tab-unread" id="traffic-unread" hidden></span>
+    </button>
     <div class="header-spacer"></div>
     <!-- The at-a-glance metrics live on the RIGHT, off the wordmark. -->
     <div class="hub-status hub-metrics">
@@ -4291,21 +4220,6 @@
     </aside>
 
     <main class="main">
-      <!-- The tab strip. Messages is the first tab and always there; every
-           agent you open becomes one beside it. The transcript used to be
-           "whatever the panel showed when no screen was open", which made the
-           one view that is not an agent behave unlike everything next to it. -->
-      <div class="tabs" id="tabs" role="tablist" aria-label="Open views">
-        <button class="tab tab-hub active" id="tab-messages" type="button"
-          role="tab" aria-selected="true"
-          title="The chat between your agents — what they send each other">
-          <span class="tab-mark">⇄</span>
-          <span>Agent traffic</span>
-          <span class="tab-unread" id="tab-messages-unread" hidden></span>
-        </button>
-        <div class="tab-strip" id="tab-strip"></div>
-      </div>
-
       <div class="feed-head">
         <span class="sub">what your agents said to each other — newest at the bottom</span>
         <input class="feed-search" id="feed-search" type="search"
@@ -5365,12 +5279,12 @@
       // The MCP registration line is a first-run instruction, not furniture.
       $("#mcp-add").hidden = agents.length > 0;
 
-      // The Messages tab is active whenever no agent's screen is. And it counts
-      // unread: with the panel showing a terminal, the transcript is off screen,
+      // The traffic button is lit whenever no agent's screen is. And it counts
+      // unread: with the panel showing an agent, the transcript is off screen,
       // and a message arriving there would otherwise be invisible.
-      $("#tab-messages").classList.toggle("active", screenState.name === null);
+      $("#traffic-btn").classList.toggle("active", screenState.name === null);
       const unread = agents.reduce((n, a) => n + (a.unreadCount || 0), 0);
-      const badge = $("#tab-messages-unread");
+      const badge = $("#traffic-unread");
       badge.hidden = unread === 0;
       badge.textContent = String(unread);
     }
@@ -8470,63 +8384,11 @@
     // have collapsed right now is a view, not something the hub should store.
     const collapsedGroups = new Set();
 
-    // Agents with a tab open, in the order you opened them. Only the ACTIVE one
-    // streams: a tab you are not looking at does not need a live terminal, and
-    // re-attaching costs a 2ms capture-pane — the pane has no scrollback to lose
-    // (Claude Code redraws its own), so the switch is invisible.
-    const openTabs = [];
-
+    /** Lights the traffic button when the transcript is what is on screen. */
     function renderTabs() {
-      const strip = $("#tab-strip");
-      strip.textContent = "";
-      for (const name of openTabs) {
-        const agent = state.agents.get(name);
-        const tab = el("div", `tab${screenState.name === name ? " active" : ""}`);
-        tab.tabIndex = 0;
-        tab.setAttribute("role", "tab");
-        tab.setAttribute("aria-selected", String(screenState.name === name));
-        tab.title = agent ? `${name} — ${agent.role || "no role"}` : name;
-        tab.append(
-          el("span", `dot ${agent && agent.status === "online" ? "online" : "offline"}`),
-          el("span", "name", displayOf(name)),
-        );
-        if (agent && agent.unreadCount > 0) {
-          tab.appendChild(el("span", "tab-unread", String(agent.unreadCount)));
-        }
-        tab.addEventListener("click", () => openScreen(name));
-        tab.addEventListener("keydown", (ev) => {
-          if (ev.target !== tab || (ev.key !== "Enter" && ev.key !== " ")) return;
-          ev.preventDefault();
-          openScreen(name);
-        });
-
-        const close = el("button", "tab-close", "✕");
-        close.type = "button";
-        close.title = `Close the ${name} tab`;
-        close.setAttribute("aria-label", `Close the ${name} tab`);
-        close.addEventListener("click", (ev) => {
-          ev.stopPropagation();
-          closeTab(name);
-        });
-        tab.appendChild(close);
-        strip.appendChild(tab);
-      }
-      $("#tab-messages").classList.toggle("active", screenState.name === null);
-      $("#tab-messages").setAttribute("aria-selected", String(screenState.name === null));
-    }
-
-    function closeTab(name) {
-      const i = openTabs.indexOf(name);
-      if (i !== -1) openTabs.splice(i, 1);
-      // Closing the tab you are looking at lands you on its neighbour, the way
-      // a browser does — not on a blank panel.
-      if (screenState.name === name) {
-        const next = openTabs[i] || openTabs[i - 1];
-        if (next) openScreen(next);
-        else closeScreen();
-      } else {
-        renderTabs();
-      }
+      const btn = $("#traffic-btn");
+      btn.classList.toggle("active", screenState.name === null);
+      btn.setAttribute("aria-pressed", String(screenState.name === null));
     }
 
     function openScreen(name) {
@@ -8541,7 +8403,6 @@
       document.documentElement.classList.remove("rail-peek");
       if (draftHooks.restore) draftHooks.restore(name);
       clearUnseen(name); // opening its screen IS reading it
-      if (!openTabs.includes(name)) openTabs.push(name);
 
       // The whole Messages panel steps aside, header and filter bar included.
       // Leaving "MESSAGES" labelling an agent's terminal was a lie.
@@ -12699,7 +12560,9 @@
       bindGroupNameSanitizer($("#launch-group"));
 
       // Messages: a tab like any other, so selecting it is closing the screen.
-      $("#tab-messages").addEventListener("click", closeScreen);
+      $("#traffic-btn").addEventListener("click", () => {
+        if (screenState.name) closeScreen();
+      });
 
       // File preview lightbox.
       $("#preview-close").addEventListener("click", closePreview);

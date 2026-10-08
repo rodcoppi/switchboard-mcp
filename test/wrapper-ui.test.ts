@@ -2165,3 +2165,19 @@ describe("nothing on the board breathes forever", () => {
     expect(styles).not.toMatch(/animation: agent-work [^;]*infinite/);
   });
 });
+
+describe("no tab bar — the traffic lives in the header", () => {
+  // Owner, 08/10: "tira todo esse cabeçalho onde fica o agent traffic, coloca
+  // ele em outro lugar, e essas abas de conversa pode tirar tudo, nunca uso".
+  it("has no tab bar and no per-agent tabs", () => {
+    expect(html).not.toContain('id="tabs"');
+    expect(html).not.toContain('id="tab-strip"');
+    expect(script).not.toContain("openTabs");
+  });
+
+  it("puts a traffic button in the header, lit while the transcript is shown", () => {
+    expect(html).toContain('id="traffic-btn"');
+    expect(embeddedFunctionSource("renderTabs")).toContain('btn.classList.toggle("active", screenState.name === null)');
+    expect(script).toMatch(/\$\("#traffic-btn"\)\.addEventListener\("click", \(\) => \{\s*if \(screenState\.name\) closeScreen\(\);/);
+  });
+});
