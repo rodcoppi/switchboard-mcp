@@ -29,7 +29,7 @@ import {
   type SseEvent,
 } from "../shared/types.js";
 import type { Logger } from "./log.js";
-import { AGENT_NAME_RE, GROUP_NAME_RE, agentsTouch, groupsTouch, resolveGroup, type Store } from "./store.js";
+import { AGENT_NAME_RE, DEFAULT_GROUP, GROUP_NAME_RE, agentsTouch, groupsTouch, resolveGroup, type Store } from "./store.js";
 import { discoverSkills } from "./skills.js";
 // Value imports for the instanceof mapping and the /api/fs/dirs path
 // translation below. No runtime cycle: launcher.ts imports this module with
@@ -42,6 +42,7 @@ import { isOpenable, refusalFor, type FileOpener } from "./fileopen.js";
 import { MAX_STT_BYTES, SttError, type SttProxy } from "./stt.js";
 import { contextUsageFrom, parseConversation, projectDirForCwd } from "./conversation.js";
 import { renameSessionLog, transcriptFor } from "./sessions.js";
+import { claudeMdPointer, prdFileFor, type AgentRequests } from "./agent-requests.js";
 import readline from "node:readline";
 import {
   codexUsageSnapshot,
@@ -366,6 +367,8 @@ export interface Terminals {
 }
 
 export interface ApiOptions {
+  /** Requests for new agents waiting for the operator (create_agent). */
+  agentRequests?: AgentRequests;
   store: Store;
   config: Config;
   log: Logger;
@@ -793,6 +796,7 @@ function hasClaudeConversation(claudeProjectsDir: string, absPath: string): bool
 export function createApiRouter(options: ApiOptions): express.Router {
   const { store, config, log, bus, onMessage, nudger, launcher, terminals, usage, stopper, fileOpener, stt, startedAt, version } =
     options;
+  const agentRequests = options.agentRequests;
   const heartbeatMs = options.heartbeatMs ?? 25_000;
   const claudeProjectsDir =
     options.claudeProjectsDir ?? path.join(os.homedir(), ".claude", "projects");
@@ -966,6 +970,113 @@ export function createApiRouter(options: ApiOptions): express.Router {
       // Invalid name or MAX_AGENTS cap — store errors are already in English.
       res.status(400).json({ ok: false, error: (err as Error).message });
     }
+  });
+
+  // GET /api/agent-requests → the create_agent requests waiting for the
+  // operator. POST /api/agent-requests/:id/approve makes the agent: the folder
+  // (one level, when asked), the PRD written into it, the launch — a child as
+  // a child — then its first message from the agent that asked, and word of
+  // the outcome back to that agent. POST …/deny drops it and says so.
+  router.get("/api/agent-requests", (_req, res) => {
+    res.json({ ok: true, requests: agentRequests ? agentRequests.list() : [] });
+  });
+
+  router.post("/api/agent-requests/:id/approve", async (req, res) => {
+    if (!agentRequests || !launcher) {
+      res.status(501).json({ ok: false, error: "This hub cannot launch agents (no tmux layer)." });
+      return;
+    }
+    const request = agentRequests.get(req.params.id);
+    if (!request) {
+      res.status(404).json({ ok: false, error: "That request is gone — already answered, or the hub restarted." });
+      return;
+    }
+    if (store.getAgent(request.name)) {
+      res.status(409).json({ ok: false, error: `"${request.name}" already exists now. Deny this request and ask for another name.` });
+      return;
+    }
+    let prdFile: string;
+    try {
+      if (request.createFolder && !fs.existsSync(request.folder)) fs.mkdirSync(request.folder);
+      prdFile = prdFileFor(request);
+      fs.writeFileSync(prdFile, request.prd.endsWith("\n") ? request.prd : request.prd + "\n");
+      // A new agent's folder gets a CLAUDE.md that points at its PRD (Claude
+      // Code reads CLAUDE.md on its own); an existing one is never touched.
+      const claudeMd = path.join(request.folder, "CLAUDE.md");
+      if (!request.asChild && !fs.existsSync(claudeMd)) fs.writeFileSync(claudeMd, claudeMdPointer(path.basename(prdFile)));
+    } catch (err) {
+      res.status(500).json({ ok: false, error: `Could not prepare ${request.folder}: ${(err as Error).message}` });
+      return;
+    }
+    try {
+      await launcher.launchAgent({
+        dir: request.folder,
+        name: request.name,
+        role: request.role,
+        group: request.group === DEFAULT_GROUP ? undefined : request.group,
+        agentType: "claude",
+        continueConversation: false,
+        openTerminal: false,
+        ...(request.asChild && request.parent ? { parent: request.parent } : {}),
+      });
+    } catch (err) {
+      const status = err instanceof LaunchError ? err.status : 500;
+      res.status(status).json({ ok: false, error: (err as Error).message });
+      return; // kept: fix what failed and approve again, or deny it
+    }
+    agentRequests.remove(request.id);
+    let agent = store.getAgent(request.name)!;
+    if (request.displayName) {
+      agent = store.updateAgent(request.name, { displayName: request.displayName });
+      bus.emit({ type: "agent_updated", payload: toPublicAgent(agent) });
+    }
+    // Its first message, from the agent that asked for it (or from the
+    // operator, if that agent is gone): where the brief is, then the work.
+    const sender = store.getAgent(request.from) ? request.from : "operator";
+    const brief =
+      `Welcome — you were just created on this Switchboard${sender !== "operator" ? ` at ${sender}'s request` : ""}. ` +
+      `Your brief is ${path.basename(prdFile)} in ${request.folder}: read it first.` +
+      (request.firstMessage ? `\n\n${request.firstMessage}` : "");
+    try {
+      deliverMessage(store, bus, onMessage, { from: sender, to: request.name, body: brief });
+      if (store.getAgent(request.from)) {
+        deliverMessage(store, bus, onMessage, {
+          from: "operator",
+          to: request.from,
+          body:
+            `[switchboard] Approved: "${request.name}" is up${request.asChild ? ` as a child of ${request.parent}` : ""}, ` +
+            `in ${request.folder} (group ${request.group}). Its PRD is ${prdFile}; it was told to read it.`,
+        });
+      }
+    } catch (err) {
+      log.warn(`[api] agent ${request.name} is up, but its welcome could not be sent: ${(err as Error).message}`);
+    }
+    bus.emit({ type: "agent_request_resolved", payload: { id: request.id, approved: true, name: request.name } });
+    log.info(`[api] agent request ${request.id} approved: ${request.name} created for ${request.from}.`);
+    res.json({ ok: true, agent: toPublicAgent(agent), prd: prdFile });
+  });
+
+  router.post("/api/agent-requests/:id/deny", (req, res) => {
+    const request = agentRequests?.get(req.params.id);
+    if (!agentRequests || !request) {
+      res.status(404).json({ ok: false, error: "That request is gone — already answered, or the hub restarted." });
+      return;
+    }
+    agentRequests.remove(request.id);
+    if (store.getAgent(request.from)) {
+      try {
+        deliverMessage(store, bus, onMessage, {
+          from: "operator",
+          to: request.from,
+          body: `[switchboard] The operator declined creating "${request.name}". Nothing was created.`,
+        });
+      } catch (err) {
+        log.warn(`[api] could not tell ${request.from} its request was declined: ${(err as Error).message}`);
+      }
+    }
+    bus.emit({ type: "agent_request_resolved", payload: { id: request.id, approved: false, name: request.name } });
+    log.info(`[api] agent request ${request.id} denied (${request.name}, asked by ${request.from}).`);
+    res.json({ ok: true });
   });
 
   // POST /api/assistant — the operator's FAZ-TUDO (owner, 05/10: "um agente

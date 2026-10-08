@@ -436,6 +436,26 @@ same way `wire` derives a name from a folder called `ai panorama`.
 
 ---
 
+### Agents that create agents (`create_agent`)
+
+Ask any agent for a new agent and it runs the whole thing with you: is it a **child** of that
+agent (a second session in its folder, shown under it, killed when done) or an agent of its
+own; which folder (it can be created) and which group; its name; and, above all, its **PRD** —
+drafted with you, with a few questions offered to make it richer, which you may skip. Then it
+calls the `create_agent` tool once.
+
+Nothing is created by that call. A card appears at the top of the rail with the name, the kind,
+the folder, the group and the PRD (**read PRD** shows all of it); **approve** makes the folder
+if asked, writes the PRD (`PRD.md`, with a `CLAUDE.md` pointing at it in a new folder;
+`PRD-<name>.md` for a child), launches the agent and has the asking agent hand it its brief as
+its first message — and the new card is born on the rail with a flourish. **deny** drops it.
+Either way the asking agent gets a `[switchboard]` message with the outcome.
+
+An agent can only ask inside its own walls: its own group, a client subgroup of it, or a child
+of itself (the faz-tudo, which reaches everyone, may place one anywhere). One agent can have at
+most three requests waiting. Requests live in the hub's memory: a hub restart drops them, and
+the agent can simply ask again.
+
 ## Other subcommands
 
 | Command | What it does |

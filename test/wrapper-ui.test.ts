@@ -2181,3 +2181,25 @@ describe("no tab bar — the traffic lives in the header", () => {
     expect(script).toMatch(/\$\("#traffic-btn"\)\.addEventListener\("click", \(\) => \{\s*if \(screenState\.name\) closeScreen\(\);/);
   });
 });
+
+describe("agents asking for agents, on the board", () => {
+  it("shows each request with its two answers", () => {
+    const render = embeddedFunctionSource("renderAgentRequests");
+    expect(render).toContain("/api/agent-requests/${encodeURIComponent(req.id)}/${verb}");
+    expect(render).toContain('fact("kind", req.asChild ?');
+    expect(render).toContain("showInfoDialog(`PRD — ${req.displayName || req.name}`, req.prd)");
+    expect(script).toContain('case "agent_request":');
+    expect(script).toContain('case "agent_request_resolved":');
+  });
+
+  it("never lets the requests push the agent list out of sight", () => {
+    expect(styles).toMatch(/\.agent-requests \{[^}]*max-height: 45%; overflow-y: auto/);
+  });
+
+  it("lands a newborn once, in its own colour — only an agent born live", () => {
+    expect(script).toContain("if (state.ready && !state.agents.has(event.payload.name)) state.newborn.set(event.payload.name, Date.now());");
+    expect(embeddedFunctionSource("buildAgentCard")).toContain('card.classList.add("newborn")');
+    expect(styles).toMatch(/\.agent-card\.newborn \{ animation: agent-born 1\.1s [^;]* both; \}/);
+    expect(styles).not.toMatch(/animation: agent-born[^;]*infinite/);
+  });
+});

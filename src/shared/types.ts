@@ -309,10 +309,38 @@ export interface GroupsUpdatedEvent {
   payload: { groups: string[] };
 }
 
+/** An agent asked for a new agent (create_agent) — the operator approves or denies it. */
+export interface AgentRequestEvent {
+  type: "agent_request";
+  payload: {
+    id: string;
+    from: string;
+    name: string;
+    displayName?: string;
+    role?: string;
+    asChild: boolean;
+    parent?: string;
+    folder: string;
+    createFolder: boolean;
+    group: string;
+    prd: string;
+    firstMessage?: string;
+    createdAt: string;
+  };
+}
+
+/** A request left the queue: approved (and launched) or denied. */
+export interface AgentRequestResolvedEvent {
+  type: "agent_request_resolved";
+  payload: { id: string; approved: boolean; name: string };
+}
+
 export type SseEvent =
   | AgentUpdatedEvent
   | MessageCreatedEvent
   | MessageReadEvent
   | NudgeSentEvent
   | AgentRemovedEvent
-  | GroupsUpdatedEvent;
+  | GroupsUpdatedEvent
+  | AgentRequestEvent
+  | AgentRequestResolvedEvent;

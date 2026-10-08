@@ -4133,6 +4133,54 @@
     .assistant-setup:hover { color: var(--text); border-color: var(--text-faint); background: var(--bg-hover); }
     .assistant-setup-mark { font-size: 15px; color: var(--accent); }
     .screen-fresh.confirming { color: var(--warn); border-color: var(--warn); }
+  
+    /* --- Agent requests (create_agent): waiting for one click ----------- */
+    /* Never more than half the rail: three waiting requests used to squeeze
+       the agent list out of sight. */
+    .agent-requests { flex: 0 0 auto; max-height: 45%; overflow-y: auto; padding: 0 10px 4px; }
+    .agent-requests:empty { display: none; }
+    .request-card {
+      margin: 10px 0 2px;
+      padding: 12px 14px;
+      border: 1px solid color-mix(in srgb, var(--unread-bg) 45%, var(--border));
+      border-radius: var(--radius);
+      background: color-mix(in srgb, var(--unread-bg) 6%, var(--bg-elev));
+      font-family: var(--sans);
+      font-size: var(--fs-sm);
+      animation: pop-in 0.18s var(--ease);
+    }
+    .request-head { display: flex; align-items: center; gap: 8px; color: var(--text); font-weight: 600; margin-bottom: 8px; }
+    .request-mark { color: var(--unread-bg); }
+    .request-facts { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; margin: 0 0 8px; font-size: var(--fs-xs); }
+    .request-facts dt { color: var(--text-faint); font-family: var(--mono); }
+    .request-facts dd { margin: 0; color: var(--text-dim); font-family: var(--mono); word-break: break-all; }
+    .request-prd {
+      color: var(--text-dim);
+      font-size: var(--fs-xs);
+      line-height: 1.45;
+      overflow: hidden;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      margin-bottom: 10px;
+    }
+    .request-actions { display: flex; align-items: center; gap: 6px; }
+    .request-spacer { flex: 1; }
+    .request-approve { color: var(--accent-fg); background: var(--accent); border-color: var(--accent); font-weight: 600; }
+    .request-approve:hover { background: var(--accent-bright); }
+    .request-deny:hover { color: var(--danger); border-color: var(--danger); }
+
+    /* --- Birth: a new agent's card lands once, with a ring of light ------- */
+    .agent-card.newborn { animation: agent-born 1.1s cubic-bezier(0.2, 0.9, 0.25, 1.15) both; }
+    @keyframes agent-born {
+      0% { opacity: 0; transform: translateY(-10px) scale(0.86); box-shadow: 0 0 0 0 transparent; }
+      35% { opacity: 1; transform: translateY(0) scale(1.03); box-shadow: 0 0 0 3px color-mix(in srgb, var(--born) 45%, transparent), 0 0 26px 4px color-mix(in srgb, var(--born) 35%, transparent); }
+      70% { transform: scale(0.995); box-shadow: 0 0 0 8px transparent, 0 0 30px 6px color-mix(in srgb, var(--born) 12%, transparent); }
+      100% { opacity: 1; transform: none; box-shadow: none; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .agent-card.newborn { animation: none; }
+    }
   </style>
 </head>
 <body>
@@ -4201,6 +4249,9 @@
           autocomplete="off" spellcheck="false" />
       </div>
 
+      <!-- Agents asking for new agents (create_agent), each waiting for one
+           click. Outside #agents, so a rail rebuild never eats a half-read card. -->
+      <div class="agent-requests" id="agent-requests"></div>
       <div class="agents" id="agents"></div>
 
       <!-- Real plan windows for both engines. The card remains present during
@@ -4376,6 +4427,8 @@
       filter: null,        // active agent-name filter, or null
       group: null,         // active group tab, or null for "all groups"
       groups: new Set(),   // every group the hub keeps, empty ones included
+      agentRequests: new Map(), // id -> a create_agent request waiting for you
+      newborn: new Map(),  // name -> when it first appeared (the birth animation)
       search: "",          // free-text filter over the transcript, or ""
       railSearch: "",      // free-text filter over the agent rail, or ""
       unseen: new Set(),   // agents that finished a turn you haven't opened yet
@@ -6699,6 +6752,74 @@
       menu.focus({ preventScroll: true });
     }
 
+    /**
+     * Agents asking for new agents (create_agent): one card each, with what
+     * would be made — name, child or not, folder, group, the PRD — and the
+     * two answers. Nothing is created until you click Approve (owner's call).
+     */
+    function renderAgentRequests() {
+      const box = $("#agent-requests");
+      if (!box) return;
+      box.textContent = "";
+      for (const req of state.agentRequests.values()) {
+        const card = el("div", "request-card");
+        const head = el("div", "request-head");
+        head.append(el("span", "request-mark", "✦"), el("span", null, `${displayOf(req.from)} wants to create an agent`));
+        card.appendChild(head);
+        const facts = el("dl", "request-facts");
+        const fact = (k, v) => {
+          if (!v) return;
+          facts.append(el("dt", null, k), el("dd", null, v));
+        };
+        fact("name", req.displayName ? `${req.name} (“${req.displayName}”)` : req.name);
+        fact("kind", req.asChild ? `child of ${displayOf(req.parent || req.from)}` : "new agent");
+        fact("folder", `${req.folder}${req.createFolder ? "  (new)" : ""}`);
+        fact("group", req.group === DEFAULT_GROUP ? "Desagrupados" : req.group);
+        fact("role", req.role);
+        card.appendChild(facts);
+        // The PRD's first real sentence (a heading is just its title again).
+        const lines = req.prd.split("\n").map((l) => l.trim()).filter(Boolean);
+        const firstText = lines.find((l) => !l.startsWith("#")) || (lines[0] || "").replace(/^#+\s*/, "");
+        const prdLine = el("div", "request-prd", firstText);
+        card.appendChild(prdLine);
+        const actions = el("div", "request-actions");
+        const read = el("button", "btn", "read PRD");
+        read.type = "button";
+        read.addEventListener("click", () => showInfoDialog(`PRD — ${req.displayName || req.name}`, req.prd));
+        const deny = el("button", "btn request-deny", "deny");
+        deny.type = "button";
+        const approve = el("button", "btn request-approve", "approve");
+        approve.type = "button";
+        const answer = async (verb) => {
+          approve.disabled = deny.disabled = true;
+          if (verb === "approve") approve.textContent = "creating…";
+          try {
+            const res = await fetch(`/api/agent-requests/${encodeURIComponent(req.id)}/${verb}`, { method: "POST" });
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok || !body.ok) {
+              toast(`Could not ${verb}: ${body.error || `HTTP ${res.status}`}`, "warn", 8000);
+              approve.disabled = deny.disabled = false;
+              approve.textContent = "approve";
+              return;
+            }
+            state.agentRequests.delete(req.id);
+            renderAgentRequests();
+            if (verb === "approve") toast(`${req.displayName || req.name} is being born ✦`, "ok");
+            else toast(`Declined — ${displayOf(req.from)} was told.`);
+          } catch (err) {
+            toast(`Could not ${verb}: ${err && err.message ? err.message : err}`, "warn");
+            approve.disabled = deny.disabled = false;
+            approve.textContent = "approve";
+          }
+        };
+        approve.addEventListener("click", () => answer("approve"));
+        deny.addEventListener("click", () => answer("deny"));
+        actions.append(read, el("span", "request-spacer"), deny, approve);
+        card.appendChild(actions);
+        box.appendChild(card);
+      }
+    }
+
     /** The one-time offer to make the faz-tudo, where it will then live. */
     function buildAssistantSetup() {
       const btn = el("button", "assistant-setup");
@@ -6815,6 +6936,21 @@
 
     function buildAgentCard(agent) {
       const card = el("div", "agent-card");
+      const born = state.newborn.get(agent.name);
+      if (born && Date.now() - born < 1500) {
+        card.classList.add("newborn");
+        card.style.setProperty("--born", chatColor(agent.name) || "#4ade80");
+        // The face cheers as it lands — once, on the first card built for it.
+        state.newborn.set(agent.name, born - 10_000);
+        setTimeout(() => {
+          const entry = faceHosts.get(agent.name);
+          if (entry) entry.face.react("cheer");
+        }, 380);
+        // …and the rail brings it into view, so the birth is not missed below the fold.
+        requestAnimationFrame(() => {
+          if (card.isConnected) card.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        });
+      }
       card.classList.add(agent.status === "online" ? "online" : "offline");
       card.tabIndex = 0;
       card.setAttribute("role", "button");
@@ -11870,8 +12006,20 @@
     function handleSse(event) {
       switch (event.type) {
         case "agent_updated":
+          // A name never seen before, live, is a BIRTH: its card and face
+          // arrive with a one-off entrance (owner: "uma animação pra surgir
+          // esse agente novo seria espetacular").
+          if (state.ready && !state.agents.has(event.payload.name)) state.newborn.set(event.payload.name, Date.now());
           mergeAgent(event.payload);
           renderAgents();
+          break;
+        case "agent_request":
+          state.agentRequests.set(event.payload.id, event.payload);
+          renderAgentRequests();
+          break;
+        case "agent_request_resolved":
+          state.agentRequests.delete(event.payload.id);
+          renderAgentRequests();
           break;
         case "message_created":
           onMessageCreated(event.payload);
@@ -12386,6 +12534,15 @@
       // An empty group has no agent to carry it, so the groups come on their own.
       const body = groupsRes && groupsRes.ok ? await groupsRes.json().catch(() => null) : null;
       if (body && Array.isArray(body.groups)) setKnownGroups(body.groups);
+      // Requests waiting for you survive a reload of the page (not of the hub).
+      try {
+        const rr = await fetch("/api/agent-requests");
+        const rb = rr.ok ? await rr.json() : null;
+        if (rb && Array.isArray(rb.requests)) {
+          state.agentRequests = new Map(rb.requests.map((r) => [r.id, r]));
+          renderAgentRequests();
+        }
+      } catch { /* not fatal: the next request arrives over SSE */ }
     }
 
     /**
@@ -13851,6 +14008,7 @@
       // so the SSE only ever adds to a populated view (PRD Phase 6 behavior).
       try {
         await Promise.all([loadHealth(), loadAgents(), loadMessages()]);
+        state.ready = true; // from here on, an agent that appears is a birth
       } catch (err) {
         toast("Failed to load the Hub's initial state.", "error");
       }

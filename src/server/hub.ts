@@ -3,6 +3,7 @@
 // the static dashboard (/). Exported as startHub() so tests can run it on an
 // ephemeral port with a temp data dir and close it cleanly.
 
+import { AgentRequests } from "./agent-requests.js";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -246,6 +247,10 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
   app.use(remoteGate.middleware);
   app.use(remoteGate.router);
 
+  // Agents asking for new agents (create_agent), waiting for the operator.
+  // Only on a hub that can launch — without one there is nothing to approve.
+  const agentRequests = launcher ? new AgentRequests() : undefined;
+
   const mcp = createMcpEndpoint({
     store,
     config,
@@ -253,6 +258,7 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
     bus,
     rateLimiter,
     onMessage,
+    agentRequests,
     sessionIdleTimeoutMs: options.sessionIdleTimeoutMs,
     sessionSweepIntervalMs: options.sessionSweepIntervalMs,
     // A bound session (header auth or join) proves the agent is on the
@@ -270,6 +276,7 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
       onMessage,
       nudger: dispatcher,
       launcher,
+      agentRequests,
       terminals,
       usage,
       stopper,

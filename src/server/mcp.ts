@@ -25,6 +25,7 @@
 // Every tool ALWAYS answers in < 1s (PRD section 4, rule 4): pure in-memory +
 // synchronous appends, no waiting for recipients.
 
+import { AgentRequests, CREATE_AGENT_DESCRIPTION, planAgentRequest } from "./agent-requests.js";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import express from "express";
 import { z } from "zod";
@@ -179,6 +180,11 @@ export interface McpOptions {
    * its pane would be pure noise.
    */
   onSessionBound?: (agentName: string) => void;
+  /**
+   * Requests for new agents waiting for the operator (create_agent). Absent →
+   * the tool is not offered (a hub with no launcher cannot create anything).
+   */
+  agentRequests?: AgentRequests;
 }
 
 export interface McpEndpoint {
@@ -510,6 +516,45 @@ export function createMcpEndpoint(options: McpOptions): McpEndpoint {
         });
       },
     );
+
+    if (options.agentRequests) {
+      const requests = options.agentRequests;
+      server.registerTool(
+        "create_agent",
+        {
+          description: CREATE_AGENT_DESCRIPTION,
+          inputSchema: {
+            name: z.string().describe("The new agent's address: 2-31 lowercase letters, digits, hyphens."),
+            display_name: z.string().optional().describe("What the board shows (free text, emoji welcome)."),
+            role: z.string().optional().describe("One line: what it does."),
+            as_child: z.boolean().optional().describe("true = a child of you, in your folder. folder/group are then ignored."),
+            folder: z.string().optional().describe("Absolute folder it works in (new agents only)."),
+            create_folder: z.boolean().optional().describe("Create the folder if it does not exist (only its last level)."),
+            group: z.string().optional().describe("Its group; default yours."),
+            prd: z.string().describe("Its PRD in markdown, drafted with the operator."),
+            first_message: z.string().optional().describe("Optional first assignment, sent from you once it is up."),
+          },
+        },
+        async (args, extra) => {
+          const from = agentForSession(extra.sessionId);
+          if (!from) return jsonResult({ ok: false, error: NOT_JOINED_ERROR });
+          touchAgent(from);
+          const plan = planAgentRequest(store, requests, from, args);
+          if (!plan.ok) return jsonResult({ ok: false, error: plan.error });
+          const request = requests.add(plan.request);
+          bus.emit({ type: "agent_request", payload: request });
+          log.info(`[mcp] ${from} asked to create agent ${request.name} (${request.asChild ? "child" : request.folder}) — waiting for the operator.`);
+          return jsonResult({
+            ok: true,
+            status: "waiting_for_operator",
+            request_id: request.id,
+            note:
+              `Sent to the operator for approval in the dashboard. You will get a [switchboard] message ` +
+              `with the outcome — do not call create_agent again for "${request.name}" meanwhile.`,
+          });
+        },
+      );
+    }
 
     server.registerTool(
       "list_agents",
