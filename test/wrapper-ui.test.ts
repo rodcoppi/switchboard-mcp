@@ -2151,3 +2151,17 @@ describe("relative paths in the chat open where the file really is", () => {
     expect(script).toContain("isRelativePath(p) && who ? () => locateAgentPath(who, p) : null");
   });
 });
+
+describe("nothing on the board breathes forever", () => {
+  // Owner, 07/10: chat text went slightly yellow and back, in step with the
+  // amber badges' pulse. An endlessly animating layer can switch Windows
+  // Chrome's compositor path on that rhythm; the badges stand still now.
+  it("keeps the unread badges amber and glowing, but still", () => {
+    expect(styles).not.toMatch(/animation: unread-pulse [^;]*infinite/);
+    expect(styles).toMatch(/\.unread-badge \{[^}]*background: var\(--unread-bg\)/);
+  });
+
+  it("no longer pulses the portrait of a working agent (its face shows it)", () => {
+    expect(styles).not.toMatch(/animation: agent-work [^;]*infinite/);
+  });
+});

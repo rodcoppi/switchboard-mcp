@@ -954,11 +954,9 @@
       0%, 100% { opacity: 1; box-shadow: 0 0 0 0 var(--accent-line); }
       50% { opacity: 0.45; box-shadow: 0 0 6px 1px var(--accent-line); }
     }
-    /* Green stays presence. Working adds a quiet amber pulse to the portrait,
-       so activity never changes the meaning of the status lamp. */
-    .agent-portrait:has(.status-dot.working) {
-      animation: agent-work 1.45s var(--ease) infinite;
-    }
+    /* Green stays presence. "Working" is shown by the face itself now; the
+       portrait used to pulse as well, forever, and every infinite pulse on
+       the page is a suspect for the owner's tint (see .unread-badge). */
     @keyframes agent-work {
       0%, 100% {
         border-color: var(--border);
@@ -980,13 +978,15 @@
       font-size: var(--fs-xs); font-weight: 700;
       border-radius: var(--radius-pill);
       box-shadow: 0 0 8px rgba(232, 183, 63, 0.45);
-      animation: unread-pulse 2.6s ease-in-out infinite;
     }
-    /* SLOW on purpose: a beacon, not an alarm. The badge only ever appears when
-       something is genuinely waiting, so it breathes at about the rate of a calm
-       breath — fast enough to catch the eye crossing the screen, slow enough to
-       sit next to for an hour. It never disappears at the trough (0.55): a count
-       you cannot read is worse than one that does not move. */
+    /* STILL, no longer breathing (owner, 07/10: "tem algo que tá deixando os
+       textos do chat um pouco mais amarelado e depois sai ... o movimento é o
+       mesmo"). The badge pulsed its opacity forever (1 → 0.55, 2.6s), and on
+       Windows Chrome an endlessly animating layer can switch the compositor
+       path in step with it — with colour management or HDR on, the whole page
+       shifts tint on that rhythm. Amber and its glow still make it the one
+       coloured thing on the board; it just does not move. The keyframes stay
+       for anything that wants a one-off pulse. */
     @keyframes unread-pulse {
       0%, 100% {
         opacity: 1;
@@ -1656,7 +1656,6 @@
       color: var(--unread-fg);
       font-size: var(--fs-eyebrow);
       font-weight: 700;
-      animation: unread-pulse 2.6s ease-in-out infinite;
     }
 
     /* Lightbox. One in the file, for the launcher — a form you touch once per
