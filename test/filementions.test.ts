@@ -13,7 +13,7 @@ describe("GET /api/agents/:name/files/resolve", () => {
     base = fs.mkdtempSync(path.join(os.tmpdir(), "switchboard-filemention-"));
     project = path.join(base, "project");
     fs.mkdirSync(path.join(project, "docs", "handoff"), { recursive: true });
-    fs.writeFileSync(path.join(project, "docs", "handoff", "Studio-IMPLEMENTACAO-FASE3.md"), "phase 3\n");
+    fs.writeFileSync(path.join(project, "docs", "handoff", "Client-IMPLEMENTACAO-FASE3.md"), "phase 3\n");
     hub = await startHub({
       baseDir: path.join(base, "data"),
       port: 0,
@@ -40,12 +40,12 @@ describe("GET /api/agents/:name/files/resolve", () => {
 
   it("resolves one exact bare filename beneath the agent cwd", async () => {
     const res = await fetch(
-      `${hub.url}/api/agents/studio-front/files/resolve?file=${encodeURIComponent("Studio-IMPLEMENTACAO-FASE3.md")}`,
+      `${hub.url}/api/agents/studio-front/files/resolve?file=${encodeURIComponent("Client-IMPLEMENTACAO-FASE3.md")}`,
     );
     expect(res.status).toBe(200);
     await expect(res.json()).resolves.toEqual({
       ok: true,
-      path: path.join(project, "docs", "handoff", "Studio-IMPLEMENTACAO-FASE3.md"),
+      path: path.join(project, "docs", "handoff", "Client-IMPLEMENTACAO-FASE3.md"),
     });
   });
 

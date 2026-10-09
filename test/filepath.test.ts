@@ -70,13 +70,13 @@ describe("BARE_FILE_RE candidates", () => {
   };
 
   it("finds a filename cited in prose so the hub can resolve it", () => {
-    expect(candidates("o arquivo Studio-IMPLEMENTACAO-FASE3.md está no Downloads")).toEqual([
-      "Studio-IMPLEMENTACAO-FASE3.md",
+    expect(candidates("o arquivo Client-IMPLEMENTACAO-FASE3.md está no Downloads")).toEqual([
+      "Client-IMPLEMENTACAO-FASE3.md",
     ]);
   });
 
   it("does not take a basename out of an existing full path", () => {
-    expect(candidates("veja /home/rod/Studio-IMPLEMENTACAO-FASE3.md")).toEqual([]);
+    expect(candidates("veja /home/rod/Client-IMPLEMENTACAO-FASE3.md")).toEqual([]);
   });
 });
 
