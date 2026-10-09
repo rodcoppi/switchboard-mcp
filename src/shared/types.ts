@@ -69,7 +69,7 @@ export interface Agent {
    * Shell command the launcher runs BEFORE the agent CLI, in the same shell
    * (`<bootCommand> && exec <cli>`), so exports carry into the CLI and a
    * failed setup keeps the CLI from starting. For projects that need
-   * services/env up before the agent (the owner's `acme` case). PERSISTED;
+   * services/env up before the agent (a project that needs its database up first). PERSISTED;
    * set ONLY by the operator over REST — never via MCP: an agent must not be
    * able to persist its own boot code. Empty/absent → the standard boot.
    */

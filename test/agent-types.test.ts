@@ -387,7 +387,7 @@ describe("buildWireClaudeArgs across agent types", () => {
 });
 
 describe("buildAgentCommand + bootCommand", () => {
-  const base = { name: "acme", token: "t0k", agentType: "claude" as const };
+  const base = { name: "booter", token: "t0k", agentType: "claude" as const };
 
   it("is REAL argv — no shell for tmux to leave holding the pane", () => {
     // tmux execs a multi-argument command directly, so this array IS the pane
@@ -400,7 +400,7 @@ describe("buildAgentCommand + bootCommand", () => {
     const argv = buildAgentCommand({ ...base, claudeArgs: ["-c"] });
     expect(argv).toEqual([
       "env",
-      "SWITCHBOARD_AGENT_NAME=acme",
+      "SWITCHBOARD_AGENT_NAME=booter",
       "SWITCHBOARD_AGENT_TOKEN=t0k",
       "claude",
       "-c",
@@ -433,21 +433,21 @@ describe("buildAgentCommand + bootCommand", () => {
 });
 
 describe("buildAgentCommand + PATH", () => {
-  const base = { name: "acme", token: "t0k", agentType: "claude" as const };
+  const base = { name: "booter", token: "t0k", agentType: "claude" as const };
 
   it("a PATH override rides in the same env, before the agent's own vars", () => {
     const argv = buildAgentCommand({ ...base, pathValue: "/usr/bin:/mnt/c/Windows/System32" });
     expect(argv.slice(0, 3)).toEqual([
       "env",
       "PATH=/usr/bin:/mnt/c/Windows/System32",
-      "SWITCHBOARD_AGENT_NAME=acme",
+      "SWITCHBOARD_AGENT_NAME=booter",
     ]);
   });
 
   it("no override → the argv is byte-for-byte what it always was", () => {
     expect(buildAgentCommand(base)).toEqual([
       "env",
-      "SWITCHBOARD_AGENT_NAME=acme",
+      "SWITCHBOARD_AGENT_NAME=booter",
       "SWITCHBOARD_AGENT_TOKEN=t0k",
       "claude",
     ]);

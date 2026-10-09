@@ -639,14 +639,14 @@ describe("WhatsApp copy — a link must not turn the message into 'code'", () =>
       "que você me mandou e fui atrás do que ele diz de verdade. Achei uma",
       "coisa que muda a conversa: em 90 dias são 1.844 unidades.",
       "",
-      "https://rodcoppi.com.br/p/comaharus/",
+      "https://example.com/p/some-page/",
       "senha: *harusai*",
       "```",
     ].join("\n");
     const out = toWA(msg);
     expect(out).not.toContain("```");
     expect(out).toContain("relatório da NeoGrid que você me mandou");
-    expect(out).toContain("https://rodcoppi.com.br/p/comaharus/"); // the link survives whole
+    expect(out).toContain("https://example.com/p/some-page/"); // the link survives whole
   });
 
   it("still treats real code as code — including a REAL // comment", () => {
