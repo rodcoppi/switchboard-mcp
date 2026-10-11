@@ -4261,6 +4261,37 @@
        the same column, only dimmer — no dashed rules around a lane of its own. */
     .chat-pending { max-width: 46rem; margin: 0 auto 18px; padding: 0 18px; gap: 18px; border: 0; }
     .chat-pending .chat-turn.user { align-self: flex-end; }
+    /* Sent: it rises into place once. In line: grey until the agent reads it. */
+    .chat-turn.pending.fresh { animation: bubble-in 0.28s cubic-bezier(.2, .9, .3, 1.2); }
+    @keyframes bubble-in {
+      from { opacity: 0; transform: translateY(12px) scale(0.97); }
+    }
+    .chat-turn.pending { transition: opacity 0.3s var(--ease); }
+    .chat-turn.pending[data-state="queued"] { opacity: 0.55; }
+    .chat-turn.pending[data-state="queued"] .chat-sending { color: var(--st-working); font-style: normal; }
+    .chat-sendnow-row { display: flex; justify-content: flex-end; margin-top: 8px; }
+    .chat-sendnow {
+      padding: 3px 10px;
+      border: 1px solid color-mix(in srgb, var(--st-working) 55%, transparent);
+      border-radius: 99px;
+      background: transparent;
+      color: var(--st-working);
+      font-family: var(--mono);
+      font-size: 10.5px;
+      cursor: pointer;
+    }
+    .chat-sendnow:hover:not(:disabled) { background: color-mix(in srgb, var(--st-working) 14%, transparent); }
+    .chat-sendnow:disabled { opacity: 0.6; cursor: default; }
+    /* Read: the real bubble lands bright and says so, once. */
+    .chat-turn.user.just-read { animation: bubble-read 0.6s ease-out; }
+    @keyframes bubble-read {
+      from { box-shadow: 0 0 0 1px color-mix(in srgb, var(--st-new) 60%, transparent); }
+    }
+    .chat-read { color: var(--st-new); font-family: var(--mono); font-size: 10px; animation: read-fade 4s ease-in forwards; }
+    @keyframes read-fade {
+      0%, 70% { opacity: 1; }
+      100% { opacity: 0; }
+    }
 
     /* Before a running turn has done anything: the same quiet line. */
     .chat-typing {
@@ -4360,7 +4391,7 @@
     .chat-composer-context { display: none; }
     .composer-thumbs { padding: 10px 12px 0; }
     .chat-composer-row { flex-wrap: wrap; align-items: center; gap: 4px; padding: 6px 8px 8px; }
-    .chat-composer-row #chat-input { flex: 1 1 100%; order: 0; padding: 6px 8px 4px; font-size: 14px; min-height: 30px; background: transparent; border: 0; box-shadow: none; }
+    .chat-composer-row #chat-input { flex: 1 1 100%; order: 0; padding: 6px 8px 4px; font-size: 14px; min-height: 32px; overflow-y: hidden; background: transparent; border: 0; box-shadow: none; }
     .chat-composer-row #chat-input:focus { background: transparent; box-shadow: none; }
     .chat-composer-row .chat-wave { order: 0; }
     .chat-composer-row .chat-attach { order: 1; }
@@ -6679,7 +6710,7 @@
           a.unreadCount || 0, a.muted ? "m" : "", displayOf(a), a.role || "",
           agentTypeOf(a), a.waitingFor || "", a.blocked ? "b" : "", a.permission || "",
           a.goalActive ? "g" : "", a.goalFor || "", blobShapeOf(a.name),
-          a.lastReply || "", a.lastReplyAt || "", a.blockedPrompt || "",
+          a.lastReply || "", a.lastReplyAt || "", a.blockedPrompt || "", a.queued ? "q" : "",
         ].join("\u0001"),
       );
       return [
@@ -9808,13 +9839,70 @@
         view.appendChild(pend);
       }
       const turn = buildChatTurn({ kind: "user", text, ts: new Date().toISOString() }, screenState.name);
-      turn.classList.add("pending");
+      turn.classList.add("pending", "fresh");
+      turn.addEventListener("animationend", () => turn.classList.remove("fresh"), { once: true });
       turn.dataset.echo = text.trim();
+      turn.dataset.state = "sending";
       const meta = turn.querySelector(".chat-meta");
       if (meta) meta.appendChild(el("span", "chat-sending", "sending…"));
       pend.appendChild(turn);
       view.scrollTop = view.scrollHeight;
       return turn;
+    }
+
+    /**
+     * Where each of your messages stands (owner, 11/10: "o que ele já leu / o
+     * que ele ainda vai ler"). Sent while the agent is mid-turn, a message
+     * waits in the CLI's queue until the step it is on ends — the terminal
+     * draws those grey with "ctrl+x ctrl+s to send now". The chat says the
+     * same: "in line", greyed, with that same send-now as a button; once
+     * the agent logs it, the real bubble lands and says "read ✓" for a moment.
+     */
+    function updatePendingStates() {
+      const view = $("#screen-chat");
+      const pend = view && view.querySelector(".chat-pending");
+      if (!pend) return;
+      const agent = liveScreenAgent();
+      // In line while it works, or while the CLI itself shows a queue (the
+      // hub reads its "to send now" hint off the pane).
+      const inLine = !!(agent && (agent.activity === "working" || agent.queued));
+      const canSendNow = inLine && agentTypeOf(agent) === "claude";
+      for (const turn of pend.querySelectorAll(".chat-turn.pending")) {
+        if (turn.dataset.state === "sending") continue;
+        const state = inLine ? "queued" : "delivered";
+        const label = turn.querySelector(".chat-sending");
+        if (turn.dataset.state === state && !!turn.querySelector(".chat-sendnow") === canSendNow) continue;
+        turn.dataset.state = state;
+        if (label) label.textContent = state === "queued" ? "in line · reads it after this step" : "delivered";
+        turn.querySelector(".chat-sendnow-row")?.remove();
+        if (state === "queued" && canSendNow) {
+          const btn = el("button", "chat-sendnow", "send now");
+          btn.type = "button";
+          btn.title = "Have it read this right away (the CLI's ctrl+x ctrl+s): a running tool moves to the background instead of being cut";
+          btn.addEventListener("click", async (ev) => {
+            ev.stopPropagation();
+            btn.disabled = true;
+            btn.textContent = "sending now…";
+            try {
+              await sendNowKeys(screenState.name);
+            } catch (err) {
+              btn.disabled = false;
+              btn.textContent = "send now";
+              toast(`Could not send now: ${err && err.message ? err.message : err}`, "warn");
+            }
+          });
+          const row = el("div", "chat-sendnow-row");
+          row.appendChild(btn);
+          (turn.querySelector(".chat-turn-body") || turn).appendChild(row);
+        }
+      }
+    }
+
+    /** ctrl+x, then ctrl+s — two keystrokes, the way a hand would press the chord. */
+    async function sendNowKeys(name) {
+      await sendPaneBytes(name, "\x18");
+      await new Promise((r) => setTimeout(r, 150));
+      await sendPaneBytes(name, "\x13");
     }
 
     /**
@@ -9843,6 +9931,7 @@
         const a = screenState.name ? state.agents.get(screenState.name) : null;
         const working = !!a && a.status === "online" && a.activity === "working";
         if (thread && thread.__wasWorking !== working) foldTurns(thread);
+        updatePendingStates();
       }
       const view = $("#screen-chat");
       if (!view) return;
@@ -9863,13 +9952,19 @@
       if (busy && !ind) {
         ind = el("div", "chat-typing");
         const clock = el("span", "chat-fold-clock", "0s");
-        const users = view.querySelectorAll(".chat-thread > .chat-turn.user");
-        const lastUser = users[users.length - 1];
-        const ts = lastUser && lastUser.__item && lastUser.__item.ts;
+        // From whatever opened this turn: your message, or the hub's knock
+        // when another agent woke it.
+        const starts = [...view.querySelectorAll(".chat-thread > .chat-turn")].filter(isTurnStart);
+        const opener = starts[starts.length - 1];
+        const ts = opener && opener.__item && opener.__item.ts;
         if (ts) clock.dataset.start = String(Date.parse(ts));
         ind.append(el("span", "chat-fold-dot", "●"), el("span", "chat-typing-word", " working · "), clock, el("span", "chat-typing-note"));
         const atBottom = view.scrollHeight - view.scrollTop - view.clientHeight < 120;
-        view.appendChild(ind);
+        // Above your queued messages: where it is working, then what it has
+        // not read yet.
+        const pend = view.querySelector(".chat-pending");
+        if (pend) view.insertBefore(ind, pend);
+        else view.appendChild(ind);
         if (atBottom) view.scrollTop = view.scrollHeight;
         tickLiveFolds();
       } else if (!busy && ind) {
@@ -10439,7 +10534,17 @@
           .filter((t) => t !== ""),
       );
       for (const node of [...pend.children]) {
-        if (realTexts.has(norm(node.dataset.echo))) node.remove();
+        if (!realTexts.has(norm(node.dataset.echo))) continue;
+        node.remove();
+        // The bubble that replaced it says so, once: "read ✓", then fades.
+        const real = [...thread.querySelectorAll(".chat-turn.user")].reverse()
+          .find((t) => typeof t.__text === "string" && norm(t.__text) === norm(node.dataset.echo));
+        const meta = real && real.querySelector(".chat-meta");
+        if (meta && !meta.querySelector(".chat-read")) {
+          real.classList.add("just-read");
+          meta.appendChild(el("span", "chat-read", "read ✓"));
+          setTimeout(() => real.classList.remove("just-read"), 4000);
+        }
       }
     }
 
@@ -13486,6 +13591,9 @@
       const autogrow = () => {
         chatInput.style.height = "auto";
         chatInput.style.height = Math.min(chatInput.scrollHeight, 140) + "px";
+        // A scrollbar only once the text outgrows the cap — an empty box
+        // showed a sliver of one (owner, 11/10).
+        chatInput.style.overflowY = chatInput.scrollHeight > 140 ? "auto" : "hidden";
       };
       chatInput.addEventListener("input", autogrow);
 
@@ -14314,6 +14422,10 @@
         pushSent(text);
         try {
           await sendChatMessage(name, text);
+          if (echo) {
+            echo.dataset.state = "sent";
+            updatePendingStates();
+          }
           chatInput.value = "";
           attachments.clear();
           draftHooks.clear(name);

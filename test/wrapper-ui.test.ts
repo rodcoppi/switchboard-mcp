@@ -2290,3 +2290,34 @@ describe("the composer as a card, usage as a bar (design pass, owner 11/10)", ()
     expect(styles).toContain('.usage-pop[data-open="false"] { display: none; }');
   });
 });
+
+describe("what it has read and what it will read (owner, 11/10)", () => {
+  it("rises your message into place once, then greys it while it waits in line", () => {
+    expect(embeddedFunctionSource("echoUserMessage")).toContain('turn.classList.add("pending", "fresh");');
+    expect(styles).toContain('.chat-turn.pending[data-state="queued"] { opacity: 0.55; }');
+    const states = embeddedFunctionSource("updatePendingStates");
+    expect(states).toContain('const inLine = !!(agent && (agent.activity === "working" || agent.queued));');
+    expect(states).toContain('"in line · reads it after this step"');
+  });
+
+  it("offers the CLI's send-now as a button — ctrl+x, then ctrl+s — on Claude only", () => {
+    expect(embeddedFunctionSource("updatePendingStates")).toContain('agentTypeOf(agent) === "claude"');
+    const keys = embeddedFunctionSource("sendNowKeys");
+    expect(keys).toContain('sendPaneBytes(name, "\\x18")');
+    expect(keys).toContain('sendPaneBytes(name, "\\x13")');
+  });
+
+  it("marks the real bubble read when it replaces the echo, and the mark fades", () => {
+    expect(embeddedFunctionSource("reconcilePending")).toContain('el("span", "chat-read", "read ✓")');
+    expect(styles).toMatch(/\.chat-read \{[^}]*animation: read-fade 4s ease-in forwards;/);
+  });
+
+  it("keeps the working line above the messages it has not read yet", () => {
+    expect(embeddedFunctionSource("updateChatTyping")).toContain("if (pend) view.insertBefore(ind, pend);");
+  });
+
+  it("shows no scrollbar in an empty composer", () => {
+    expect(styles).toMatch(/\.chat-composer-row #chat-input \{[^}]*overflow-y: hidden;/);
+    expect(script).toContain('chatInput.style.overflowY = chatInput.scrollHeight > 140 ? "auto" : "hidden";');
+  });
+});
