@@ -4257,6 +4257,11 @@
     .chat-fold-body > .chat-tool { background: transparent; border-bottom: 0; }
     .chat-fold-body > .chat-turn.assistant .chat-bubble { font-size: 13px; color: var(--text-dim); }
 
+    /* Your just-sent message, before the agent logs it: the same bubble in
+       the same column, only dimmer — no dashed rules around a lane of its own. */
+    .chat-pending { max-width: 46rem; margin: 0 auto 18px; padding: 0 18px; gap: 18px; border: 0; }
+    .chat-pending .chat-turn.user { align-self: flex-end; }
+
     /* Before a running turn has done anything: the same quiet line. */
     .chat-typing {
       display: flex;

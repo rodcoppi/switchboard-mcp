@@ -2272,6 +2272,12 @@ describe("the composer as a card, usage as a bar (design pass, owner 11/10)", ()
     expect(styles).toContain(".chat-composer .status-pill.perm-bypass { --pill-color: var(--st-error); }");
   });
 
+  it("shows a just-sent message as the same bubble, with no dashed rules around it", () => {
+    // Owner, 11/10: "qd eu envio no chat parece umas linhas" — the pending
+    // lane kept the old 880px sheet's dashed border-block.
+    expect(styles).toContain(".chat-pending { max-width: 46rem; margin: 0 auto 18px; padding: 0 18px; gap: 18px; border: 0; }");
+  });
+
   it("says whom you are writing to in the box", () => {
     expect(embeddedFunctionSource("composerPlaceholder")).toContain("`Message ${who}");
   });
