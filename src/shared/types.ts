@@ -68,6 +68,8 @@ export interface Agent {
    */
   lastReply?: string;
   lastReplyAt?: string;
+  /** Messages wait in the CLI's queue (its "ctrl+x ctrl+s to send now" hint). */
+  queued?: boolean;
   role: string; // free-form description, e.g. "backend da API de pagamentos"
   tmuxSession: string; // e.g. "sb-alpha" (prefix + name)
   cwd: string; // directory where the agent CLI was opened

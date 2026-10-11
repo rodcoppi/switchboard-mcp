@@ -105,6 +105,8 @@ export interface PaneStatus {
    * command ran. Never type into a blocked pane.
    */
   blocked: boolean;
+  /** Messages are waiting in the CLI's queue ("ctrl+x ctrl+s to send now"). */
+  queued: boolean;
   /**
    * The operator is MID-SENTENCE in this pane: its prompt line already holds
    * text. A nudge typed now lands inside that half-written prompt and the
@@ -248,13 +250,23 @@ export function parseSubagents(pane: string): SubagentLine[] {
  *   - goalActive: the "/goal active" marker Claude Code prints when a goal runs.
  */
 export function parsePaneStatus(pane: string): PaneStatus {
-  const working = /esc to interrupt/i.test(pane);
+  // Phrases are matched on the TEXT, colours off. The pane is captured with
+  // -e (the composer needs the dim runs), and Claude Code 2.1.29x colours the
+  // footer word by word when bypass is on — "esc⟨SGR⟩ ⟨SGR⟩to⟨SGR⟩ …" — so
+  // the raw match never fired and every bypass agent read idle, mid-turn
+  // included (found 11/10 with a live pane: all 14 online agents "idle").
+  const plain = stripAnsi(pane);
+  const working = /esc to interrupt/i.test(plain);
   // Modal prompts, by their own wording (each verified in a live pane).
   const blocked =
-    /Do you want to (?:proceed|create|make|allow)/i.test(pane) ||
-    /Do you trust the files in this folder\?/i.test(pane) ||
-    /Loading development channels/i.test(pane) ||
-    /❯\s*\d+\.\s/.test(pane); // the numbered choice list a modal renders
+    /Do you want to (?:proceed|create|make|allow)/i.test(plain) ||
+    /Do you trust the files in this folder\?/i.test(plain) ||
+    /Loading development channels/i.test(plain) ||
+    /❯\s*\d+\.\s/.test(plain); // the numbered choice list a modal renders
+  // Messages typed while it works wait in the CLI's queue, drawn grey above
+  // the input with "ctrl+x ctrl+s to send now" (ctrl+enter on terminals that
+  // tell it apart) — verified on a live 2.1.296 pane, 11/10.
+  const queued = /(?:ctrl\+x ctrl\+s|ctrl\+enter) to send now/i.test(plain);
   // The LAST prompt line is the live input (the TUI keeps it at the bottom);
   // anything after the caret is text waiting to be sent. NBSP is what the
   // CLIs pad the caret with, and trim() drops it like any other space.
@@ -328,13 +340,15 @@ export function parsePaneStatus(pane: string): PaneStatus {
   }
   const outputTokens = parseTokenCount(pane);
   const subagents = parseSubagents(pane);
-  const waitMatch = pane.match(/Waiting for \d+ background (?:agents?|tasks?) to finish/i);
+  const waitMatch = plain.match(/Waiting for \d+ background (?:agents?|tasks?) to finish/i);
   const waitingFor = waitMatch ? waitMatch[0] : null;
-  const goalMatch = pane.match(/\/goal active(?:\s*\(([^)]+)\))?/i);
+  const goalMatch = plain.match(/\/goal active(?:\s*\(([^)]+)\))?/i);
   const goalActive = goalMatch !== null;
   const goalFor = goalMatch && goalMatch[1] ? goalMatch[1].trim() : null;
   let permission: AgentPermission | null = null;
-  const m = pane.match(/⏵⏵\s*(.+?)\s*\(shift\+tab/i);
+  // "⏵⏵ bypass permissions on (shift+tab to cycle)" — or, mid-turn, "⏵⏵
+  // bypass permissions on · 1 shell · esc to interrupt", with no shift+tab.
+  const m = plain.match(/⏵⏵\s*([^·(\n]+?)\s*(?:\(shift\+tab|·|$)/im);
   if (m) {
     const t = m[1].toLowerCase();
     permission = t.includes("bypass")
@@ -345,7 +359,7 @@ export function parsePaneStatus(pane: string): PaneStatus {
           ? "plan"
           : "default";
   }
-  return { working, blocked, composerBusy, composerText, composerWrapped, outputTokens, subagents, blockedPrompt, blockedOptions, waitingFor, permission, goalActive, goalFor };
+  return { working, blocked, queued, composerBusy, composerText, composerWrapped, outputTokens, subagents, blockedPrompt, blockedOptions, waitingFor, permission, goalActive, goalFor };
 }
 
 /** Back-compat shim: whether the CLI is mid-turn. */
@@ -676,7 +690,7 @@ export class Dispatcher {
       for (const { name, tmuxSession } of this.store.listAgents()) {
         const agent = this.store.getAgent(name);
         if (!agent || agent.status !== "online") continue;
-        let status: PaneStatus = { working: false, blocked: false, composerBusy: false, composerText: "", composerWrapped: false, outputTokens: null, subagents: [], blockedPrompt: null, blockedOptions: [], waitingFor: null, permission: null, goalActive: false, goalFor: null };
+        let status: PaneStatus = { working: false, blocked: false, queued: false, composerBusy: false, composerText: "", composerWrapped: false, outputTokens: null, subagents: [], blockedPrompt: null, blockedOptions: [], waitingFor: null, permission: null, goalActive: false, goalFor: null };
         try {
           status = parsePaneStatus(await this.tmux.capturePane(tmuxSession, 30, true));
         } catch {
@@ -708,6 +722,7 @@ export class Dispatcher {
         const waitingFor = status.waitingFor ?? "";
         if (
           agent.activity === next &&
+          !!agent.queued === status.queued &&
           agent.permission === permission &&
           !!agent.goalActive === status.goalActive &&
           (agent.goalFor ?? undefined) === goalFor &&
@@ -726,6 +741,7 @@ export class Dispatcher {
           activity: next,
           phase,
           blocked,
+          queued: status.queued,
           composerBusy,
           composerText,
           blockedPrompt,
@@ -872,7 +888,7 @@ export class Dispatcher {
     // this nudge's Enter as its answer. Fail-CLOSED — an unreadable pane is
     // treated as blocked, exactly like the pane guard.
     if (this.tmux.capturePane) {
-      let live: PaneStatus = { working: false, blocked: true, composerBusy: true, composerText: "", composerWrapped: true, outputTokens: null, subagents: [], blockedPrompt: null, blockedOptions: [], waitingFor: null, permission: null, goalActive: false, goalFor: null };
+      let live: PaneStatus = { working: false, blocked: true, queued: false, composerBusy: true, composerText: "", composerWrapped: true, outputTokens: null, subagents: [], blockedPrompt: null, blockedOptions: [], waitingFor: null, permission: null, goalActive: false, goalFor: null };
       try {
         live = parsePaneStatus(await this.tmux.capturePane(agent.tmuxSession, 30, true));
       } catch {

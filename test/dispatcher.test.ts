@@ -602,6 +602,7 @@ describe("parsePaneStatus", () => {
     expect(parsePaneStatus(pane)).toEqual({
       working: true,
       blocked: false,
+      queued: false,
       composerBusy: false,
       composerText: "",
       composerWrapped: true, // the footer sits right under the prompt line
@@ -622,6 +623,7 @@ describe("parsePaneStatus", () => {
     expect(parsePaneStatus(pane)).toEqual({
       working: false,
       blocked: false,
+      queued: false,
       composerBusy: false,
       composerText: "",
       composerWrapped: true, // the footer sits right under the prompt line
@@ -641,6 +643,7 @@ describe("parsePaneStatus", () => {
     expect(parsePaneStatus("just some output\n")).toEqual({
       working: false,
       blocked: false,
+      queued: false,
       composerBusy: false,
       composerText: "",
       composerWrapped: false, // no prompt line at all in this frame

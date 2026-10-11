@@ -999,6 +999,7 @@ function isAgent(value: unknown): value is Agent {
     (v.sessionId === undefined || typeof v.sessionId === "string") &&
     (v.everywhere === undefined || typeof v.everywhere === "boolean") &&
     (v.lastReply === undefined || typeof v.lastReply === "string") &&
-    (v.lastReplyAt === undefined || typeof v.lastReplyAt === "string")
+    (v.lastReplyAt === undefined || typeof v.lastReplyAt === "string") &&
+    (v.queued === undefined || typeof v.queued === "boolean")
   );
 }
