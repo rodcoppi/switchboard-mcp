@@ -997,6 +997,8 @@ function isAgent(value: unknown): value is Agent {
     (v.displayName === undefined || typeof v.displayName === "string") &&
     (v.parent === undefined || typeof v.parent === "string") &&
     (v.sessionId === undefined || typeof v.sessionId === "string") &&
-    (v.everywhere === undefined || typeof v.everywhere === "boolean")
+    (v.everywhere === undefined || typeof v.everywhere === "boolean") &&
+    (v.lastReply === undefined || typeof v.lastReply === "string") &&
+    (v.lastReplyAt === undefined || typeof v.lastReplyAt === "string")
   );
 }

@@ -2229,3 +2229,30 @@ describe("the chat as a conversation (design pass, owner 11/10)", () => {
     expect(styles).toMatch(/\.chat-turn\.assistant \.chat-bubble \{ font-size: 14px; line-height: 1\.62; color: var\(--prose\); \}/);
   });
 });
+
+describe("the agent card (design pass, owner 11/10)", () => {
+  it("shows the last thing the agent said — or, while it asks, the question", () => {
+    const card = embeddedFunctionSource("buildAgentCard");
+    expect(card).toContain("const said = asking || agent.lastReply");
+    expect(card).toContain('el("span", "agent-when", shortAgo(Date.parse(agent.lastReplyAt)))');
+  });
+
+  it("colours asking amber and working blue, with a dot on the face", () => {
+    const status = embeddedFunctionSource("cardStatusOf");
+    expect(status).toContain('if (agent.blocked) return "needs";');
+    expect(status).toContain('return "working";');
+    expect(styles).toContain(".agent-meta .activity.asking { color: var(--st-needs); }");
+    expect(styles).toContain(".agent-stdot.working { background: var(--st-working); }");
+  });
+
+  it("pulls whoever needs you into a strip on top, and leaves it out when nobody does", () => {
+    const strip = embeddedFunctionSource("buildNeedsStrip");
+    expect(strip).toContain("if (!needy.length) return null;");
+    expect(strip).toContain(".filter((a) => a.name !== screenState.name)");
+    expect(embeddedFunctionSource("renderAgents")).toContain("buildNeedsStrip(roster)");
+  });
+
+  it("repaints the rail when the last reply changes, but ages the time in place", () => {
+    expect(embeddedFunctionSource("railSignature")).toContain('a.lastReply || "", a.lastReplyAt || ""');
+  });
+});

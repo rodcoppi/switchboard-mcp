@@ -3,6 +3,8 @@
 // the static dashboard (/). Exported as startHub() so tests can run it on an
 // ephemeral port with a temp data dir and close it cleanly.
 
+import { LastReplies } from "./last-reply.js";
+import { toPublicAgent } from "../shared/types.js";
 import { AgentRequests } from "./agent-requests.js";
 import fs from "node:fs";
 import path from "node:path";
@@ -398,11 +400,29 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
       `--header 'X-Switchboard-Agent-Name: \${SWITCHBOARD_AGENT_NAME}'`,
   );
 
+  // Each agent's last reply, for its card (last-reply.ts): a stat per agent
+  // every few seconds, the transcript's end re-read only when it changed.
+  const lastReplies = new LastReplies(store);
+  const sweepReplies = (): void => {
+    try {
+      for (const name of lastReplies.sweep()) {
+        const agent = store.getAgent(name);
+        if (agent) bus.emit({ type: "agent_updated", payload: toPublicAgent(agent) });
+      }
+    } catch (err) {
+      log.warn(`[hub] last-reply sweep failed: ${(err as Error).message}`);
+    }
+  };
+  sweepReplies();
+  const replyTimer = setInterval(sweepReplies, 4000);
+  replyTimer.unref();
+
   let closed = false;
   async function close(): Promise<void> {
     if (closed) return;
     closed = true;
     log.info(`[hub] shutting down…`);
+    clearInterval(replyTimer);
     dispatcher?.stop();
     launcher?.stop(); // cancel pending kickoff timers/polls
     localStt?.stop(); // free the speech model's RAM / kill the worker

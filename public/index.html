@@ -4269,6 +4269,66 @@
       color: var(--st-working);
     }
     .chat-typing-note { color: var(--text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* The card: status colours, the dot on the face, the last reply. */
+    .agent-meta .activity.working,
+    .agent-meta .activity.waiting { color: var(--st-working); }
+    .agent-meta .activity.asking { color: var(--st-needs); }
+    .agent-meta .agent-when { margin-left: auto; color: var(--text-faint); flex: none; }
+    .agent-meta .agent-when ~ .unread-badge { margin-left: 4px; }
+    .agent-role.agent-last { font-size: 12px; line-height: 1.4; color: var(--text-dim); }
+    .agent-role.agent-last.asking { color: color-mix(in srgb, var(--st-needs) 70%, var(--text)); }
+    .agent-stdot {
+      position: absolute;
+      top: -4px; right: -4px;
+      z-index: 2;
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      border: 2px solid var(--bg);
+      pointer-events: none;
+    }
+    .agent-stdot.needs { background: var(--st-needs); }
+    .agent-stdot.new { background: var(--st-new); }
+    .agent-stdot.working { background: var(--st-working); }
+    .agent-stdot.inline { position: static; flex: none; width: 8px; height: 8px; border: 0; }
+    /* Busy rows step back — dimmed, not animated; the ones that want you stay bright. */
+    .agent-card.st-working .agent-name { color: var(--text-dim); }
+    .agent-card.st-working .agent-portrait { opacity: 0.72; }
+    .agent-card.st-needs .agent-name, .agent-card.st-new .agent-name { color: var(--text); }
+
+    /* "Needs you": only there when someone does. */
+    .needs-strip {
+      margin: 0 0 12px;
+      padding: 6px 6px 4px;
+      border: 1px solid color-mix(in srgb, var(--st-needs) 35%, var(--border-soft));
+      border-radius: 10px;
+      background: color-mix(in srgb, var(--st-needs) 5%, var(--bg-elev));
+    }
+    .needs-head {
+      padding: 2px 6px 4px;
+      font-family: var(--mono);
+      font-size: 10px;
+      letter-spacing: 1.2px;
+      text-transform: uppercase;
+      color: var(--st-needs);
+    }
+    .needs-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      padding: 6px;
+      border: 0;
+      border-radius: 8px;
+      background: none;
+      color: var(--text);
+      text-align: left;
+      cursor: pointer;
+    }
+    .needs-row:hover { background: var(--bg-hover); }
+    .needs-sw { flex: none; width: 10px; height: 10px; border-radius: 50%; }
+    .needs-row b { flex: none; font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+    .needs-why { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; color: var(--text-dim); }
+
     /* What the turn changed, after its answer. */
     .chat-changed { border: 1px solid var(--hair); background: rgba(255, 255, 255, 0.025); border-radius: 10px; }
     .chat-changed-head {
@@ -6465,6 +6525,7 @@
           a.unreadCount || 0, a.muted ? "m" : "", displayOf(a), a.role || "",
           agentTypeOf(a), a.waitingFor || "", a.blocked ? "b" : "", a.permission || "",
           a.goalActive ? "g" : "", a.goalFor || "", blobShapeOf(a.name),
+          a.lastReply || "", a.lastReplyAt || "", a.blockedPrompt || "",
         ].join("\u0001"),
       );
       return [
@@ -6473,6 +6534,36 @@
         [...state.reopening].sort().join(","), [...state.unseen].sort().join(","),
         [...collapsedGroups].sort().join(","), allGroups().join(","), state.group || "",
       ].join("\u0003");
+    }
+
+    /**
+     * "Needs you" (design pass, 11/10): with twenty agents in rooms, the two
+     * that want you — one asking, one finished and unread — sit wherever
+     * their rooms put them. This strip pulls them to the top, and is simply
+     * not there when nobody needs you. The agent whose screen is open is
+     * left out: you are already looking at it.
+     */
+    function buildNeedsStrip(roster) {
+      const needy = roster
+        .filter((a) => a.name !== screenState.name)
+        .map((a) => ({ a, st: cardStatusOf(a) }))
+        .filter((x) => x.st === "needs" || x.st === "new")
+        .sort((x, y) => (x.st === y.st ? 0 : x.st === "needs" ? -1 : 1));
+      if (!needy.length) return null;
+      const strip = el("div", "needs-strip");
+      strip.appendChild(el("div", "needs-head", `needs you · ${needy.length}`));
+      for (const { a, st } of needy) {
+        const row = el("button", `needs-row ${st}`);
+        row.type = "button";
+        const sw = el("span", "needs-sw");
+        sw.style.background = chatColor(a.name) || (Faces && Faces.DEFAULT_COLOR) || "#4ade80";
+        const why = st === "needs" ? "asking you" : "finished · not seen";
+        row.append(sw, el("b", null, displayOf(a)), el("span", "needs-why", why), el("span", `agent-stdot inline ${st}`));
+        row.title = st === "needs" && a.blockedPrompt ? a.blockedPrompt : a.lastReply || why;
+        row.addEventListener("click", () => openScreen(a.name));
+        strip.appendChild(row);
+      }
+      return strip;
     }
 
     function renderAgents() {
@@ -6514,6 +6605,10 @@
       // it sits pinned above the groups instead of inside one.
       const pinned = matching.filter((a) => a.everywhere);
       const agents = matching.filter((a) => !a.everywhere);
+      if (!query) {
+        const strip = buildNeedsStrip(roster);
+        if (strip) container.appendChild(strip);
+      }
       if (pinned.length) {
         const slot = el("div", "rail-pinned");
         for (const a of pinned) slot.appendChild(buildAgentCard(a));
@@ -7059,6 +7154,38 @@
       }
     }
 
+    /** The card's status colour: needs (asking you), new (unseen reply), working, or none. */
+    function cardStatusOf(agent) {
+      if (agent.status !== "online") return null;
+      if (agent.blocked) return "needs";
+      if (agent.activity === "working" || agent.waitingFor) return "working";
+      if (state.unseen.has(agent.name)) return "new";
+      return null;
+    }
+    const CARD_STATUS_TITLES = {
+      needs: "Asking you something",
+      new: "Finished — you have not seen the reply",
+      working: "Working — asks nothing of you",
+    };
+
+    /** "now", "4m", "2h", "3d" — a card's corner, not a sentence. */
+    function shortAgo(ms) {
+      if (!Number.isFinite(ms)) return "";
+      const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
+      if (s < 60) return "now";
+      if (s < 3600) return `${Math.floor(s / 60)}m`;
+      if (s < 86400) return `${Math.floor(s / 3600)}h`;
+      return `${Math.floor(s / 86400)}d`;
+    }
+    // The ages move on their own; rewrite them in place, never rebuilding the
+    // rail for it (a rebuild restarts every face's animation).
+    setInterval(() => {
+      for (const w of document.querySelectorAll(".agent-when[data-at]")) {
+        const next = shortAgo(Date.parse(w.dataset.at));
+        if (w.textContent !== next) w.textContent = next;
+      }
+    }, 30_000);
+
     function buildAgentCard(agent) {
       const card = el("div", "agent-card");
       const born = state.newborn.get(agent.name);
@@ -7143,6 +7270,16 @@
       const badge = el("span", "blob-engine");
       badge.appendChild(agentLogo(type));
       portrait.appendChild(badge);
+      // One status colour set, the same everywhere (design pass, 11/10): a
+      // dot on the face's shoulder — amber wants you, green finished and you
+      // have not looked, blue is busy and asks nothing. No dot: at rest.
+      const st = cardStatusOf(agent);
+      if (st) {
+        card.classList.add(`st-${st}`);
+        const dot = el("span", `agent-stdot ${st}`);
+        dot.title = CARD_STATUS_TITLES[st];
+        portrait.appendChild(dot);
+      }
 
       // NAME LINE: lamp, then the label filling the width. The leader crown
       // sits BEFORE the name (its own thing, never lost among metadata), and the
@@ -7177,11 +7314,21 @@
       meta.append(engine);
       if (online) {
         meta.appendChild(el("span", "sep", "·"));
-        const act = el("span", `activity${working ? " working" : ""}`, working ? "working" : "idle");
-        act.title = working
-          ? "Mid-turn — this agent is generating or running a tool right now."
-          : "Idle — this agent is up and waiting for input.";
+        const word = agent.blocked ? "asking" : agent.waitingFor ? "waiting" : working ? "working" : "idle";
+        const act = el("span", `activity ${word}`, word);
+        act.title = {
+          asking: "Asking you something in its terminal — open it to answer.",
+          waiting: `Waiting: ${agent.waitingFor || ""}`,
+          working: "Mid-turn — this agent is generating or running a tool right now.",
+          idle: "Idle — this agent is up and waiting for input.",
+        }[word];
         meta.appendChild(act);
+      }
+      if (agent.lastReplyAt) {
+        const when = el("span", "agent-when", shortAgo(Date.parse(agent.lastReplyAt)));
+        when.dataset.at = agent.lastReplyAt;
+        when.title = `Last reply ${new Date(agent.lastReplyAt).toLocaleString()}`;
+        meta.appendChild(when);
       }
       if (agent.unreadCount > 0) {
         const badge = el("span", "unread-badge", String(agent.unreadCount));
@@ -7189,8 +7336,13 @@
         meta.appendChild(badge);
       }
 
-      const role = el("div", "agent-role", agent.role || "—");
-      role.title = agent.role || "";
+      // Under the name, the last thing it SAID (owner, 11/10: "a última coisa
+      // que ele falou") — or, while it is asking, the question itself. The
+      // role it was started with is the fallback and the tooltip.
+      const asking = agent.blocked && agent.blockedPrompt ? agent.blockedPrompt.replace(/\s+/g, " ").trim() : "";
+      const said = asking || agent.lastReply || "";
+      const role = el("div", `agent-role${said ? " agent-last" : ""}${asking ? " asking" : ""}`, said || agent.role || "—");
+      role.title = [said, agent.role ? `Role: ${agent.role}` : ""].filter(Boolean).join("\n\n");
 
       // Actions (owner UX feedback: one PRIMARY action per state, the rest in
       // a compact ⋯ menu — four inline buttons crowded the card):

@@ -61,6 +61,13 @@ export interface Agent {
    * own wall. Its broadcast still stays in its own group.
    */
   everywhere?: boolean;
+  /**
+   * The last thing the agent said (its latest reply, markdown off, cut to a
+   * line) and when — for its card on the rail. Read from its transcript by
+   * the hub (last-reply.ts); absent until it has said something.
+   */
+  lastReply?: string;
+  lastReplyAt?: string;
   role: string; // free-form description, e.g. "backend da API de pagamentos"
   tmuxSession: string; // e.g. "sb-alpha" (prefix + name)
   cwd: string; // directory where the agent CLI was opened
