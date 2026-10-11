@@ -2203,3 +2203,29 @@ describe("agents asking for agents, on the board", () => {
     expect(styles).not.toMatch(/animation: agent-born[^;]*infinite/);
   });
 });
+
+describe("the chat as a conversation (design pass, owner 11/10)", () => {
+  it("folds each turn's work behind one line and ends it with what changed", () => {
+    expect(embeddedFunctionSource("renderChat")).toContain("foldTurns(thread);");
+    const seg = embeddedFunctionSource("foldSegment");
+    expect(seg).toContain("worked for");
+    expect(seg).toContain("buildChangedCard(");
+    expect(seg).toContain("if (i === finalIdx || n.dataset.hasShots) return false;"); // the answer and pictures stay out
+  });
+
+  it("counts a turn's edits per file", () => {
+    const card = embeddedFunctionSource("buildChangedCard");
+    expect(card).toContain('FOLD_EDIT_TOOLS.has(it.name)');
+    expect(card).toContain("openInlineFile(file, null)");
+  });
+
+  it("shows the running turn as one quiet line whose clock ticks as text — no bouncing dots", () => {
+    expect(embeddedFunctionSource("tickLiveFolds")).toContain("setInterval(update, 1000)");
+    expect(embeddedFunctionSource("updateChatTyping")).not.toContain("chat-typing-dots");
+  });
+
+  it("puts you on the right and the agent as plain prose", () => {
+    expect(styles).toMatch(/\.chat-turn\.user \{\s*align-self: flex-end;/);
+    expect(styles).toMatch(/\.chat-turn\.assistant \.chat-bubble \{ font-size: 14px; line-height: 1\.62; color: var\(--prose\); \}/);
+  });
+});

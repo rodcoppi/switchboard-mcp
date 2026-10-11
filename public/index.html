@@ -4181,6 +4181,131 @@
     @media (prefers-reduced-motion: reduce) {
       .agent-card.newborn { animation: none; }
     }
+  
+    /* =====================================================================
+       Design pass (owner, 11/10) — what the approved mock (public/
+       mock-design.html, built from the t3code/paseo/orca/hermes study)
+       settled: brighter prose, hairlines, ONE status colour set, the chat as
+       a conversation (you on the right, the agent as prose, work folded).
+       Overrides the zinc rules above; same palette, more contrast.
+       ===================================================================== */
+    :root {
+      --st-working: #5caaf6;  /* asks nothing of you */
+      --st-needs:   #db932e;  /* the ONLY colour that wants you */
+      --st-new:     #35c264;  /* finished, not seen yet */
+      --st-error:   #f7796d;
+      --hair: rgba(255, 255, 255, 0.07);
+      --prose: #e7e7ea;
+    }
+
+    /* Chat: one column, no ledger lines between turns — nor the two rails
+       that framed the old 880px sheet. */
+    .screen-chat { background: var(--bg); }
+    .chat-thread { max-width: 46rem; gap: 18px; padding: 22px 18px 30px; border: 0; background: transparent; }
+    .chat-thread > .chat-fold, .chat-thread > .chat-changed { content-visibility: auto; contain-intrinsic-size: auto 40px; }
+    .chat-turn { padding: 0; border-bottom: 0; background: transparent; gap: 0; }
+    .chat-turn:hover { background: transparent; }
+    .chat-turn > .chat-avatar { display: none; }
+    /* You: a bubble on the right. */
+    .chat-turn.user {
+      align-self: flex-end;
+      max-width: 80%;
+      margin: 0;
+      padding: 9px 14px 10px;
+      background: #222226;
+      border: 0;
+      border-radius: 16px 4px 16px 16px;
+    }
+    .chat-turn.user:hover { background: #26262b; }
+    .chat-turn.user .chat-meta { justify-content: flex-end; }
+    .chat-turn.user .chat-role,
+    .chat-turn .chat-time { font-family: var(--mono); font-size: 10px; letter-spacing: 0; text-transform: lowercase; color: var(--text-faint); }
+    .chat-turn.user .chat-role::after { content: " ·"; }
+    .chat-turn.user .chat-bubble { color: var(--text); font-size: 13.5px; }
+    /* The agent: plain prose — brighter and a step larger. */
+    .chat-turn.assistant .chat-meta { display: none; }
+    .chat-turn.assistant .chat-bubble { font-size: 14px; line-height: 1.62; color: var(--prose); }
+    /* The hub's knocks and peer traffic stay quiet cards in the column. */
+    .chat-turn.nudge { padding: 8px 12px; border: 1px solid var(--hair); border-radius: 10px; }
+
+    /* A turn's work, folded: "worked for 12m 41s · 23 actions ›". */
+    .chat-fold-head {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      max-width: 100%;
+      padding: 2px 0;
+      background: none;
+      border: 0;
+      font-family: var(--mono);
+      font-size: 11.5px;
+      color: var(--text-faint);
+      cursor: pointer;
+      text-align: left;
+    }
+    .chat-fold-head:hover { color: var(--text-dim); }
+    .chat-fold-caret { display: inline-block; flex: none; transition: transform 0.15s var(--ease); }
+    .chat-fold.open > .chat-fold-head .chat-fold-caret,
+    .chat-changed.open .chat-changed-head .chat-fold-caret { transform: rotate(90deg); }
+    .chat-fold-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .chat-fold.live > .chat-fold-head { color: var(--st-working); }
+    .chat-fold-dot { font-size: 9px; }
+    .chat-fold-clock { font-variant-numeric: tabular-nums; }
+    .chat-fold-last { color: var(--text-faint); }
+    .chat-fold-body { display: none; flex-direction: column; gap: 2px; margin: 6px 0 2px 3px; padding-left: 12px; border-left: 1px solid var(--hair); }
+    .chat-fold.open > .chat-fold-body { display: flex; }
+    .chat-fold-body > .chat-tool { background: transparent; border-bottom: 0; }
+    .chat-fold-body > .chat-turn.assistant .chat-bubble { font-size: 13px; color: var(--text-dim); }
+
+    /* Before a running turn has done anything: the same quiet line. */
+    .chat-typing {
+      display: flex;
+      align-items: center;
+      max-width: 46rem;
+      margin: 0 auto 18px;
+      padding: 0 18px;
+      font-family: var(--mono);
+      font-size: 11.5px;
+      color: var(--st-working);
+    }
+    .chat-typing-note { color: var(--text-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* What the turn changed, after its answer. */
+    .chat-changed { border: 1px solid var(--hair); background: rgba(255, 255, 255, 0.025); border-radius: 10px; }
+    .chat-changed-head {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      width: 100%;
+      padding: 9px 12px;
+      background: none;
+      border: 0;
+      font-family: var(--mono);
+      font-size: 11.5px;
+      color: var(--text-dim);
+      cursor: pointer;
+      text-align: left;
+    }
+    .chat-changed-add { color: var(--st-new); }
+    .chat-changed-del { color: var(--st-error); }
+    .chat-changed-list { display: none; flex-direction: column; padding: 0 8px 8px; }
+    .chat-changed.open .chat-changed-list { display: flex; }
+    .chat-changed-file {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      padding: 4px 6px;
+      border-radius: 6px;
+      background: none;
+      border: 0;
+      font-family: var(--mono);
+      font-size: 11px;
+      color: var(--text-dim);
+      cursor: pointer;
+      text-align: left;
+    }
+    .chat-changed-file:hover { background: var(--bg-hover); color: var(--text); }
+    .chat-changed-name { color: var(--text); flex: none; }
+    .chat-changed-dir { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-faint); }
   </style>
 </head>
 <body>
@@ -9116,15 +9241,189 @@
               : it.kind === "marker"
                 ? buildChatMarker(it)
                 : buildChatTurn(it, name);
+        node.__item = it; // the fold reads times, tool names and edits off it
         thread.appendChild(node);
       }
       thread.__count = items.length;
-      groupActions(thread);
+      foldTurns(thread);
       for (const rail of thread.querySelectorAll(".chat-turn-actions")) rail.remove();
       markCopyableTurns(thread);
       markEditableUserTurns(thread);
       markForwardableTurns(thread);
       reconcilePending(view);
+    }
+
+    // --- Turns that fold their work (design pass, owner 11/10) -------------
+    // A finished turn shows what was SAID: your message, then the agent's
+    // final answer. Everything it did on the way — tool calls, thinking,
+    // in-between narration — folds behind one line, "worked for 12m 41s ·
+    // 23 actions ›", and the turn ends with what it changed. The turn still
+    // running is one quiet line with a clock that ticks (text, not
+    // animation: see the no-endless-pulse lesson), its actions one click
+    // away. Folds of finished turns are built once; the last turn's is
+    // rebuilt on every render, since that is the one still growing.
+    const FOLD_EDIT_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
+
+    function isTurnStart(n) {
+      return n.classList.contains("chat-turn") &&
+        (n.classList.contains("user") || (n.classList.contains("nudge") && ![...n.classList].some((c) => c.startsWith("traffic-"))));
+    }
+
+    function foldTurns(thread) {
+      // The last turn is rebuilt: its open fold and its changes card go first.
+      for (const old of thread.querySelectorAll(":scope > .chat-fold:not([data-closed])")) unwrapFold(old);
+      for (const old of thread.querySelectorAll(":scope > .chat-changed:not([data-closed])")) old.remove();
+      const segments = [[]];
+      for (const n of [...thread.children]) {
+        if (isTurnStart(n)) {
+          const seg = [];
+          seg.start = n; // your message (or the hub's knock) that opened this turn
+          segments.push(seg);
+        } else segments[segments.length - 1].push(n);
+      }
+      const agent = screenState.name ? state.agents.get(screenState.name) : null;
+      const working = !!agent && agent.status === "online" && agent.activity === "working";
+      thread.__wasWorking = working;
+      segments.forEach((seg, i) => {
+        const last = i === segments.length - 1;
+        if (seg.some((n) => n.dataset.closed)) return; // folded for good already
+        foldSegment(thread, seg, { live: last && working, closed: !last });
+      });
+      tickLiveFolds();
+    }
+
+    function unwrapFold(fold) {
+      const body = fold.querySelector(":scope > .chat-fold-body");
+      if (body) for (const n of [...body.children]) fold.parentNode.insertBefore(n, fold);
+      if (fold.__marker) fold.__marker.hidden = false; // folded again below, or shown
+      fold.remove();
+    }
+
+    function foldSegment(thread, seg, { live, closed }) {
+      const isAnswer = (n) => n.classList.contains("chat-turn") && n.classList.contains("assistant");
+      let finalIdx = -1;
+      if (!live) for (let i = seg.length - 1; i >= 0; i--) if (isAnswer(seg[i])) { finalIdx = i; break; }
+      const foldable = seg.filter((n, i) => {
+        if (i === finalIdx || n.dataset.hasShots) return false;
+        if (n.classList.contains("chat-tool") || n.classList.contains("chat-tool-group") || n.classList.contains("chat-thinking")) return true;
+        return isAnswer(n) && (live || i < finalIdx);
+      });
+      const toolNodes = foldable.filter((n) => n.classList.contains("chat-tool"));
+      if (!toolNodes.length) return; // pure conversation: nothing to fold
+      const items = seg.map((n) => n.__item).filter(Boolean);
+      const marker = seg.find((n) => n.classList.contains("chat-marker") && /worked for /.test(n.textContent));
+      const fold = el("div", `chat-fold${live ? " live" : ""}`);
+      if (closed) fold.dataset.closed = "1";
+      const head = el("button", "chat-fold-head");
+      head.type = "button";
+      head.appendChild(el("span", "chat-fold-caret", "›"));
+      const label = el("span", "chat-fold-label");
+      if (live) {
+        // The clock runs from your message: how long the agent has been at it.
+        const startTs = (seg.start && seg.start.__item && seg.start.__item.ts) || (items.find((it) => it.ts) || {}).ts;
+        const lastTool = [...toolNodes].reverse()[0].__item;
+        label.append(
+          el("span", "chat-fold-dot", "●"),
+          document.createTextNode(" working · "),
+          el("span", "chat-fold-clock", "0s"),
+        );
+        if (startTs) label.querySelector(".chat-fold-clock").dataset.start = String(Date.parse(startTs));
+        if (lastTool) label.appendChild(el("span", "chat-fold-last", ` — ${lastTool.summary}`));
+      } else {
+        const took = marker ? marker.textContent.replace(/^\W*/, "").replace(/^worked for /, "") : spanOf(items);
+        label.textContent = `${took ? `worked for ${took}` : "worked"} · ${toolNodes.length} action${toolNodes.length === 1 ? "" : "s"}`;
+      }
+      head.appendChild(label);
+      const body = el("div", "chat-fold-body");
+      thread.insertBefore(fold, foldable[0]);
+      for (const n of foldable) body.appendChild(n);
+      fold.append(head, body);
+      if (marker) { marker.hidden = true; fold.__marker = marker; }
+      head.setAttribute("aria-expanded", "false");
+      head.addEventListener("click", () => {
+        const open = fold.classList.toggle("open");
+        head.setAttribute("aria-expanded", String(open));
+      });
+      // Re-open what was open before this render rebuilt it.
+      if (thread.__openLiveFold && live) { fold.classList.add("open"); head.setAttribute("aria-expanded", "true"); }
+      if (live) head.addEventListener("click", () => { thread.__openLiveFold = fold.classList.contains("open"); });
+      // What the turn changed, after its answer.
+      if (!live && finalIdx !== -1) {
+        const card = buildChangedCard(toolNodes.map((n) => n.__item).filter(Boolean));
+        if (card) {
+          if (closed) card.dataset.closed = "1";
+          seg[finalIdx].after(card);
+        }
+      }
+    }
+
+    /** "3m 12s" between a turn's first and last timestamps, or "". */
+    function spanOf(items) {
+      const times = items.map((it) => Date.parse(it.ts || "")).filter((t) => !Number.isNaN(t));
+      if (times.length < 2) return "";
+      const secs = Math.round((Math.max(...times) - Math.min(...times)) / 1000);
+      return fmtSpan(secs);
+    }
+    function fmtSpan(secs) {
+      if (secs < 60) return `${secs}s`;
+      const m = Math.floor(secs / 60);
+      if (m < 60) return `${m}m ${String(secs % 60).padStart(2, "0")}s`;
+      return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, "0")}m`;
+    }
+
+    /** One line per finished turn: which files its edits touched, +added −removed. */
+    function buildChangedCard(toolItems) {
+      const files = new Map();
+      const lines = (t) => (typeof t === "string" && t.length ? t.split("\n").length : 0);
+      for (const it of toolItems) {
+        if (!FOLD_EDIT_TOOLS.has(it.name)) continue;
+        const input = it.input || {};
+        const file = input.file_path || input.notebook_path;
+        if (!file || it.isError) continue;
+        const f = files.get(file) || { add: 0, del: 0 };
+        if (it.name === "Write") f.add += lines(input.content);
+        else if (it.name === "MultiEdit" && Array.isArray(input.edits)) {
+          for (const e of input.edits) { f.add += lines(e.new_string); f.del += lines(e.old_string); }
+        } else { f.add += lines(input.new_string ?? input.new_source); f.del += lines(input.old_string); }
+        files.set(file, f);
+      }
+      if (!files.size) return null;
+      let add = 0, del = 0;
+      for (const f of files.values()) { add += f.add; del += f.del; }
+      const card = el("div", "chat-changed");
+      const head = el("button", "chat-changed-head");
+      head.type = "button";
+      head.append(
+        el("span", "chat-fold-caret", "›"),
+        el("span", null, `${files.size} file${files.size === 1 ? "" : "s"} changed `),
+        el("span", "chat-changed-add", `+${add}`),
+        el("span", "chat-changed-del", ` −${del}`),
+      );
+      const list = el("div", "chat-changed-list");
+      for (const [file, f] of files) {
+        const row = el("button", "chat-changed-file");
+        row.type = "button";
+        row.title = `Preview ${file}`;
+        row.append(el("span", "chat-changed-name", file.split("/").pop()), el("span", "chat-changed-dir", file.replace(/\/[^/]*$/, "")),
+          el("span", "chat-changed-add", `+${f.add}`), el("span", "chat-changed-del", ` −${f.del}`));
+        row.addEventListener("click", (ev) => { ev.stopPropagation(); openInlineFile(file, null); });
+        list.appendChild(row);
+      }
+      head.addEventListener("click", () => card.classList.toggle("open"));
+      card.append(head, list);
+      return card;
+    }
+
+    /** The running turn's clock: plain text, once a second, only while one is shown. */
+    let liveFoldTimer = null;
+    function tickLiveFolds() {
+      const update = () => {
+        const clocks = document.querySelectorAll(".chat-fold.live .chat-fold-clock[data-start], .chat-typing .chat-fold-clock[data-start]");
+        if (!clocks.length) { clearInterval(liveFoldTimer); liveFoldTimer = null; return; }
+        for (const c of clocks) c.textContent = fmtSpan(Math.max(0, Math.round((Date.now() - Number(c.dataset.start)) / 1000)));
+      };
+      update();
+      if (!liveFoldTimer && document.querySelector(".chat-fold.live, .chat-typing .chat-fold-clock")) liveFoldTimer = setInterval(update, 1000);
     }
 
     /**
@@ -9233,6 +9532,14 @@
     }
 
     function updateChatTyping() {
+      // The running turn's line becomes "worked for…" the moment the agent
+      // stops (and the other way round) — refold only on that change.
+      {
+        const thread = document.querySelector("#screen-chat .chat-thread");
+        const a = screenState.name ? state.agents.get(screenState.name) : null;
+        const working = !!a && a.status === "online" && a.activity === "working";
+        if (thread && thread.__wasWorking !== working) foldTurns(thread);
+      }
       const view = $("#screen-chat");
       if (!view) return;
       const off = () => view.querySelector(".chat-typing")?.remove();
@@ -9243,24 +9550,33 @@
       // but spawned work is still pending — without this the chat rendered
       // the conversation as FINISHED while the terminal showed the wait.
       const waiting = !working && !!(agent && agent.waitingFor);
-      const busy = working || waiting;
+      // A running turn that already did something shows as its own live line
+      // in the thread; this one only covers the moments before that (thinking,
+      // writing, waiting on background agents). Same quiet line, a clock that
+      // ticks as text — the bouncing dots were an endless animation by the text.
+      const busy = (working || waiting) && !view.querySelector(".chat-fold.live");
       let ind = view.querySelector(".chat-typing");
       if (busy && !ind) {
         ind = el("div", "chat-typing");
-        const dots = el("div", "chat-typing-dots");
-        dots.append(el("span"), el("span"), el("span"));
-        ind.append(buildChatAvatar(false, screenState.name), dots, el("span", "chat-typing-note"));
+        const clock = el("span", "chat-fold-clock", "0s");
+        const users = view.querySelectorAll(".chat-thread > .chat-turn.user");
+        const lastUser = users[users.length - 1];
+        const ts = lastUser && lastUser.__item && lastUser.__item.ts;
+        if (ts) clock.dataset.start = String(Date.parse(ts));
+        ind.append(el("span", "chat-fold-dot", "●"), el("span", "chat-typing-word", " working · "), clock, el("span", "chat-typing-note"));
         const atBottom = view.scrollHeight - view.scrollTop - view.clientHeight < 120;
         view.appendChild(ind);
         if (atBottom) view.scrollTop = view.scrollHeight;
+        tickLiveFolds();
       } else if (!busy && ind) {
         ind.remove();
         ind = null;
       }
       if (ind) {
-        // The literal TUI line while waiting; nothing while actively typing.
+        // The literal TUI line while waiting; nothing more while working.
+        ind.querySelector(".chat-typing-word").textContent = waiting ? " waiting · " : " working · ";
         const note = ind.querySelector(".chat-typing-note");
-        if (note) note.textContent = waiting ? agent.waitingFor : "";
+        if (note) note.textContent = waiting ? ` — ${agent.waitingFor}` : "";
       }
     }
 
