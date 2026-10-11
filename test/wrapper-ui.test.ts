@@ -2345,3 +2345,17 @@ describe("the live line holds still (owner, 11/10: the text 'tremia')", () => {
     expect(styles).toMatch(/\.chat-live-line \{[^}]*height: 18px;/);
   });
 });
+
+describe("the CLI's heads-up notes in the chat (owner, 11/10)", () => {
+  it("shows the note above the composer with the terminal's own keyed choices", () => {
+    const fn = embeddedFunctionSource("updateChatHeadsUp");
+    expect(fn).toContain('const host = $("#composer-ask");');
+    expect(fn).toContain("await sendPaneBytes(screenState.name, o.key);");
+    expect(fn).toContain("if (live && live.composerBusy)"); // a key into half-typed text would land in it
+    expect(embeddedFunctionSource("updateStopButton")).toContain("updateChatHeadsUp();");
+  });
+
+  it("says a message with a picture waits for the whole task", () => {
+    expect(embeddedFunctionSource("updatePendingStates")).toContain('"in line · reads it when this task ends"');
+  });
+});

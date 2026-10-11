@@ -1003,6 +1003,7 @@ function isAgent(value: unknown): value is Agent {
     (v.queued === undefined || typeof v.queued === "boolean") &&
     (v.turnStartedAt === undefined || typeof v.turnStartedAt === "string") &&
     (v.spinnerVerb === undefined || typeof v.spinnerVerb === "string") &&
-    (v.spinnerNote === undefined || typeof v.spinnerNote === "string")
+    (v.spinnerNote === undefined || typeof v.spinnerNote === "string") &&
+    (v.headsUp === undefined || v.headsUp === null || (typeof v.headsUp === "object" && typeof (v.headsUp as { text?: unknown }).text === "string"))
   );
 }

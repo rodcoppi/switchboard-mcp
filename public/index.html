@@ -4263,7 +4263,8 @@
       vertical-align: -0.12em;
     }
     .chat-live-line { display: inline-flex; align-items: center; height: 18px; min-width: 0; white-space: nowrap; }
-    .chat-live-line > span { flex: none; }
+    /* Flex items drop their edge spaces: "· working · " kept as typed. */
+    .chat-live-line > span { flex: none; white-space: pre; }
     .chat-live-line > .chat-fold-last, .chat-live-line > .chat-live-note { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
     .chat-live-note, .chat-fold-last { color: var(--text-faint); }
     .chat-fold-clock { font-variant-numeric: tabular-nums; }
@@ -4395,6 +4396,29 @@
     }
     .composer-ask .chat-ask-eyebrow { color: var(--st-needs); letter-spacing: 1.2px; text-transform: uppercase; font-size: 10px; }
     .composer-ask .chat-ask-q { white-space: pre-wrap; font-family: var(--sans); font-size: 13.5px; }
+    /* A heads-up is advice, not a question: quieter than .chat-ask. */
+    .chat-headsup {
+      margin: 0 0 8px;
+      padding: 10px 14px;
+      border: 1px solid color-mix(in srgb, var(--st-working) 30%, var(--border-soft));
+      border-radius: 14px;
+      background: color-mix(in srgb, var(--st-working) 5%, var(--bg-elev));
+    }
+    .chat-headsup-eyebrow { font-family: var(--mono); font-size: 10px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--st-working); margin-bottom: 4px; }
+    .chat-headsup-text { font-family: var(--sans); font-size: 13px; line-height: 1.5; color: var(--text); }
+    .chat-headsup-options { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .chat-headsup-opt {
+      padding: 3px 10px;
+      border: 1px solid var(--border);
+      border-radius: 99px;
+      background: transparent;
+      color: var(--text-dim);
+      font-family: var(--mono);
+      font-size: 11px;
+      cursor: pointer;
+    }
+    .chat-headsup-opt:hover:not(:disabled) { color: var(--text); border-color: var(--border-strong); }
+    .chat-headsup-opt:disabled { opacity: 0.5; cursor: default; }
     .composer-ask .chat-ask-opt:first-child { background: var(--accent); border-color: var(--accent); color: var(--accent-fg, #111); font-weight: 600; }
     .chat-composer-inner {
       max-width: 46rem;
@@ -10023,7 +10047,14 @@
         const label = turn.querySelector(".chat-sending");
         if (turn.dataset.state === state && !!turn.querySelector(".chat-sendnow") === canSendNow) continue;
         turn.dataset.state = state;
-        if (label) label.textContent = state === "queued" ? "in line · reads it after this step" : "delivered";
+        // A message carrying a picture is not taken mid-turn: the CLI holds
+        // it until the whole task ends (seen live 11/10, and Claude Code's own
+        // heads-up says so). Text-only ones are read after the current step.
+        const withImage = /\.(?:png|jpe?g|gif|webp|bmp)\b/i.test(turn.dataset.echo || "");
+        if (label) {
+          label.textContent = state !== "queued" ? "delivered"
+            : withImage ? "in line · reads it when this task ends" : "in line · reads it after this step";
+        }
         turn.querySelector(".chat-sendnow-row")?.remove();
         if (state === "queued" && canSendNow) {
           const btn = el("button", "chat-sendnow", "send now");
@@ -10301,6 +10332,57 @@
       view.appendChild(box);
     }
 
+    /**
+     * Claude Code's "✦ Heads up" notes — advice it only ever draws in the
+     * pane (owner, 11/10: "é bom pra caramba, mas não tem no chat"). The hub
+     * reads them off the screen; here they sit above the composer, quieter
+     * than a question, with the same keyed choices the terminal offers.
+     */
+    function updateChatHeadsUp() {
+      const host = $("#composer-ask");
+      if (!host) return;
+      const old = host.querySelector(".chat-headsup");
+      const agent = liveScreenAgent();
+      const note = agent && screenState.mode === "chat" ? agent.headsUp : null;
+      if (!note || !note.text) {
+        old?.remove();
+        return;
+      }
+      const signature = note.text + "|" + (note.options || []).map((o) => o.key + o.label).join("|");
+      if (old && old.dataset.signature === signature) return;
+      old?.remove();
+      const box = el("div", "chat-headsup");
+      box.dataset.signature = signature;
+      box.append(el("div", "chat-headsup-eyebrow", "✦ heads up"), el("div", "chat-headsup-text", note.text));
+      if (note.options && note.options.length) {
+        const row = el("div", "chat-headsup-options");
+        for (const o of note.options) {
+          const b = el("button", "chat-headsup-opt", o.label);
+          b.type = "button";
+          b.title = `Presses ${o.key} in ${displayOf(agent.name)}'s terminal`;
+          b.addEventListener("click", async () => {
+            const live = liveScreenAgent();
+            // With text in its prompt, the key would land in that text instead.
+            if (live && live.composerBusy) {
+              toast("Its prompt holds unsent text — send or clear it first, then answer the note.", "warn");
+              return;
+            }
+            for (const other of row.querySelectorAll("button")) other.disabled = true;
+            try {
+              await sendPaneBytes(screenState.name, o.key);
+            } catch (err) {
+              for (const other of row.querySelectorAll("button")) other.disabled = false;
+              toast(`Could not answer: ${err && err.message ? err.message : err}`, "warn");
+            }
+          });
+          row.appendChild(b);
+        }
+        box.appendChild(row);
+      }
+      // Under the agent's own question when both are up: that one blocks it.
+      host.appendChild(box);
+    }
+
     /** Types the chosen number into the pane — how these lists are answered. */
     async function answerAgentAsk(name, choice) {
       await sendPaneBytes(name, String(choice));
@@ -10310,6 +10392,7 @@
     // agent is open, we're in chat mode, and that agent is mid-turn (working).
     function updateStopButton() {
       updateChatAsk();
+      updateChatHeadsUp();
       updateChatStall();
       updateChatSubagents();
       const btn = $("#chat-stop");
@@ -12909,6 +12992,7 @@
           if (event.payload.name === screenState.name) {
             refreshLiveLines(); // verb / note / turn start ride agent_updated
             updatePendingStates(); // the CLI's queue too
+            updateChatHeadsUp(); // and its heads-up notes
           }
           break;
         case "agent_request":

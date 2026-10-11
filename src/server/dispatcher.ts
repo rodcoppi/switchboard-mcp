@@ -94,6 +94,8 @@ export interface SubagentLine {
   tokens: string | null;
 }
 
+export type HeadsUp = NonNullable<Agent["headsUp"]>;
+
 export interface PaneStatus {
   working: boolean;
   /**
@@ -109,6 +111,8 @@ export interface PaneStatus {
   queued: boolean;
   /** The CLI's live line while it works ("Canoodling… (23s · thinking more…)"). */
   spinner: { verb: string; seconds: number; note: string } | null;
+  /** A "✦ Heads up" note on screen, with its keyed choices. */
+  headsUp: HeadsUp | null;
   /**
    * The operator is MID-SENTENCE in this pane: its prompt line already holds
    * text. A nudge typed now lands inside that half-written prompt and the
@@ -270,6 +274,7 @@ export function parsePaneStatus(pane: string): PaneStatus {
   // tell it apart) — verified on a live 2.1.296 pane, 11/10.
   const queued = /(?:ctrl\+x ctrl\+s|ctrl\+enter) to send now/i.test(plain);
   const spinner = working ? parseSpinner(plain) : null;
+  const headsUp = parseHeadsUp(plain);
   // The LAST prompt line is the live input (the TUI keeps it at the bottom);
   // anything after the caret is text waiting to be sent. NBSP is what the
   // CLIs pad the caret with, and trim() drops it like any other space.
@@ -362,7 +367,7 @@ export function parsePaneStatus(pane: string): PaneStatus {
           ? "plan"
           : "default";
   }
-  return { working, blocked, queued, spinner, composerBusy, composerText, composerWrapped, outputTokens, subagents, blockedPrompt, blockedOptions, waitingFor, permission, goalActive, goalFor };
+  return { working, blocked, queued, spinner, headsUp, composerBusy, composerText, composerWrapped, outputTokens, subagents, blockedPrompt, blockedOptions, waitingFor, permission, goalActive, goalFor };
 }
 
 /**
@@ -371,6 +376,7 @@ export function parsePaneStatus(pane: string): PaneStatus {
  *   · Canoodling… (23s · thinking more with xhigh effort)
  *   * Kneading… (9s · ↓ 113 tokens)
  *   • Working (12s • esc to interrupt)            (codex)
+ *   + Topsy-turvying… (19s · still thinking …)   ("+" is one of its frames too)
  *
  * verb = "Canoodling…", seconds = its count of THIS turn (23), note = what is
  * left once the clock, the token count and the key hint are taken out. The
@@ -381,7 +387,7 @@ export function parseSpinner(plain: string): { verb: string; seconds: number; no
   let found: { verb: string; seconds: number; note: string } | null = null;
   for (const line of plain.split("\n")) {
     // The clock is "23s", "1m 9s", or — on a long turn — just "30m" / "1h 2m".
-    const m = /^\s*[·•✢✳✶✻✽*]\s+(\S[^(\n]*?)\s*\(\s*(?:(\d+)h\s*)?(?:(\d+)m\s*)?(?:(\d+)s)?(?=\s*(?:[·•)]|$))([^)]*)\)/.exec(line);
+    const m = /^\s*[·•✢✳✶✻✽*+]\s+(\S[^(\n]*?)\s*\(\s*(?:(\d+)h\s*)?(?:(\d+)m\s*)?(?:(\d+)s)?(?=\s*(?:[·•)]|$))([^)]*)\)/.exec(line);
     if (!m || (m[2] === undefined && m[3] === undefined && m[4] === undefined)) continue;
     const seconds = Number(m[2] || 0) * 3600 + Number(m[3] || 0) * 60 + Number(m[4] || 0);
     const note = m[5]
@@ -390,6 +396,41 @@ export function parseSpinner(plain: string): { verb: string; seconds: number; no
       .filter((p) => p && !/tokens?\b/i.test(p) && !/esc to interrupt/i.test(p))
       .join(" · ");
     found = { verb: m[1].trim().slice(0, 40), seconds, note: note.slice(0, 80) };
+  }
+  return found;
+}
+
+/**
+ * Claude Code's "Heads up" notes — advice it draws in the pane and never
+ * writes to the transcript, so the chat had no way to show them (owner,
+ * 11/10: "é bom pra caramba, mas não tem no chat"):
+ *
+ *   ✦ Heads up · Quando o agente está ocupado, uma mensagem com print só é
+ *     lida no fim da tarefa inteira…
+ *     1: Learn more   2: Knew this already   0: Dismiss
+ *
+ * The text runs on over indented lines until the key line. The LAST note on
+ * screen wins. Exported for tests.
+ */
+export function parseHeadsUp(plain: string): HeadsUp | null {
+  const lines = plain.split("\n");
+  let found: HeadsUp | null = null;
+  for (let i = 0; i < lines.length; i++) {
+    const m = /^\s*✦\s*Heads up\s*[·•:-]\s*(.*)$/i.exec(lines[i]);
+    if (!m) continue;
+    let text = m[1].trim();
+    const options: HeadsUp["options"] = [];
+    for (let j = i + 1; j < lines.length && j <= i + 10; j++) {
+      const line = lines[j];
+      if (/^\s*\d:\s+\S/.test(line)) {
+        for (const o of line.matchAll(/(\d):\s+(.+?)(?=\s{2,}\d:|\s*$)/g)) options.push({ key: o[1], label: o[2].trim().slice(0, 40) });
+        break;
+      }
+      if (!line.trim() || /^[\s\u2500-\u257F]+$/.test(line) || /^\s*[❯›>]/.test(line)) break;
+      text += ` ${line.trim()}`;
+    }
+    text = text.replace(/\s+/g, " ").trim();
+    if (text) found = { text: text.slice(0, 500), options: options.slice(0, 4) };
   }
   return found;
 }
@@ -722,7 +763,7 @@ export class Dispatcher {
       for (const { name, tmuxSession } of this.store.listAgents()) {
         const agent = this.store.getAgent(name);
         if (!agent || agent.status !== "online") continue;
-        let status: PaneStatus = { working: false, blocked: false, queued: false, spinner: null, composerBusy: false, composerText: "", composerWrapped: false, outputTokens: null, subagents: [], blockedPrompt: null, blockedOptions: [], waitingFor: null, permission: null, goalActive: false, goalFor: null };
+        let status: PaneStatus = { working: false, blocked: false, queued: false, spinner: null, headsUp: null, composerBusy: false, composerText: "", composerWrapped: false, outputTokens: null, subagents: [], blockedPrompt: null, blockedOptions: [], waitingFor: null, permission: null, goalActive: false, goalFor: null };
         try {
           status = parsePaneStatus(await this.tmux.capturePane(tmuxSession, 30, true));
         } catch {
@@ -775,6 +816,7 @@ export class Dispatcher {
           (agent.turnStartedAt ?? "") === turnStartedAt &&
           (agent.spinnerVerb ?? "") === spinnerVerb &&
           (agent.spinnerNote ?? "") === spinnerNote &&
+          JSON.stringify(agent.headsUp ?? null) === JSON.stringify(status.headsUp) &&
           agent.permission === permission &&
           !!agent.goalActive === status.goalActive &&
           (agent.goalFor ?? undefined) === goalFor &&
@@ -797,6 +839,7 @@ export class Dispatcher {
           turnStartedAt,
           spinnerVerb,
           spinnerNote,
+          headsUp: status.headsUp, // null clears it: updateAgent skips only undefined
           composerBusy,
           composerText,
           blockedPrompt,
@@ -943,7 +986,7 @@ export class Dispatcher {
     // this nudge's Enter as its answer. Fail-CLOSED — an unreadable pane is
     // treated as blocked, exactly like the pane guard.
     if (this.tmux.capturePane) {
-      let live: PaneStatus = { working: false, blocked: true, queued: false, spinner: null, composerBusy: true, composerText: "", composerWrapped: true, outputTokens: null, subagents: [], blockedPrompt: null, blockedOptions: [], waitingFor: null, permission: null, goalActive: false, goalFor: null };
+      let live: PaneStatus = { working: false, blocked: true, queued: false, spinner: null, headsUp: null, composerBusy: true, composerText: "", composerWrapped: true, outputTokens: null, subagents: [], blockedPrompt: null, blockedOptions: [], waitingFor: null, permission: null, goalActive: false, goalFor: null };
       try {
         live = parsePaneStatus(await this.tmux.capturePane(agent.tmuxSession, 30, true));
       } catch {

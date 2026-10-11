@@ -4,7 +4,7 @@
 // made every bypass agent read "idle" mid-turn.
 
 import { describe, expect, it } from "vitest";
-import { parsePaneStatus, parseSpinner } from "../src/server/dispatcher.js";
+import { parseHeadsUp, parsePaneStatus, parseSpinner } from "../src/server/dispatcher.js";
 
 const E = "\u001b";
 const grey = (t: string) => `${E}[38;5;246m${t}${E}[39m`;
@@ -56,6 +56,8 @@ describe("the CLI's live line", () => {
     expect(parseSpinner("* Kneading… (1m 9s · ↓ 113 tokens)")).toEqual({ verb: "Kneading…", seconds: 69, note: "" });
     expect(parseSpinner("• Working (12s • esc to interrupt)")).toEqual({ verb: "Working", seconds: 12, note: "" });
     expect(parseSpinner("· Transfiguring… (1h 2m · ↓ 108k tokens)")?.seconds).toBe(3720);
+    // "+" is one of its frames on the owner's terminal (screenshot, 11/10)
+    expect(parseSpinner("+ Topsy-turvying… (19s · still thinking with xhigh effort)")?.verb).toBe("Topsy-turvying…");
   });
 
   it("is not a finished turn's summary, and the last running line wins", () => {
@@ -66,5 +68,37 @@ describe("the CLI's live line", () => {
   it("rides the pane status only while it works", () => {
     expect(parsePaneStatus(QUEUED_PANE).spinner).toEqual({ verb: "Kneading…", seconds: 9, note: "" });
     expect(parsePaneStatus("· Canoodling… (23s)\n❯ \n").spinner).toBeNull(); // no "esc to interrupt": not working
+  });
+});
+
+describe("Claude Code's heads-up notes (pane only, never in the transcript)", () => {
+  const PANE = [
+    "+ Canoodling… (7m 18s · ↓ 35.0k tokens · thought for 2s)",
+    "                                                   [-]",
+    "✦ Heads up · When the agent is busy, a message carrying a picture is read only when the",
+    "  whole task ends.",
+    "  1: Learn more   2: Knew this already   0: Dismiss",
+    "",
+    "────────────",
+    "❯ ",
+    "────────────",
+    "  ⏵⏵ bypass permissions on · esc to interrupt",
+  ].join("\n");
+
+  it("reads the note across its wrapped lines, with its keyed choices", () => {
+    expect(parseHeadsUp(PANE)).toEqual({
+      text: "When the agent is busy, a message carrying a picture is read only when the whole task ends.",
+      options: [
+        { key: "1", label: "Learn more" },
+        { key: "2", label: "Knew this already" },
+        { key: "0", label: "Dismiss" },
+      ],
+    });
+    expect(parsePaneStatus(PANE).headsUp?.options).toHaveLength(3);
+  });
+
+  it("is null when no note is on screen", () => {
+    expect(parseHeadsUp("❯ \n  ⏵⏵ bypass permissions on")).toBeNull();
+    expect(parsePaneStatus(QUEUED_PANE).headsUp).toBeNull();
   });
 });
