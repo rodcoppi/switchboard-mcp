@@ -4248,7 +4248,23 @@
     .chat-changed.open .chat-changed-head .chat-fold-caret { transform: rotate(90deg); }
     .chat-fold-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .chat-fold.live > .chat-fold-head { color: var(--st-working); }
-    .chat-spin { display: inline-block; width: 1.1em; text-align: center; }
+    /* The glyphs come from different fallback fonts, each with its own
+       height: a free box changed the line's height on every frame and the
+       text around it shook (owner, 11/10). A fixed box, out of the line's
+       own metrics, holds everything still. */
+    .chat-spin {
+      display: inline-block;
+      flex: none;
+      width: 1.1em;
+      height: 1em;
+      line-height: 1em;
+      overflow: hidden;
+      text-align: center;
+      vertical-align: -0.12em;
+    }
+    .chat-live-line { display: inline-flex; align-items: center; height: 18px; min-width: 0; white-space: nowrap; }
+    .chat-live-line > span { flex: none; }
+    .chat-live-line > .chat-fold-last, .chat-live-line > .chat-live-note { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
     .chat-live-note, .chat-fold-last { color: var(--text-faint); }
     .chat-fold-clock { font-variant-numeric: tabular-nums; }
     .chat-fold-last { color: var(--text-faint); }

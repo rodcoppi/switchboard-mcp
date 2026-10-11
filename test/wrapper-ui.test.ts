@@ -2338,3 +2338,10 @@ describe("what it has read and what it will read (owner, 11/10)", () => {
     expect(script).toContain('chatInput.style.overflowY = chatInput.scrollHeight > 140 ? "auto" : "hidden";');
   });
 });
+
+describe("the live line holds still (owner, 11/10: the text 'tremia')", () => {
+  it("gives the turning glyph a fixed box, so no frame changes the line's height", () => {
+    expect(styles).toMatch(/\.chat-spin \{[^}]*height: 1em;[^}]*line-height: 1em;[^}]*overflow: hidden;/);
+    expect(styles).toMatch(/\.chat-live-line \{[^}]*height: 18px;/);
+  });
+});
