@@ -70,6 +70,14 @@ export interface Agent {
   lastReplyAt?: string;
   /** Messages wait in the CLI's queue (its "ctrl+x ctrl+s to send now" hint). */
   queued?: boolean;
+  /**
+   * While it works: when this turn began (the CLI's own count, on the hub's
+   * clock) and the CLI's live line — verb ("Canoodling…") and note ("thinking
+   * more with xhigh effort"). "" when idle.
+   */
+  turnStartedAt?: string;
+  spinnerVerb?: string;
+  spinnerNote?: string;
   role: string; // free-form description, e.g. "backend da API de pagamentos"
   tmuxSession: string; // e.g. "sb-alpha" (prefix + name)
   cwd: string; // directory where the agent CLI was opened

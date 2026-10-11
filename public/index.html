@@ -4202,7 +4202,6 @@
        that framed the old 880px sheet. */
     .screen-chat { background: var(--bg); }
     .chat-thread { max-width: 46rem; gap: 18px; padding: 22px 18px 30px; border: 0; background: transparent; }
-    .chat-thread > .chat-fold, .chat-thread > .chat-changed { content-visibility: auto; contain-intrinsic-size: auto 40px; }
     .chat-turn { padding: 0; border-bottom: 0; background: transparent; gap: 0; }
     .chat-turn:hover { background: transparent; }
     .chat-turn > .chat-avatar { display: none; }
@@ -4249,7 +4248,8 @@
     .chat-changed.open .chat-changed-head .chat-fold-caret { transform: rotate(90deg); }
     .chat-fold-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .chat-fold.live > .chat-fold-head { color: var(--st-working); }
-    .chat-fold-dot { font-size: 9px; }
+    .chat-spin { display: inline-block; width: 1.1em; text-align: center; }
+    .chat-live-note, .chat-fold-last { color: var(--text-faint); }
     .chat-fold-clock { font-variant-numeric: tabular-nums; }
     .chat-fold-last { color: var(--text-faint); }
     .chat-fold-body { display: none; flex-direction: column; gap: 2px; margin: 6px 0 2px 3px; padding-left: 12px; border-left: 1px solid var(--hair); }
@@ -6710,7 +6710,7 @@
           a.unreadCount || 0, a.muted ? "m" : "", displayOf(a), a.role || "",
           agentTypeOf(a), a.waitingFor || "", a.blocked ? "b" : "", a.permission || "",
           a.goalActive ? "g" : "", a.goalFor || "", blobShapeOf(a.name),
-          a.lastReply || "", a.lastReplyAt || "", a.blockedPrompt || "", a.queued ? "q" : "",
+          a.lastReply || "", a.lastReplyAt || "", a.blockedPrompt || "",
         ].join("\u0001"),
       );
       return [
@@ -9340,12 +9340,29 @@
           view.appendChild(el("div", "chat-empty", parsed.error));
           return;
         }
+        // Measured BEFORE anything is removed: a rebuild empties the view
+        // first, which made every rebuild read "at the bottom" and threw a
+        // reader who had scrolled up down to the end.
+        const atBottom = view.scrollHeight - view.scrollTop - view.clientHeight < 120;
+        const keepTop = view.scrollTop;
+        let rebuilt = false;
         if (parsed.initial) {
+          const incoming = parsed.items || [];
+          const same =
+            items.length > 0 &&
+            items.length === incoming.length &&
+            JSON.stringify(items[items.length - 1]) === JSON.stringify(incoming[incoming.length - 1]);
+          if (same) {
+            // A reconnect re-sends what is already on screen: keep it as is.
+            if (parsed.context) screenState.context = parsed.context;
+            renderScreenStatus();
+            return;
+          }
           items.length = 0; // a fresh full dump replaces all
           const stale = view.querySelector(".chat-thread");
           if (stale) stale.remove(); // rebuild, don't stack onto old turns
+          rebuilt = true;
         }
-        const atBottom = view.scrollHeight - view.scrollTop - view.clientHeight < 120;
         if (parsed.context) screenState.context = parsed.context; // how full the window is
         for (const it of parsed.items || []) {
           items.push(it);
@@ -9360,6 +9377,7 @@
         setScreenHint(`${items.length} messages`, false);
         renderScreenStatus(); // the model pill follows the latest assistant turn
         if (atBottom) view.scrollTop = view.scrollHeight;
+        else if (rebuilt) view.scrollTop = keepTop;
       };
       sse.onerror = () => setScreenHint("reconnecting…", true);
       screenState.chatSse = sse;
@@ -9605,7 +9623,31 @@
     }
 
     function foldTurns(thread) {
-      // The last turn is rebuilt: its open fold and its changes card go first.
+      const agent = screenState.name ? state.agents.get(screenState.name) : null;
+      const working = !!agent && agent.status === "online" && agent.activity === "working";
+      // Nothing new and the same working state: leave the DOM alone. Every
+      // rebuild moved nodes around under the reader, and the scroll jumped.
+      const sig = `${thread.__count}|${working}`;
+      if (thread.__foldSig === sig) return;
+      thread.__foldSig = sig;
+      thread.__wasWorking = working;
+      // Still on the same running turn: its new steps go INTO the live fold,
+      // nothing is unwrapped.
+      const liveFold = thread.querySelector(":scope > .chat-fold.live:not([data-closed])");
+      if (working && liveFold) {
+        const after = [];
+        let newTurn = false;
+        for (let n = liveFold.nextElementSibling; n; n = n.nextElementSibling) {
+          if (isTurnStart(n)) { newTurn = true; break; }
+          after.push(n);
+        }
+        if (!newTurn) {
+          feedLiveFold(liveFold, after);
+          tickLiveFolds();
+          return;
+        }
+      }
+      // Otherwise the last turn is rebuilt: its open fold and its changes card go first.
       for (const old of thread.querySelectorAll(":scope > .chat-fold:not([data-closed])")) unwrapFold(old);
       for (const old of thread.querySelectorAll(":scope > .chat-changed:not([data-closed])")) old.remove();
       const segments = [[]];
@@ -9616,9 +9658,6 @@
           segments.push(seg);
         } else segments[segments.length - 1].push(n);
       }
-      const agent = screenState.name ? state.agents.get(screenState.name) : null;
-      const working = !!agent && agent.status === "online" && agent.activity === "working";
-      thread.__wasWorking = working;
       segments.forEach((seg, i) => {
         const last = i === segments.length - 1;
         if (seg.some((n) => n.dataset.closed)) return; // folded for good already
@@ -9634,8 +9673,25 @@
       fold.remove();
     }
 
+    const isAnswerNode = (n) => n.classList.contains("chat-turn") && n.classList.contains("assistant");
+    const isWorkNode = (n) =>
+      !n.dataset.hasShots &&
+      (n.classList.contains("chat-tool") || n.classList.contains("chat-tool-group") || n.classList.contains("chat-thinking"));
+
+    /** New steps of the running turn: into its fold, and its line says the latest. */
+    function feedLiveFold(fold, nodes) {
+      const body = fold.querySelector(":scope > .chat-fold-body");
+      let last = null;
+      for (const n of nodes) {
+        if (!(isWorkNode(n) || isAnswerNode(n))) continue;
+        body.appendChild(n);
+        if (n.classList.contains("chat-tool") && n.__item) last = n.__item.summary;
+      }
+      if (last) fillLiveLine(fold.querySelector(".chat-live-line"), undefined, last);
+    }
+
     function foldSegment(thread, seg, { live, closed }) {
-      const isAnswer = (n) => n.classList.contains("chat-turn") && n.classList.contains("assistant");
+      const isAnswer = isAnswerNode;
       let finalIdx = -1;
       if (!live) for (let i = seg.length - 1; i >= 0; i--) if (isAnswer(seg[i])) { finalIdx = i; break; }
       const foldable = seg.filter((n, i) => {
@@ -9654,16 +9710,13 @@
       head.appendChild(el("span", "chat-fold-caret", "›"));
       const label = el("span", "chat-fold-label");
       if (live) {
-        // The clock runs from your message: how long the agent has been at it.
+        // The CLI's own line — its verb, its clock for this turn, its note —
+        // and the latest action. Without the CLI's clock, it counts from your
+        // message (hub time: the transcript is written on the hub's clock).
         const startTs = (seg.start && seg.start.__item && seg.start.__item.ts) || (items.find((it) => it.ts) || {}).ts;
         const lastTool = [...toolNodes].reverse()[0].__item;
-        label.append(
-          el("span", "chat-fold-dot", "●"),
-          document.createTextNode(" working · "),
-          el("span", "chat-fold-clock", "0s"),
-        );
-        if (startTs) label.querySelector(".chat-fold-clock").dataset.start = String(Date.parse(startTs));
-        if (lastTool) label.appendChild(el("span", "chat-fold-last", ` — ${lastTool.summary}`));
+        label.classList.add("chat-live-line");
+        fillLiveLine(label, startTs ? Date.parse(startTs) : NaN, lastTool ? lastTool.summary : "");
       } else {
         const took = marker ? marker.textContent.replace(/^\W*/, "").replace(/^worked for /, "") : spanOf(items);
         label.textContent = `${took ? `worked for ${took}` : "worked"} · ${toolNodes.length} action${toolNodes.length === 1 ? "" : "s"}`;
@@ -9749,16 +9802,97 @@
       return card;
     }
 
-    /** The running turn's clock: plain text, once a second, only while one is shown. */
+    // --- The running turn's line, as the terminal draws it ------------------
+    // "✻ Canoodling… · 23s · thinking more with xhigh effort — Bash: …": the
+    // CLI's turning glyph, its verb, its clock, its note (the hub reads them
+    // off the pane — agent.spinnerVerb / spinnerNote / turnStartedAt). The
+    // glyph turns by swapping ONE character from script, the way the TUI
+    // does it; no CSS animation (the endless-pulse lesson), and the timer
+    // stops the moment no live line is on screen.
+    const SPIN_FRAMES = ["·", "✢", "✳", "✶", "✻", "✽", "✻", "✶", "✳", "✢"];
+
+    // The hub's clock, as seen from here. Turn starts and transcript times
+    // are written on the hub's machine (WSL), whose clock drifts away from
+    // Windows' — measured 1m54s ahead on 11/10, which pinned the live clock
+    // at "0s" for two minutes. Learned from the HTTP Date header.
+    let clockSkewMs = 0;
+    function hubNow() {
+      return Date.now() + clockSkewMs;
+    }
+    async function syncHubClock() {
+      try {
+        const t0 = Date.now();
+        const res = await fetch("/api/health", { cache: "no-store" });
+        const t1 = Date.now();
+        const d = Date.parse(res.headers.get("date") || "");
+        // The header is truncated to the second: its middle is the best guess.
+        if (!Number.isNaN(d)) clockSkewMs = d + 500 - (t0 + t1) / 2;
+      } catch {
+        /* keep the last estimate */
+      }
+    }
+
+    /**
+     * Fills (or refreshes) a live line. `fallbackStart` (ms, hub clock) and
+     * `lastSummary` are remembered on the node, so a refresh with neither
+     * only re-reads the agent.
+     */
+    function fillLiveLine(label, fallbackStart, lastSummary) {
+      if (!label) return;
+      if (!label.querySelector(".chat-spin")) {
+        label.textContent = "";
+        label.append(
+          el("span", "chat-spin", SPIN_FRAMES[0]),
+          el("span", "chat-live-verb"),
+          el("span", "chat-fold-clock", "0s"),
+          el("span", "chat-live-note"),
+          el("span", "chat-fold-last"),
+        );
+      }
+      if (fallbackStart !== undefined) label.dataset.fallback = Number.isFinite(fallbackStart) ? String(fallbackStart) : "";
+      if (lastSummary !== undefined) label.dataset.last = lastSummary || "";
+      const agent = liveScreenAgent();
+      const waiting = !!(agent && agent.activity !== "working" && agent.waitingFor);
+      const verb = waiting ? "waiting" : (agent && agent.spinnerVerb) || "working";
+      const note = waiting ? agent.waitingFor : (agent && agent.spinnerNote) || "";
+      const cli = agent && agent.turnStartedAt ? Date.parse(agent.turnStartedAt) : NaN;
+      const start = Number.isNaN(cli) ? Number(label.dataset.fallback || NaN) : cli;
+      label.querySelector(".chat-live-verb").textContent = ` ${verb} · `;
+      const clock = label.querySelector(".chat-fold-clock");
+      if (Number.isFinite(start)) clock.dataset.start = String(start);
+      else delete clock.dataset.start;
+      label.querySelector(".chat-live-note").textContent = note ? ` · ${note}` : "";
+      label.querySelector(".chat-fold-last").textContent = label.dataset.last ? ` — ${label.dataset.last}` : "";
+    }
+
+    /** The open agent changed (verb, note, turn start): refresh its lines in place. */
+    function refreshLiveLines() {
+      for (const l of document.querySelectorAll("#screen-chat .chat-live-line")) fillLiveLine(l);
+      tickLiveFolds();
+    }
+
     let liveFoldTimer = null;
+    let spinFrame = 0;
     function tickLiveFolds() {
       const update = () => {
-        const clocks = document.querySelectorAll(".chat-fold.live .chat-fold-clock[data-start], .chat-typing .chat-fold-clock[data-start]");
-        if (!clocks.length) { clearInterval(liveFoldTimer); liveFoldTimer = null; return; }
-        for (const c of clocks) c.textContent = fmtSpan(Math.max(0, Math.round((Date.now() - Number(c.dataset.start)) / 1000)));
+        const lines = document.querySelectorAll("#screen-chat .chat-live-line");
+        if (!lines.length) {
+          clearInterval(liveFoldTimer);
+          liveFoldTimer = null;
+          return;
+        }
+        spinFrame = (spinFrame + 1) % SPIN_FRAMES.length;
+        for (const l of lines) {
+          const g = l.querySelector(".chat-spin");
+          if (g) g.textContent = SPIN_FRAMES[spinFrame];
+          const c = l.querySelector(".chat-fold-clock");
+          if (!c || !c.dataset.start) continue;
+          const t = fmtSpan(Math.max(0, Math.round((hubNow() - Number(c.dataset.start)) / 1000)));
+          if (c.textContent !== t) c.textContent = t;
+        }
       };
       update();
-      if (!liveFoldTimer && document.querySelector(".chat-fold.live, .chat-typing .chat-fold-clock")) liveFoldTimer = setInterval(update, 1000);
+      if (!liveFoldTimer && document.querySelector("#screen-chat .chat-live-line")) liveFoldTimer = setInterval(update, 120);
     }
 
     /**
@@ -9951,14 +10085,14 @@
       let ind = view.querySelector(".chat-typing");
       if (busy && !ind) {
         ind = el("div", "chat-typing");
-        const clock = el("span", "chat-fold-clock", "0s");
-        // From whatever opened this turn: your message, or the hub's knock
-        // when another agent woke it.
+        // Without the CLI's clock: from whatever opened this turn — your
+        // message, or the hub's knock when another agent woke it.
         const starts = [...view.querySelectorAll(".chat-thread > .chat-turn")].filter(isTurnStart);
         const opener = starts[starts.length - 1];
         const ts = opener && opener.__item && opener.__item.ts;
-        if (ts) clock.dataset.start = String(Date.parse(ts));
-        ind.append(el("span", "chat-fold-dot", "●"), el("span", "chat-typing-word", " working · "), clock, el("span", "chat-typing-note"));
+        const line = el("span", "chat-live-line");
+        ind.appendChild(line);
+        fillLiveLine(line, ts ? Date.parse(ts) : NaN, "");
         const atBottom = view.scrollHeight - view.scrollTop - view.clientHeight < 120;
         // Above your queued messages: where it is working, then what it has
         // not read yet.
@@ -9971,12 +10105,7 @@
         ind.remove();
         ind = null;
       }
-      if (ind) {
-        // The literal TUI line while waiting; nothing more while working.
-        ind.querySelector(".chat-typing-word").textContent = waiting ? " waiting · " : " working · ";
-        const note = ind.querySelector(".chat-typing-note");
-        if (note) note.textContent = waiting ? ` — ${agent.waitingFor}` : "";
-      }
+      if (ind) fillLiveLine(ind.querySelector(".chat-live-line"));
     }
 
     /**
@@ -12761,6 +12890,10 @@
           if (state.ready && !state.agents.has(event.payload.name)) state.newborn.set(event.payload.name, Date.now());
           mergeAgent(event.payload);
           renderAgents();
+          if (event.payload.name === screenState.name) {
+            refreshLiveLines(); // verb / note / turn start ride agent_updated
+            updatePendingStates(); // the CLI's queue too
+          }
           break;
         case "agent_request":
           state.agentRequests.set(event.payload.id, event.payload);
@@ -13449,6 +13582,8 @@
       setupRemoteSession();
       setupMcpCommand();
       loadUsageCollapsed();
+      syncHubClock();
+      setInterval(syncHubClock, 10 * 60_000);
       $("#usage-toggle").addEventListener("click", () => setUsageOpen(false));
       $("#usage-bar").addEventListener("click", (ev) => {
         ev.stopPropagation();

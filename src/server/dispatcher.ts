@@ -107,6 +107,8 @@ export interface PaneStatus {
   blocked: boolean;
   /** Messages are waiting in the CLI's queue ("ctrl+x ctrl+s to send now"). */
   queued: boolean;
+  /** The CLI's live line while it works ("Canoodling… (23s · thinking more…)"). */
+  spinner: { verb: string; seconds: number; note: string } | null;
   /**
    * The operator is MID-SENTENCE in this pane: its prompt line already holds
    * text. A nudge typed now lands inside that half-written prompt and the
@@ -267,6 +269,7 @@ export function parsePaneStatus(pane: string): PaneStatus {
   // the input with "ctrl+x ctrl+s to send now" (ctrl+enter on terminals that
   // tell it apart) — verified on a live 2.1.296 pane, 11/10.
   const queued = /(?:ctrl\+x ctrl\+s|ctrl\+enter) to send now/i.test(plain);
+  const spinner = working ? parseSpinner(plain) : null;
   // The LAST prompt line is the live input (the TUI keeps it at the bottom);
   // anything after the caret is text waiting to be sent. NBSP is what the
   // CLIs pad the caret with, and trim() drops it like any other space.
@@ -359,7 +362,36 @@ export function parsePaneStatus(pane: string): PaneStatus {
           ? "plan"
           : "default";
   }
-  return { working, blocked, queued, composerBusy, composerText, composerWrapped, outputTokens, subagents, blockedPrompt, blockedOptions, waitingFor, permission, goalActive, goalFor };
+  return { working, blocked, queued, spinner, composerBusy, composerText, composerWrapped, outputTokens, subagents, blockedPrompt, blockedOptions, waitingFor, permission, goalActive, goalFor };
+}
+
+/**
+ * The CLI's own live line, the one with the turning glyph:
+ *
+ *   · Canoodling… (23s · thinking more with xhigh effort)
+ *   * Kneading… (9s · ↓ 113 tokens)
+ *   • Working (12s • esc to interrupt)            (codex)
+ *
+ * verb = "Canoodling…", seconds = its count of THIS turn (23), note = what is
+ * left once the clock, the token count and the key hint are taken out. The
+ * LAST such line wins — a finished turn's "✻ Cooked for 3s" above it has no
+ * running clock in parentheses and is never mistaken for it. Exported for tests.
+ */
+export function parseSpinner(plain: string): { verb: string; seconds: number; note: string } | null {
+  let found: { verb: string; seconds: number; note: string } | null = null;
+  for (const line of plain.split("\n")) {
+    // The clock is "23s", "1m 9s", or — on a long turn — just "30m" / "1h 2m".
+    const m = /^\s*[·•✢✳✶✻✽*]\s+(\S[^(\n]*?)\s*\(\s*(?:(\d+)h\s*)?(?:(\d+)m\s*)?(?:(\d+)s)?(?=\s*(?:[·•)]|$))([^)]*)\)/.exec(line);
+    if (!m || (m[2] === undefined && m[3] === undefined && m[4] === undefined)) continue;
+    const seconds = Number(m[2] || 0) * 3600 + Number(m[3] || 0) * 60 + Number(m[4] || 0);
+    const note = m[5]
+      .split(/[·•]/)
+      .map((p) => p.trim())
+      .filter((p) => p && !/tokens?\b/i.test(p) && !/esc to interrupt/i.test(p))
+      .join(" · ");
+    found = { verb: m[1].trim().slice(0, 40), seconds, note: note.slice(0, 80) };
+  }
+  return found;
 }
 
 /** Back-compat shim: whether the CLI is mid-turn. */
@@ -690,7 +722,7 @@ export class Dispatcher {
       for (const { name, tmuxSession } of this.store.listAgents()) {
         const agent = this.store.getAgent(name);
         if (!agent || agent.status !== "online") continue;
-        let status: PaneStatus = { working: false, blocked: false, queued: false, composerBusy: false, composerText: "", composerWrapped: false, outputTokens: null, subagents: [], blockedPrompt: null, blockedOptions: [], waitingFor: null, permission: null, goalActive: false, goalFor: null };
+        let status: PaneStatus = { working: false, blocked: false, queued: false, spinner: null, composerBusy: false, composerText: "", composerWrapped: false, outputTokens: null, subagents: [], blockedPrompt: null, blockedOptions: [], waitingFor: null, permission: null, goalActive: false, goalFor: null };
         try {
           status = parsePaneStatus(await this.tmux.capturePane(tmuxSession, 30, true));
         } catch {
@@ -720,9 +752,29 @@ export class Dispatcher {
         // "" (not undefined) when nothing is pending: updateAgent IGNORES
         // undefined keys, so undefined could set the field but never clear it.
         const waitingFor = status.waitingFor ?? "";
+        // The turn's start, from the CLI's OWN clock ("23s" into it) placed on
+        // the hub's: the chat's live line counts from here. Kept while it
+        // agrees within a few seconds, so a steady turn writes nothing.
+        let turnStartedAt = "";
+        let spinnerVerb = "";
+        let spinnerNote = "";
+        if (status.spinner) {
+          const start = this.now() - status.spinner.seconds * 1000;
+          const known = agent.turnStartedAt ? Date.parse(agent.turnStartedAt) : NaN;
+          turnStartedAt = !Number.isNaN(known) && Math.abs(known - start) < 5000 ? agent.turnStartedAt! : new Date(start).toISOString();
+          spinnerVerb = status.spinner.verb;
+          spinnerNote = status.spinner.note;
+        } else if (status.working && agent.turnStartedAt) {
+          turnStartedAt = agent.turnStartedAt; // a frame without the line keeps what we had
+          spinnerVerb = agent.spinnerVerb ?? "";
+          spinnerNote = agent.spinnerNote ?? "";
+        }
         if (
           agent.activity === next &&
           !!agent.queued === status.queued &&
+          (agent.turnStartedAt ?? "") === turnStartedAt &&
+          (agent.spinnerVerb ?? "") === spinnerVerb &&
+          (agent.spinnerNote ?? "") === spinnerNote &&
           agent.permission === permission &&
           !!agent.goalActive === status.goalActive &&
           (agent.goalFor ?? undefined) === goalFor &&
@@ -742,6 +794,9 @@ export class Dispatcher {
           phase,
           blocked,
           queued: status.queued,
+          turnStartedAt,
+          spinnerVerb,
+          spinnerNote,
           composerBusy,
           composerText,
           blockedPrompt,
@@ -888,7 +943,7 @@ export class Dispatcher {
     // this nudge's Enter as its answer. Fail-CLOSED — an unreadable pane is
     // treated as blocked, exactly like the pane guard.
     if (this.tmux.capturePane) {
-      let live: PaneStatus = { working: false, blocked: true, queued: false, composerBusy: true, composerText: "", composerWrapped: true, outputTokens: null, subagents: [], blockedPrompt: null, blockedOptions: [], waitingFor: null, permission: null, goalActive: false, goalFor: null };
+      let live: PaneStatus = { working: false, blocked: true, queued: false, spinner: null, composerBusy: true, composerText: "", composerWrapped: true, outputTokens: null, subagents: [], blockedPrompt: null, blockedOptions: [], waitingFor: null, permission: null, goalActive: false, goalFor: null };
       try {
         live = parsePaneStatus(await this.tmux.capturePane(agent.tmuxSession, 30, true));
       } catch {

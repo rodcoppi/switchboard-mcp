@@ -1000,6 +1000,9 @@ function isAgent(value: unknown): value is Agent {
     (v.everywhere === undefined || typeof v.everywhere === "boolean") &&
     (v.lastReply === undefined || typeof v.lastReply === "string") &&
     (v.lastReplyAt === undefined || typeof v.lastReplyAt === "string") &&
-    (v.queued === undefined || typeof v.queued === "boolean")
+    (v.queued === undefined || typeof v.queued === "boolean") &&
+    (v.turnStartedAt === undefined || typeof v.turnStartedAt === "string") &&
+    (v.spinnerVerb === undefined || typeof v.spinnerVerb === "string") &&
+    (v.spinnerNote === undefined || typeof v.spinnerNote === "string")
   );
 }

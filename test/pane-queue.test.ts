@@ -4,7 +4,7 @@
 // made every bypass agent read "idle" mid-turn.
 
 import { describe, expect, it } from "vitest";
-import { parsePaneStatus } from "../src/server/dispatcher.js";
+import { parsePaneStatus, parseSpinner } from "../src/server/dispatcher.js";
 
 const E = "\u001b";
 const grey = (t: string) => `${E}[38;5;246m${t}${E}[39m`;
@@ -43,5 +43,28 @@ describe("a bypass pane, mid-turn, with a queued message", () => {
   it("does not take the dim queue placeholder for half-typed text", () => {
     expect(st.composerBusy).toBe(false);
     expect(st.blocked).toBe(false);
+  });
+});
+
+describe("the CLI's live line", () => {
+  it("gives the verb, this turn's clock and the note, without tokens or key hints", () => {
+    expect(parseSpinner("· Canoodling… (23s · thinking more with xhigh effort)")).toEqual({
+      verb: "Canoodling…",
+      seconds: 23,
+      note: "thinking more with xhigh effort",
+    });
+    expect(parseSpinner("* Kneading… (1m 9s · ↓ 113 tokens)")).toEqual({ verb: "Kneading…", seconds: 69, note: "" });
+    expect(parseSpinner("• Working (12s • esc to interrupt)")).toEqual({ verb: "Working", seconds: 12, note: "" });
+    expect(parseSpinner("· Transfiguring… (1h 2m · ↓ 108k tokens)")?.seconds).toBe(3720);
+  });
+
+  it("is not a finished turn's summary, and the last running line wins", () => {
+    expect(parseSpinner("✻ Cooked for 3s · done 1:09 AM")).toBeNull();
+    expect(parseSpinner("✻ Brewed for 7s · done 1:02 AM\n✶ Musing… (4s · ↓ 20 tokens)")?.verb).toBe("Musing…");
+  });
+
+  it("rides the pane status only while it works", () => {
+    expect(parsePaneStatus(QUEUED_PANE).spinner).toEqual({ verb: "Kneading…", seconds: 9, note: "" });
+    expect(parsePaneStatus("· Canoodling… (23s)\n❯ \n").spinner).toBeNull(); // no "esc to interrupt": not working
   });
 });

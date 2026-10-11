@@ -603,6 +603,7 @@ describe("parsePaneStatus", () => {
       working: true,
       blocked: false,
       queued: false,
+      spinner: { verb: "Transfiguring…", seconds: 1800, note: "" }, // a long turn's clock has no seconds
       composerBusy: false,
       composerText: "",
       composerWrapped: true, // the footer sits right under the prompt line
@@ -624,6 +625,7 @@ describe("parsePaneStatus", () => {
       working: false,
       blocked: false,
       queued: false,
+      spinner: null,
       composerBusy: false,
       composerText: "",
       composerWrapped: true, // the footer sits right under the prompt line
@@ -644,6 +646,7 @@ describe("parsePaneStatus", () => {
       working: false,
       blocked: false,
       queued: false,
+      spinner: null,
       composerBusy: false,
       composerText: "",
       composerWrapped: false, // no prompt line at all in this frame

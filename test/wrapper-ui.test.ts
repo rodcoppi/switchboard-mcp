@@ -2217,9 +2217,26 @@ describe("the chat as a conversation (design pass, owner 11/10)", () => {
     expect(card).toContain("openInlineFile(file, null)");
   });
 
-  it("shows the running turn as one quiet line whose clock ticks as text — no bouncing dots", () => {
-    expect(embeddedFunctionSource("tickLiveFolds")).toContain("setInterval(update, 1000)");
+  it("shows the running turn as the terminal's own line — its glyph turns as text, no bouncing dots", () => {
+    const tick = embeddedFunctionSource("tickLiveFolds");
+    expect(tick).toContain("SPIN_FRAMES[spinFrame]");
+    expect(tick).toContain("clearInterval(liveFoldTimer)"); // stops with no live line on screen
     expect(embeddedFunctionSource("updateChatTyping")).not.toContain("chat-typing-dots");
+    const fill = embeddedFunctionSource("fillLiveLine");
+    expect(fill).toContain("agent.spinnerVerb");
+    expect(fill).toContain("agent.turnStartedAt");
+  });
+
+  it("counts on the hub's clock, not this browser's (WSL drifts from Windows)", () => {
+    expect(embeddedFunctionSource("syncHubClock")).toContain('res.headers.get("date")');
+    expect(embeddedFunctionSource("tickLiveFolds")).toContain("hubNow() - Number(c.dataset.start)");
+  });
+
+  it("does not move the thread under the reader", () => {
+    const fold = embeddedFunctionSource("foldTurns");
+    expect(fold).toContain("if (thread.__foldSig === sig) return;");
+    expect(fold).toContain("feedLiveFold(liveFold, after);"); // the running turn is fed, never rebuilt
+    expect(styles).not.toMatch(/\.chat-fold[^{]*\{[^}]*content-visibility/);
   });
 
   it("puts you on the right and the agent as plain prose", () => {
