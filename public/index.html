@@ -4205,17 +4205,55 @@
     .chat-turn { padding: 0; border-bottom: 0; background: transparent; gap: 0; }
     .chat-turn:hover { background: transparent; }
     .chat-turn > .chat-avatar { display: none; }
-    /* You: a bubble on the right. */
+    /* A turn is a column: the message, then its actions on a row UNDER it.
+       The actions used to float over the turn's top-right corner, which in
+       this layout is the text itself (owner, 11/10: on the phone, always
+       shown, they sat on top of the words). */
+    .chat-turn.user, .chat-turn.assistant { flex-direction: column; align-items: stretch; gap: 0; }
+    /* You: a bubble on the right — the bubble is the body, so the actions
+       row can sit outside it. */
     .chat-turn.user {
       align-self: flex-end;
+      align-items: flex-end;
       max-width: 80%;
       margin: 0;
+      padding: 0;
+      background: transparent;
+      border: 0;
+      border-radius: 0;
+    }
+    .chat-turn.user:hover { background: transparent; }
+    .chat-turn.user > .chat-turn-body {
       padding: 9px 14px 10px;
       background: #222226;
-      border: 0;
       border-radius: 16px 4px 16px 16px;
+      transition: background 0.14s var(--ease);
     }
-    .chat-turn.user:hover { background: #26262b; }
+    .chat-turn.user:hover > .chat-turn-body { background: #26262b; }
+    /* Room for the row is kept whether it shows or not, so revealing it on
+       hover never moves the thread. It stays INSIDE the turn's box — turns
+       wear content-visibility (paint containment clips anything outside) —
+       and the turn gives most of that room back to the gap below instead. */
+    .chat-turn > .chat-turn-actions {
+      position: static;
+      height: 24px;
+      margin: 2px 0 0;
+      transform: none;
+    }
+    .chat-thread > .chat-turn.user,
+    .chat-thread > .chat-turn.assistant { margin-bottom: -14px; }
+    .chat-turn.user > .chat-turn-actions { align-self: flex-end; }
+    .chat-turn.assistant > .chat-turn-actions { align-self: flex-start; margin-left: -4px; }
+    .chat-turn.show-actions > .chat-turn-actions { opacity: 1; pointer-events: auto; }
+    /* A finger has no hover: the row stays out of the way until you tap the
+       message (onThreadTap), instead of sitting on every turn at rest. */
+    @media (hover: none) {
+      /* No reserved room on a phone: the row appears when you ask for it. */
+      .chat-thread > .chat-turn.user,
+      .chat-thread > .chat-turn.assistant { margin-bottom: 0; }
+      .chat-turn > .chat-turn-actions { display: none; height: 34px; }
+      .chat-turn.show-actions > .chat-turn-actions { display: flex; opacity: 1; pointer-events: auto; }
+    }
     .chat-turn.user .chat-meta { justify-content: flex-end; }
     .chat-turn.user .chat-role,
     .chat-turn .chat-time { font-family: var(--mono); font-size: 10px; letter-spacing: 0; text-transform: lowercase; color: var(--text-faint); }
@@ -4279,7 +4317,7 @@
     .chat-pending { max-width: 46rem; margin: 0 auto 18px; padding: 0 18px; gap: 18px; border: 0; }
     .chat-pending .chat-turn.user { align-self: flex-end; }
     /* Sent: it rises into place once. In line: grey until the agent reads it. */
-    .chat-turn.pending.fresh { animation: bubble-in 0.28s cubic-bezier(.2, .9, .3, 1.2); }
+    .chat-turn.pending.fresh > .chat-turn-body { animation: bubble-in 0.28s cubic-bezier(.2, .9, .3, 1.2); }
     @keyframes bubble-in {
       from { opacity: 0; transform: translateY(12px) scale(0.97); }
     }
@@ -4300,9 +4338,9 @@
     .chat-sendnow:hover:not(:disabled) { background: color-mix(in srgb, var(--st-working) 14%, transparent); }
     .chat-sendnow:disabled { opacity: 0.6; cursor: default; }
     /* Read: the real bubble lands bright and says so, once. */
-    .chat-turn.user.just-read { animation: bubble-read 0.6s ease-out; }
+    .chat-turn.user.just-read > .chat-turn-body { animation: bubble-read 0.6s ease-out; }
     @keyframes bubble-read {
-      from { box-shadow: 0 0 0 1px color-mix(in srgb, var(--st-new) 60%, transparent); }
+      from { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--st-new) 60%, transparent); }
     }
     .chat-read { color: var(--st-new); font-family: var(--mono); font-size: 10px; animation: read-fade 4s ease-in forwards; }
     @keyframes read-fade {
@@ -9613,6 +9651,7 @@
         view.textContent = "";
         thread = el("div", "chat-thread");
         thread.__count = 0;
+        thread.addEventListener("click", onThreadTap);
         view.appendChild(thread);
       }
       // Item count is tracked as a property, NOT childElementCount: action
@@ -9644,6 +9683,22 @@
       markEditableUserTurns(thread);
       markForwardableTurns(thread);
       reconcilePending(view);
+    }
+
+    /**
+     * On a touch screen a message's actions (reply, copy, WA, edit, forward)
+     * come out when you tap the message, and go when you tap another one.
+     * Taps on a link, a button, a tool, a picture or a selection are theirs.
+     */
+    function onThreadTap(ev) {
+      if (!window.matchMedia("(hover: none)").matches) return;
+      if (!(ev.target instanceof Element)) return;
+      if (ev.target.closest("a, button, input, textarea, summary, img, .chat-tool, .chat-fold-head, .chat-changed")) return;
+      const sel = window.getSelection();
+      if (sel && !sel.isCollapsed) return;
+      const turn = ev.target.closest(".chat-turn.user, .chat-turn.assistant");
+      for (const t of ev.currentTarget.querySelectorAll(".chat-turn.show-actions")) if (t !== turn) t.classList.remove("show-actions");
+      if (turn) turn.classList.toggle("show-actions");
     }
 
     // --- Turns that fold their work (design pass, owner 11/10) -------------
@@ -10014,7 +10069,7 @@
       }
       const turn = buildChatTurn({ kind: "user", text, ts: new Date().toISOString() }, screenState.name);
       turn.classList.add("pending", "fresh");
-      turn.addEventListener("animationend", () => turn.classList.remove("fresh"), { once: true });
+      turn.addEventListener("animationend", () => turn.classList.remove("fresh"), { once: true }); // bubbles up from the body
       turn.dataset.echo = text.trim();
       turn.dataset.state = "sending";
       const meta = turn.querySelector(".chat-meta");

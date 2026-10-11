@@ -2359,3 +2359,20 @@ describe("the CLI's heads-up notes in the chat (owner, 11/10)", () => {
     expect(embeddedFunctionSource("updatePendingStates")).toContain('"in line · reads it when this task ends"');
   });
 });
+
+describe("a message's actions sit under it, never on its words (owner, 11/10)", () => {
+  it("lays the turn out as a column with the actions row inside its box", () => {
+    expect(styles).toMatch(/\.chat-turn\.user, \.chat-turn\.assistant \{ flex-direction: column;/);
+    expect(styles).toMatch(/\.chat-turn > \.chat-turn-actions \{\s*position: static;/);
+    // the bubble is the body, so the row can sit outside it
+    expect(styles).toMatch(/\.chat-turn\.user > \.chat-turn-body \{[^}]*background: #222226;/);
+  });
+
+  it("brings them out on a tap on a phone, and only then takes room for them", () => {
+    expect(styles).toMatch(/\.chat-turn > \.chat-turn-actions \{ display: none; height: 34px; \}/);
+    const tap = embeddedFunctionSource("onThreadTap");
+    expect(tap).toContain('matchMedia("(hover: none)")');
+    expect(tap).toContain('turn.classList.toggle("show-actions")');
+    expect(embeddedFunctionSource("renderChat")).toContain('thread.addEventListener("click", onThreadTap);');
+  });
+});
