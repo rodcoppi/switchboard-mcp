@@ -4329,6 +4329,96 @@
     .needs-row b { flex: none; font-size: 12.5px; font-weight: 600; white-space: nowrap; }
     .needs-why { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; color: var(--text-dim); }
 
+    /* The composer as a card (design pass, 11/10): the text on top, a row
+       of pills and the buttons under it, the agent's question above it. */
+    .chat-composer { padding: 0 18px 16px; border-top: 0; background: var(--bg); }
+    .composer-ask { max-width: 46rem; margin: 0 auto; }
+    .composer-ask:empty { display: none; }
+    .composer-ask .chat-ask {
+      max-width: none;
+      margin: 0 0 8px;
+      border: 1px solid color-mix(in srgb, var(--st-needs) 45%, var(--border));
+      background: color-mix(in srgb, var(--st-needs) 7%, var(--bg-elev));
+      border-radius: 14px;
+    }
+    .composer-ask .chat-ask-eyebrow { color: var(--st-needs); letter-spacing: 1.2px; text-transform: uppercase; font-size: 10px; }
+    .composer-ask .chat-ask-q { white-space: pre-wrap; font-family: var(--sans); font-size: 13.5px; }
+    .composer-ask .chat-ask-opt:first-child { background: var(--accent); border-color: var(--accent); color: var(--accent-fg, #111); font-weight: 600; }
+    .chat-composer-inner {
+      max-width: 46rem;
+      border: 1px solid #2c2c31;
+      border-radius: 20px;
+      background: #141417;
+      box-shadow: 0 14px 32px -18px rgba(0, 0, 0, 0.75);
+    }
+    .chat-composer-inner:focus-within { border-color: #3d3d44; box-shadow: 0 14px 32px -18px rgba(0, 0, 0, 0.75); }
+    .chat-composer-context { display: none; }
+    .composer-thumbs { padding: 10px 12px 0; }
+    .chat-composer-row { flex-wrap: wrap; align-items: center; gap: 4px; padding: 6px 8px 8px; }
+    .chat-composer-row #chat-input { flex: 1 1 100%; order: 0; padding: 6px 8px 4px; font-size: 14px; min-height: 30px; background: transparent; border: 0; box-shadow: none; }
+    .chat-composer-row #chat-input:focus { background: transparent; box-shadow: none; }
+    .chat-composer-row .chat-wave { order: 0; }
+    .chat-composer-row .chat-attach { order: 1; }
+    .chat-composer-row .chat-statusbar { order: 2; }
+    .chat-composer-row .chat-mic { order: 3; }
+    .chat-composer-row .chat-send { order: 4; }
+    .chat-composer-row .chat-stop { order: 5; }
+    .chat-composer-row > .btn { align-self: center; height: 32px; min-height: 32px; }
+    .chat-composer-row .chat-attach,
+    .chat-composer-row .chat-mic { width: 32px; min-width: 32px; padding: 0; border: 0; border-radius: 50%; background: transparent; }
+    .chat-composer-row .chat-send { min-width: 0; padding: 0 14px; border-radius: 99px; background: var(--accent); border-color: var(--accent); color: var(--accent-fg, #111); font-weight: 650; }
+    .chat-composer-row .chat-send:hover:not(:disabled) { background: var(--accent-bright); color: var(--accent-fg, #111); }
+    .chat-composer-row .chat-stop { width: 32px; min-width: 32px; border-radius: 50%; }
+    /* The pills: a spacer when there are none, so the buttons stay right. */
+    .chat-composer-row .chat-statusbar { flex: 1 1 0; min-width: 0; background: none; border: 0; }
+    .chat-composer-row .chat-statusbar[hidden] { display: block; visibility: hidden; }
+    .chat-composer-row .chat-statusbar-inner { max-width: none; margin: 0; padding: 0 4px; gap: 6px; overflow: hidden; }
+    .chat-composer .status-pill { padding: 3px 10px; font-size: 11px; letter-spacing: 0; background: transparent; white-space: nowrap; }
+    .chat-composer .status-pill::before { display: none; }
+    .chat-composer .status-pill.perm-bypass { --pill-color: var(--st-error); }
+
+    /* Usage: a thin bar along the bottom; the full card pops up above it. */
+    .usage-bar {
+      flex: none;
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      height: 28px;
+      padding: 0 14px;
+      border: 0;
+      border-top: 1px solid var(--hair);
+      background: var(--bg);
+      font-family: var(--mono);
+      font-size: 10.5px;
+      color: var(--text-faint);
+      text-align: left;
+      cursor: pointer;
+      overflow: hidden;
+      white-space: nowrap;
+    }
+    .usage-bar[hidden] { display: none; }
+    .usage-bar:hover, .usage-bar.open { background: var(--bg-elev); }
+    .ub-engine { display: inline-flex; align-items: center; gap: 10px; }
+    .ub-name { color: var(--text-dim); }
+    .ub-meter { display: inline-flex; align-items: center; gap: 6px; }
+    .ub-track { position: relative; display: inline-block; width: 46px; height: 4px; border-radius: 3px; background: #26262a; overflow: hidden; }
+    .ub-fill { position: absolute; inset: 0 auto 0 0; border-radius: 3px; }
+    .ub-pct { color: var(--text-dim); font-variant-numeric: tabular-nums; }
+    .ub-spacer { flex: 1; }
+    .usage-pop {
+      position: fixed;
+      left: 12px;
+      bottom: 36px;
+      z-index: 70;
+      width: min(380px, calc(100vw - 24px));
+      max-height: calc(100dvh - 120px);
+      margin: 0;
+      overflow-y: auto;
+      box-shadow: 0 18px 40px rgba(0, 0, 0, 0.6);
+    }
+    .usage-pop[data-open="false"] { display: none; }
+    .usage-pop .usage-card-caret { transform: none; }
+
     /* What the turn changed, after its answer. */
     .chat-changed { border: 1px solid var(--hair); background: rgba(255, 255, 255, 0.025); border-radius: 10px; }
     .chat-changed-head {
@@ -4439,19 +4529,6 @@
       <div class="agent-requests" id="agent-requests"></div>
       <div class="agents" id="agents"></div>
 
-      <!-- Real plan windows for both engines. The card remains present during
-           upstream cooldowns so “unavailable” never looks like “the feature
-           disappeared”. -->
-      <div class="usage-card" id="usage-card" data-collapsed="false" hidden>
-        <button class="usage-card-head" id="usage-toggle" type="button"
-          aria-expanded="true" aria-controls="usage-rows" aria-label="Collapse usage details">
-          <span class="eyebrow">Usage</span>
-          <span class="usage-card-summary" id="usage-summary"></span>
-          <span class="usage-reset" id="usage-updated"></span>
-          <span class="usage-card-caret" aria-hidden="true">›</span>
-        </button>
-        <div id="usage-rows"></div>
-      </div>
 
     </aside>
 
@@ -4537,6 +4614,9 @@
           <div class="inline-file-body" id="inline-file-body"></div>
         </div>
         <form class="chat-composer" id="chat-composer" hidden autocomplete="off">
+          <!-- The agent's own question sits right above where you type
+               (design pass, 11/10): never scrolled away under the thread. -->
+          <div class="composer-ask" id="composer-ask"></div>
           <div class="chat-composer-inner">
             <div class="slash-menu" id="slash-menu" hidden></div>
             <div class="slash-menu" id="mention-menu" hidden></div>
@@ -4558,6 +4638,9 @@
                 accept="image/*,.pdf,.txt,.md,.csv,.json" aria-hidden="true" />
               <button class="btn chat-attach" id="chat-attach" type="button"
                 aria-label="Attach a file or photo" title="Attach a file or photo">📎</button>
+              <!-- Model · permission mode · context · goal, as pills on the
+                   card's bottom row (they used to be a bar under it). -->
+              <div class="chat-statusbar" id="chat-statusbar" hidden></div>
               <button class="btn chat-mic" id="chat-mic" type="button"
                 aria-label="Dictate a message" title="Dictate (Chrome speech, pt-BR) — click to start/stop">🎤</button>
               <button class="btn chat-send" id="chat-send" type="submit">Send</button>
@@ -4566,9 +4649,6 @@
             </div>
           </div>
         </form>
-        <!-- Session status read from the CLI footer — under the composer, like a
-             terminal footer: permission/plan mode + a running /goal with its age. -->
-        <div class="chat-statusbar" id="chat-statusbar" hidden></div>
         <!-- Terminal view: xterm. Hidden until you toggle to it. The wrap fills
              the panel in the terminal's own colour and centres the grid into the
              SAME reading column as the chat, so the two views line up. -->
@@ -4584,6 +4664,24 @@
            as "operator" is still a thing — `switchboard send <to> <msg>` — where
            it belongs: a script, not the panel you stare at all day. -->
     </main>
+  </div>
+
+  <!-- Usage as a thin status bar along the bottom (design pass, 11/10): the
+       numbers you glance at, always there; a click opens the full card above
+       it. The card used to sit at the rail's foot and cost the agents ~350px. -->
+  <button class="usage-bar" id="usage-bar" type="button" hidden
+    aria-expanded="false" aria-controls="usage-card" title="Plan usage — click for the details"></button>
+  <!-- Real plan windows for both engines. The card remains present during
+       upstream cooldowns so “unavailable” never looks like “the feature
+       disappeared”. -->
+  <div class="usage-card usage-pop" id="usage-card" data-collapsed="false" data-open="false" hidden>
+    <button class="usage-card-head" id="usage-toggle" type="button" aria-label="Close usage details">
+      <span class="eyebrow">Usage</span>
+      <span class="usage-card-summary" id="usage-summary"></span>
+      <span class="usage-reset" id="usage-updated"></span>
+      <span class="usage-card-caret" aria-hidden="true">✕</span>
+    </button>
+    <div id="usage-rows"></div>
   </div>
 
   <div class="toasts" id="toasts" aria-live="polite"></div>
@@ -5297,12 +5395,10 @@
         const v = localStorage.getItem(USAGE_COLLAPSED_KEY);
         if (v !== null) stored = v === "true";
       } catch { /* private mode */ }
-      // The rail is short on a phone and the agents are what you opened it for,
-      // so usage starts as its one-line summary there — unless you have already
-      // said otherwise with the caret, which is remembered and wins.
-      const narrow = window.matchMedia("(max-width: 1080px)").matches;
-      const collapsed = stored !== null ? stored : narrow;
-      setUsageCollapsed(collapsed, false);
+      // The card is a popover now (opened from the bottom bar), so it always
+      // opens whole; the remembered collapse belonged to its old rail slot.
+      void stored;
+      setUsageCollapsed(false, false);
     }
     function usagePeak(limits, field) {
       const values = (Array.isArray(limits) ? limits : [])
@@ -5423,8 +5519,61 @@
       section.appendChild(head);
       return section;
     }
+    function setUsageOpen(open) {
+      const card = $("#usage-card");
+      card.dataset.open = String(open);
+      $("#usage-bar").setAttribute("aria-expanded", String(open));
+      $("#usage-bar").classList.toggle("open", open);
+      if (open) renderUsage();
+    }
+
+    /**
+     * The bottom bar: each engine's windows as "Claude 5h ▬ 19%  week ▬ 68%",
+     * coloured by the same gauge as the card. One line, so it never grows.
+     */
+    function renderUsageBar() {
+      const bar = $("#usage-bar");
+      if (!bar) return;
+      bar.textContent = "";
+      const meter = (label, pct) => {
+        const m = el("span", "ub-meter");
+        const track = el("i", "ub-track");
+        const fill = el("b", "ub-fill");
+        fill.style.width = `${Math.max(2, Math.min(100, pct))}%`;
+        fill.style.background = gaugeColor(pct);
+        track.appendChild(fill);
+        m.append(el("span", "ub-label", label), track, el("span", "ub-pct", `${Math.round(pct)}%`));
+        return m;
+      };
+      const engine = (name, limits) => {
+        const group = el("span", "ub-engine");
+        group.appendChild(el("span", "ub-name", name));
+        if (!limits.length) group.appendChild(el("span", "ub-label", "—"));
+        for (const l of limits) group.appendChild(meter(l.label, l.pct));
+        bar.appendChild(group);
+      };
+      if (usageClaude) {
+        const pick = (g) => usageClaude.limits.filter((l) => l.group === g).sort((a, b) => b.percent - a.percent)[0];
+        const rows = [["5h", pick("session")], ["week", pick("weekly")]]
+          .filter(([, l]) => l)
+          .map(([label, l]) => ({ label, pct: l.percent }));
+        engine("Claude", rows);
+      }
+      if (usageCodex) {
+        const limits = Array.isArray(usageCodex.limits) ? usageCodex.limits : [];
+        const rows = [...limits]
+          .sort((a, b) => a.windowMinutes - b.windowMinutes)
+          .map((l) => ({ label: l.windowMinutes <= 300 ? "5h" : "week", pct: l.usedPercent }));
+        engine("Codex", rows);
+      }
+      bar.appendChild(el("span", "ub-spacer"));
+      bar.appendChild(el("span", "ub-more", "details ▴"));
+      bar.hidden = !usageClaude && !usageCodex;
+    }
+
     function renderUsage() {
       const card = $("#usage-card");
+      renderUsageBar();
       if (!usageClaude && !usageCodex) {
         card.hidden = true;
         return;
@@ -8827,9 +8976,7 @@
       $("#screen-name").title = name; // the kebab id stays one hover away
       $("#composer-target").textContent = displayOf(name);
       $("#composer-target").title = name;
-      $("#chat-input").placeholder = window.matchMedia("(hover: hover)").matches
-        ? "Write a dispatch… (drag or paste files)"
-        : "Write a dispatch…";
+      $("#chat-input").placeholder = composerPlaceholder();
 
       // Default to the CHAT casca. The mode is remembered across agents so
       // switching tabs keeps you in the view you chose.
@@ -9862,8 +10009,15 @@
       }
     }
 
+    /** Who you are writing to, and (where a mouse can drag) what the box takes. */
+    function composerPlaceholder(canDrag = window.matchMedia("(hover: hover)").matches) {
+      if (!screenState.name) return "Write a message…";
+      const who = displayOf(screenState.name);
+      return canDrag ? `Message ${who} — / commands, @ files, drop or paste images` : `Message ${who}…`;
+    }
+
     function updateChatAsk() {
-      const view = $("#screen-chat");
+      const view = $("#composer-ask");
       if (!view) return;
       const old = view.querySelector(".chat-ask");
       const agent = liveScreenAgent();
@@ -9879,7 +10033,7 @@
       const box = el("div", "chat-ask");
       box.dataset.signature = signature;
       box.append(
-        el("div", "chat-ask-eyebrow", "⏸ waiting for you in the terminal"),
+        el("div", "chat-ask-eyebrow", `${displayOf(agent.name)} is asking`),
         el("div", "chat-ask-q", agent.blockedPrompt || "The agent is asking something."),
       );
       const row = el("div", "chat-ask-options");
@@ -9899,9 +10053,7 @@
         row.appendChild(b);
       });
       box.appendChild(row);
-      const atBottom = view.scrollHeight - view.scrollTop - view.clientHeight < 160;
       view.appendChild(box);
-      if (atBottom) view.scrollTop = view.scrollHeight;
     }
 
     /** Types the chosen number into the pane — how these lists are answered. */
@@ -9926,7 +10078,7 @@
     // the footer by the hub, shown as pills UNDER the composer (terminal-style).
     // Colours: bypass = red (least safe), plan = violet, accept-edits = teal,
     // manual = amber; a running goal is blue with its age.
-    const PERM_LABEL = { bypass: "bypass perms", acceptEdits: "accept edits", plan: "plan mode", default: "manual" };
+    const PERM_LABEL = { bypass: "bypass", acceptEdits: "accept edits", plan: "plan mode", default: "manual" };
     const PERM_COLOR = { bypass: "var(--danger)", acceptEdits: "#4fd6c9", plan: "#a98bff", default: "var(--warn)" };
     const GOAL_COLOR = "#4a9eff";
     // --- Engine pairing (Claude + Codex on the same logical agent) ---------
@@ -10146,6 +10298,24 @@
       return gaugeColor(pct);
     }
 
+    /** The shield on the bypass pill: nothing asks before acting. */
+    function shieldIcon() {
+      const NS = "http://www.w3.org/2000/svg";
+      const svg = document.createElementNS(NS, "svg");
+      svg.setAttribute("viewBox", "0 0 24 26");
+      svg.setAttribute("width", "11");
+      svg.setAttribute("height", "12");
+      svg.setAttribute("aria-hidden", "true");
+      const path = document.createElementNS(NS, "path");
+      path.setAttribute("d", "M12 2 3 6v7c0 6 4 9.5 9 11 5-1.5 9-5 9-11V6z");
+      path.setAttribute("fill", "none");
+      path.setAttribute("stroke", "currentColor");
+      path.setAttribute("stroke-width", "2.4");
+      path.setAttribute("stroke-linejoin", "round");
+      svg.appendChild(path);
+      return svg;
+    }
+
     function renderScreenStatus() {
       renderScreenIdentity();
       // "new session" is the assistant's own control: one conversation after
@@ -10188,7 +10358,8 @@
         inner.appendChild(m);
       }
       if (agent.permission) {
-        const pill = el("span", "status-pill", PERM_LABEL[agent.permission] || agent.permission);
+        const pill = el("span", `status-pill perm-${agent.permission}`, PERM_LABEL[agent.permission] || agent.permission);
+        if (agent.permission === "bypass") pill.prepend(shieldIcon());
         pill.style.setProperty("--pill-color", PERM_COLOR[agent.permission] || "var(--text-dim)");
         pill.title = `Permission mode: ${PERM_LABEL[agent.permission] || agent.permission} — change it in the Terminal with Shift+Tab`;
         inner.appendChild(pill);
@@ -13168,8 +13339,17 @@
       setupRemoteSession();
       setupMcpCommand();
       loadUsageCollapsed();
-      $("#usage-toggle").addEventListener("click", () => {
-        setUsageCollapsed($("#usage-card").dataset.collapsed !== "true");
+      $("#usage-toggle").addEventListener("click", () => setUsageOpen(false));
+      $("#usage-bar").addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        setUsageOpen($("#usage-card").dataset.open !== "true");
+      });
+      document.addEventListener("click", (ev) => {
+        const card = $("#usage-card");
+        if (card.dataset.open === "true" && !card.contains(ev.target)) setUsageOpen(false);
+      });
+      document.addEventListener("keydown", (ev) => {
+        if (ev.key === "Escape" && $("#usage-card").dataset.open === "true") setUsageOpen(false);
       });
 
       // Composer wiring.
@@ -13313,8 +13493,7 @@
       // cousin's app gets half its "it just works" from saying so.
       // (…and only where a mouse can drag; a phone gets the 📎 instead.)
       const canDrag = window.matchMedia("(hover: hover)").matches;
-      const chatPlaceholder = () =>
-        screenState.name ? (canDrag ? "Write a dispatch… (drag or paste files)" : "Write a dispatch…") : "Write a message…";
+      const chatPlaceholder = () => composerPlaceholder(canDrag);
       const attachments = new Map(); // "[📎 name]" -> absolute path on the hub
       let uploading = 0;
       const attachToken = (name) => `[📎 ${name}]`;
@@ -14503,7 +14682,7 @@
       setInterval(refreshUsage, 60000);
       // A lighter tick just re-renders (the "updated Xs ago" label and the pace
       // colour, which shift as the window elapses) between the 60s fetches.
-      setInterval(() => { if (!$("#usage-card").hidden) renderUsage(); }, 10000);
+      setInterval(() => { if (!$("#usage-bar").hidden) renderUsage(); }, 10000);
       window.addEventListener("focus", refreshUsage);
     }
 

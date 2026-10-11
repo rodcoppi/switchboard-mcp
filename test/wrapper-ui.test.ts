@@ -1334,16 +1334,14 @@ describe("the layout survives a folding phone", () => {
   });
 
   it("does not let the rigid usage card crush the agent list", () => {
-    // usage-card is flex: 0 0 auto and ~350px tall. In a rail capped to a
-    // fraction of a phone screen it would win outright: the list goes to zero
-    // and the card spills over the conversation. It is NOT hidden (that lost
-    // real info the owner wanted) — it starts collapsed to one line instead,
-    // decided in loadUsageCollapsed, and the sidebar clips as a backstop.
+    // usage-card was flex: 0 0 auto and ~350px tall at the rail's foot; in a
+    // rail capped to a fraction of a phone screen it won outright. It lives
+    // outside the rail now — a popover over the bottom usage bar (design
+    // pass, 11/10) — and the sidebar still clips as a backstop.
     const stackedBody = stacking.map((b) => b.body).join("\n");
     expect(stackedBody).toMatch(/\.sidebar\s*\{[^}]*overflow:\s*hidden/);
-    // The collapse default for narrow screens lives in the script.
-    expect(script).toMatch(/matchMedia\("\(max-width: 1080px\)"\)/);
-    expect(script).toMatch(/stored !== null \? stored : narrow/);
+    const aside = html.slice(html.indexOf("<aside"), html.indexOf("</aside>"));
+    expect(aside).not.toContain('id="usage-card"');
   });
 
   it("measures phone-sized panels against the visible viewport", () => {
@@ -2254,5 +2252,35 @@ describe("the agent card (design pass, owner 11/10)", () => {
 
   it("repaints the rail when the last reply changes, but ages the time in place", () => {
     expect(embeddedFunctionSource("railSignature")).toContain('a.lastReply || "", a.lastReplyAt || ""');
+  });
+});
+
+describe("the composer as a card, usage as a bar (design pass, owner 11/10)", () => {
+  it("puts the model / permission / context pills inside the composer, beside its buttons", () => {
+    const form = html.slice(html.indexOf('<form class="chat-composer"'), html.indexOf("</form>"));
+    expect(form).toContain('id="chat-statusbar"');
+    expect(form).toContain('id="composer-ask"');
+    expect(styles).toMatch(/\.chat-composer-inner \{\s*max-width: 46rem;\s*border: 1px solid #2c2c31;\s*border-radius: 20px;/);
+  });
+
+  it("asks the agent's question right above where you type", () => {
+    expect(embeddedFunctionSource("updateChatAsk")).toContain('const view = $("#composer-ask");');
+  });
+
+  it("marks a bypassed session with the red shield", () => {
+    expect(embeddedFunctionSource("renderScreenStatus")).toContain('if (agent.permission === "bypass") pill.prepend(shieldIcon());');
+    expect(styles).toContain(".chat-composer .status-pill.perm-bypass { --pill-color: var(--st-error); }");
+  });
+
+  it("says whom you are writing to in the box", () => {
+    expect(embeddedFunctionSource("composerPlaceholder")).toContain("`Message ${who}");
+  });
+
+  it("shows usage as one line at the bottom that opens the full card", () => {
+    const bar = embeddedFunctionSource("renderUsageBar");
+    expect(bar).toContain('bar.hidden = !usageClaude && !usageCodex;');
+    expect(embeddedFunctionSource("renderUsage")).toContain("renderUsageBar();");
+    expect(embeddedFunctionSource("setUsageOpen")).toContain("card.dataset.open = String(open);");
+    expect(styles).toContain('.usage-pop[data-open="false"] { display: none; }');
   });
 });
