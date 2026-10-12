@@ -405,12 +405,16 @@ export function parseSpinner(plain: string): { verb: string; seconds: number; no
  * writes to the transcript, so the chat had no way to show them (owner,
  * 11/10: "é bom pra caramba, mas não tem no chat"):
  *
- *   ✦ Heads up · Quando o agente está ocupado, uma mensagem com print só é
- *     lida no fim da tarefa inteira…
+ *   ✦ Heads up · O programa do e-mail não percebe quando alguém marca o
+ *     e-mail como spam…
  *     1: Learn more   2: Knew this already   0: Dismiss
  *
- * The text runs on over indented lines until the key line. The LAST note on
- * screen wins. Exported for tests.
+ * "Learn more" EXPANDS it in place — a blank line, a detail block (a title
+ * and "- " points, wrapped), and new keys at the bottom ("1: Understood
+ * 2: Chat in main session 0: Dismiss"); seen live 12/10. Stopping at the
+ * first blank line lost those keys and left a card nobody could close. The
+ * note runs to its key line, or to the input box's rule / the prompt. The
+ * LAST note on screen wins. Exported for tests.
  */
 export function parseHeadsUp(plain: string): HeadsUp | null {
   const lines = plain.split("\n");
@@ -419,18 +423,40 @@ export function parseHeadsUp(plain: string): HeadsUp | null {
     const m = /^\s*✦\s*Heads up\s*[·•:-]\s*(.*)$/i.exec(lines[i]);
     if (!m) continue;
     let text = m[1].trim();
+    const detail: string[] = [];
     const options: HeadsUp["options"] = [];
-    for (let j = i + 1; j < lines.length && j <= i + 10; j++) {
+    let inDetail = false;
+    for (let j = i + 1; j < lines.length && j <= i + 40; j++) {
       const line = lines[j];
       if (/^\s*\d:\s+\S/.test(line)) {
         for (const o of line.matchAll(/(\d):\s+(.+?)(?=\s{2,}\d:|\s*$)/g)) options.push({ key: o[1], label: o[2].trim().slice(0, 40) });
         break;
       }
-      if (!line.trim() || /^[\s\u2500-\u257F]+$/.test(line) || /^\s*[❯›>]/.test(line)) break;
-      text += ` ${line.trim()}`;
+      if (line.trim() && /^[\s\u2500-\u257F]+$/.test(line)) break; // the input box's rule
+      if (/^\s*[❯›>]/.test(line)) break;
+      if (/^\s*✦\s*Heads up/i.test(line)) break; // the next note
+      if (!line.trim()) {
+        inDetail = true;
+        continue;
+      }
+      if (!inDetail) {
+        text += ` ${line.trim()}`;
+        continue;
+      }
+      // Detail: drop the note's own two-space margin; a deeper indent that is
+      // not a new "- " point is the previous line wrapped.
+      const body = line.replace(/^ {2}/, "");
+      if (/^\s{2,}\S/.test(body) && detail.length && !/^\s*[-•*]\s/.test(body)) detail[detail.length - 1] += ` ${body.trim()}`;
+      else detail.push(body.trim());
     }
     text = text.replace(/\s+/g, " ").trim();
-    if (text) found = { text: text.slice(0, 500), options: options.slice(0, 4) };
+    if (text) {
+      found = {
+        text: text.slice(0, 500),
+        detail: detail.slice(0, 12).map((d) => d.slice(0, 400)),
+        options: options.slice(0, 4),
+      };
+    }
   }
   return found;
 }

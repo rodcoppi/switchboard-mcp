@@ -2355,6 +2355,12 @@ describe("the CLI's heads-up notes in the chat (owner, 11/10)", () => {
     expect(embeddedFunctionSource("updateStopButton")).toContain("updateChatHeadsUp();");
   });
 
+  it("always offers a way out (×), and shows the detail Learn more opens", () => {
+    const fn = embeddedFunctionSource("updateChatHeadsUp");
+    expect(fn).toContain("hiddenHeadsUps.add(");
+    expect(fn).toContain('el("div", "chat-headsup-detail")');
+  });
+
   it("says a message with a picture waits for the whole task", () => {
     expect(embeddedFunctionSource("updatePendingStates")).toContain('"in line · reads it when this task ends"');
   });

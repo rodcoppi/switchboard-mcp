@@ -80,10 +80,11 @@ export interface Agent {
   spinnerNote?: string;
   /**
    * A "✦ Heads up" note Claude Code is showing in the pane (advice it never
-   * writes to the transcript), with its keyed choices ("1" Learn more, "2"
-   * Knew this already, "0" Dismiss). null when none.
+   * writes to the transcript), its expanded detail once "Learn more" was
+   * pressed, and its keyed choices ("1" Learn more, "2" Knew this already,
+   * "0" Dismiss — they change once expanded). null when none.
    */
-  headsUp?: { text: string; options: Array<{ key: string; label: string }> } | null;
+  headsUp?: { text: string; detail?: string[]; options: Array<{ key: string; label: string }> } | null;
   role: string; // free-form description, e.g. "backend da API de pagamentos"
   tmuxSession: string; // e.g. "sb-alpha" (prefix + name)
   cwd: string; // directory where the agent CLI was opened

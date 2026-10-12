@@ -4436,6 +4436,9 @@
     .composer-ask .chat-ask-q { white-space: pre-wrap; font-family: var(--sans); font-size: 13.5px; }
     /* A heads-up is advice, not a question: quieter than .chat-ask. */
     .chat-headsup {
+      position: relative;
+      max-height: 45dvh;
+      overflow-y: auto;
       margin: 0 0 8px;
       padding: 10px 14px;
       border: 1px solid color-mix(in srgb, var(--st-working) 30%, var(--border-soft));
@@ -4443,7 +4446,26 @@
       background: color-mix(in srgb, var(--st-working) 5%, var(--bg-elev));
     }
     .chat-headsup-eyebrow { font-family: var(--mono); font-size: 10px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--st-working); margin-bottom: 4px; }
-    .chat-headsup-text { font-family: var(--sans); font-size: 13px; line-height: 1.5; color: var(--text); }
+    .chat-headsup-text { font-family: var(--sans); font-size: 13px; line-height: 1.5; color: var(--text); padding-right: 22px; }
+    .chat-headsup-hide {
+      position: absolute;
+      top: 6px;
+      right: 8px;
+      width: 26px;
+      height: 26px;
+      border: 0;
+      border-radius: 50%;
+      background: transparent;
+      color: var(--text-faint);
+      font-size: 17px;
+      line-height: 1;
+      cursor: pointer;
+    }
+    .chat-headsup-hide:hover { color: var(--text); background: var(--bg-hover); }
+    .chat-headsup-detail { margin-top: 8px; font-family: var(--sans); font-size: 12.5px; line-height: 1.5; color: var(--text-dim); }
+    .chat-headsup-sub { margin: 6px 0 2px; font-weight: 600; color: var(--text); }
+    .chat-headsup-detail ul { margin: 2px 0; padding-left: 18px; }
+    .chat-headsup-detail li { margin: 2px 0; }
     .chat-headsup-options { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
     .chat-headsup-opt {
       padding: 3px 10px;
@@ -10393,22 +10415,53 @@
      * reads them off the screen; here they sit above the composer, quieter
      * than a question, with the same keyed choices the terminal offers.
      */
+    /** Notes hidden with × (agent|text), for this page's life. */
+    const hiddenHeadsUps = new Set();
+
     function updateChatHeadsUp() {
       const host = $("#composer-ask");
       if (!host) return;
       const old = host.querySelector(".chat-headsup");
       const agent = liveScreenAgent();
       const note = agent && screenState.mode === "chat" ? agent.headsUp : null;
-      if (!note || !note.text) {
+      const signature = note && note.text
+        ? note.text + "|" + (note.detail || []).join("|") + "|" + (note.options || []).map((o) => o.key + o.label).join("|")
+        : "";
+      if (!note || !note.text || hiddenHeadsUps.has(`${screenState.name}|${note.text}`)) {
         old?.remove();
         return;
       }
-      const signature = note.text + "|" + (note.options || []).map((o) => o.key + o.label).join("|");
       if (old && old.dataset.signature === signature) return;
       old?.remove();
       const box = el("div", "chat-headsup");
       box.dataset.signature = signature;
-      box.append(el("div", "chat-headsup-eyebrow", "✦ heads up"), el("div", "chat-headsup-text", note.text));
+      // Always a way out, whatever the terminal draws next: × hides the note
+      // here (it stays in the terminal until answered there).
+      const hide = el("button", "chat-headsup-hide", "×");
+      hide.type = "button";
+      hide.title = "Hide this note here (it stays in the terminal)";
+      hide.setAttribute("aria-label", "Hide this note");
+      hide.addEventListener("click", () => {
+        hiddenHeadsUps.add(`${screenState.name}|${note.text}`);
+        box.remove();
+      });
+      box.append(hide, el("div", "chat-headsup-eyebrow", "✦ heads up"), el("div", "chat-headsup-text", note.text));
+      // "Learn more" expands the note in the terminal: a title and points.
+      if (note.detail && note.detail.length) {
+        const more = el("div", "chat-headsup-detail");
+        let list = null;
+        for (const line of note.detail) {
+          const point = /^[-•*]\s+(.*)$/.exec(line);
+          if (point) {
+            if (!list) { list = el("ul"); more.appendChild(list); }
+            list.appendChild(el("li", null, point[1]));
+          } else {
+            list = null;
+            more.appendChild(el("div", "chat-headsup-sub", line));
+          }
+        }
+        box.appendChild(more);
+      }
       if (note.options && note.options.length) {
         const row = el("div", "chat-headsup-options");
         for (const o of note.options) {

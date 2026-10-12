@@ -88,6 +88,7 @@ describe("Claude Code's heads-up notes (pane only, never in the transcript)", ()
   it("reads the note across its wrapped lines, with its keyed choices", () => {
     expect(parseHeadsUp(PANE)).toEqual({
       text: "When the agent is busy, a message carrying a picture is read only when the whole task ends.",
+      detail: [],
       options: [
         { key: "1", label: "Learn more" },
         { key: "2", label: "Knew this already" },
@@ -95,6 +96,35 @@ describe("Claude Code's heads-up notes (pane only, never in the transcript)", ()
       ],
     });
     expect(parsePaneStatus(PANE).headsUp?.options).toHaveLength(3);
+  });
+
+  it("reads a note expanded by Learn more — its detail and its NEW keys, past the blank line", () => {
+    const expanded = [
+      "✦ Heads up · The mailer does not notice when someone marks a message as spam, so it can drift into",
+      "  spam unseen.",
+      "",
+      "  Spam can grow without the mailer noticing",
+      "  - It pauses on its own in 2 cases: an address that does not exist and a reply asking out.",
+      "  - The most dangerous signal is another: \"Mark as spam\". That notice never reaches",
+      "    us.",
+      "",
+      "  1: Understood   2: Chat in main session   0: Dismiss",
+      "────────────",
+      "❯ ",
+    ].join("\n");
+    expect(parseHeadsUp(expanded)).toEqual({
+      text: "The mailer does not notice when someone marks a message as spam, so it can drift into spam unseen.",
+      detail: [
+        "Spam can grow without the mailer noticing",
+        "- It pauses on its own in 2 cases: an address that does not exist and a reply asking out.",
+        '- The most dangerous signal is another: "Mark as spam". That notice never reaches us.',
+      ],
+      options: [
+        { key: "1", label: "Understood" },
+        { key: "2", label: "Chat in main session" },
+        { key: "0", label: "Dismiss" },
+      ],
+    });
   });
 
   it("is null when no note is on screen", () => {
