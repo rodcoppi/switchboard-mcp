@@ -282,11 +282,28 @@ export function parsePaneStatus(pane: string): PaneStatus {
   const working =
     /esc to interrupt/i.test(footer) || aboveInput.some((l) => spinnerShaped(l) && /esc to interrupt/i.test(l));
   // Modal prompts, by their own wording (each verified in a live pane).
+  // WHERE a dialog can be: the conversation is history too, and the
+  // operator's own message "1. feito" sits in it as "❯ 1. feito" — read as a
+  // choice, it made an agent "ask" with options lifted from its last reply,
+  // and a blocked agent is never nudged (12/10). A dialog REPLACES the input
+  // box, so its highlighted choice is the LAST caret on screen; when the last
+  // caret is the input box, everything above it is conversation. Fail-closed
+  // still: the dialog's own wording counts anywhere below that last caret.
+  let caretAt = -1;
+  for (let i = plainLines.length - 1; i >= 0; i--) {
+    if (/^[\s│|]*[❯›]/.test(plainLines[i])) {
+      caretAt = i;
+      break;
+    }
+  }
+  const choiceAtCaret = caretAt >= 0 && /^[\s│|]*[❯›]\s*\d+\.\s/.test(plainLines[caretAt]);
+  const dialogFrom = choiceAtCaret ? Math.max(0, caretAt - 20) : caretAt >= 0 ? caretAt + 1 : Math.max(0, plainLines.length - 15);
+  const dialogText = plainLines.slice(dialogFrom).join("\n");
   const blocked =
-    /Do you want to (?:proceed|create|make|allow)/i.test(plain) ||
-    /Do you trust the files in this folder\?/i.test(plain) ||
-    /Loading development channels/i.test(plain) ||
-    /❯\s*\d+\.\s/.test(plain); // the numbered choice list a modal renders
+    choiceAtCaret || // the numbered choice list a modal renders, highlighted
+    /Do you want to (?:proceed|create|make|allow)/i.test(dialogText) ||
+    /Do you trust the files in this folder\?/i.test(dialogText) ||
+    /Loading development channels/i.test(dialogText);
   // Messages typed while it works wait in the CLI's queue, drawn grey above
   // the input with "ctrl+x ctrl+s to send now" (ctrl+enter on terminals that
   // tell it apart) — verified on a live 2.1.296 pane, 11/10.
@@ -335,8 +352,17 @@ export function parsePaneStatus(pane: string): PaneStatus {
     // raw line reads "3. É funcionário, não   │ olhar e perguntar que parte…│".
     // Cutting at the box means each option keeps its own words and nothing
     // else (the owner saw the preview text spliced into the buttons, 17/08).
-    const left = paneLines.map(stripSidePanel);
-    for (let i = 0; i < left.length; i++) {
+    // Only the dialog's own lines: a numbered list in the conversation above
+    // it is not its choices.
+    const left = paneLines.slice(dialogFrom).map(stripSidePanel);
+    // The choices are the run that ends at the highlighted one: start at the
+    // LAST "1." at or above the caret, not the first in sight.
+    const caretIn = choiceAtCaret ? caretAt - dialogFrom : left.length - 1;
+    let firstChoice = 0;
+    for (let k = 0; k <= caretIn && k < left.length; k++) {
+      if (/^\s*[❯>]?\s*1\.\s/.test(left[k])) firstChoice = k;
+    }
+    for (let i = firstChoice; i < left.length; i++) {
       const opt = /^\s*[❯>]?\s*(\d+)\.\s+(\S.*?)\s*$/.exec(left[i]);
       if (!opt) continue;
       const n = Number(opt[1]);

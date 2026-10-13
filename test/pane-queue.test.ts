@@ -167,3 +167,48 @@ describe("the terminal's first frame", () => {
     expect(src).toContain('"\\x1b[?25l\\x1b[0m\\x1b[3J\\x1b[2J\\x1b[H"');
   });
 });
+
+describe("a question is only a question where a dialog can be (12/10)", () => {
+  // The operator's own message "1. feito" sits in the history as "❯ 1. feito";
+  // read as a choice, it made an idle agent "ask", with options lifted from a
+  // numbered list in its last reply — and a blocked agent is never nudged.
+  const HISTORY = [
+    "● Three things left:",
+    "  1. The new redirect address",
+    "  2. Email: ready to start today",
+    "  3. Ads",
+    "",
+    "❯ 1. done",
+    "  2. do we need more inboxes?",
+    "",
+    "● Got it.",
+    "────────────",
+    "❯ ",
+    "────────────",
+    "  ⏵⏵ bypass permissions on (shift+tab to cycle)",
+  ].join("\n");
+
+  it("does not read the operator's numbered message in the history as a dialog", () => {
+    const st = parsePaneStatus(HISTORY);
+    expect(st.blocked).toBe(false);
+    expect(st.blockedOptions).toEqual([]);
+  });
+
+  it("a real dialog under that history is still a dialog, with ITS choices", () => {
+    const dialog = HISTORY.split("\n").slice(0, 9).concat([
+      " Bash command",
+      "   rm -rf build/",
+      " Do you want to proceed?",
+      " ❯ 1. Yes",
+      "   2. No",
+    ]).join("\n");
+    const st = parsePaneStatus(dialog);
+    expect(st.blocked).toBe(true);
+    expect(st.blockedOptions).toEqual(["Yes", "No"]);
+  });
+
+  it("fails closed: the dialog's wording below the last caret blocks even with no highlighted choice", () => {
+    const st = parsePaneStatus(HISTORY.replace("● Got it.", "● Got it.\n") + "\n Do you want to proceed?\n   1. Yes\n   2. No");
+    expect(st.blocked).toBe(true);
+  });
+});
