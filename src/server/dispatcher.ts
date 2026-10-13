@@ -262,7 +262,25 @@ export function parsePaneStatus(pane: string): PaneStatus {
   // the raw match never fired and every bypass agent read idle, mid-turn
   // included (found 11/10 with a live pane: all 14 online agents "idle").
   const plain = stripAnsi(pane);
-  const working = /esc to interrupt/i.test(plain);
+  // …and only where the CLI writes them: the FOOTER under the input box, and
+  // the live line just above it. Matching the whole frame read the
+  // conversation too — an agent whose last reply QUOTED "esc to interrupt"
+  // (this very work, 12/10) showed as working while it sat idle.
+  const plainLines = plain.split("\n");
+  let promptAt = -1;
+  for (let i = plainLines.length - 1; i >= 0; i--) {
+    if (/^\s*[❯›>]/.test(plainLines[i])) {
+      promptAt = i;
+      break;
+    }
+  }
+  const footer = (promptAt >= 0 ? plainLines.slice(promptAt + 1) : plainLines.slice(-4)).join("\n");
+  const aboveInput = promptAt >= 0 ? plainLines.slice(Math.max(0, promptAt - 8), promptAt) : [];
+  // The live line, the way the CLI draws it ("· Verb… (12s · esc to interrupt)")
+  // — at the left edge; the conversation's copies of it are indented.
+  const spinnerShaped = (l: string) => /^ ?[·•✢✳✶✻✽*+]\s+\S[^(]*\(\s*\d+[hms]/.test(l);
+  const working =
+    /esc to interrupt/i.test(footer) || aboveInput.some((l) => spinnerShaped(l) && /esc to interrupt/i.test(l));
   // Modal prompts, by their own wording (each verified in a live pane).
   const blocked =
     /Do you want to (?:proceed|create|make|allow)/i.test(plain) ||
@@ -272,8 +290,10 @@ export function parsePaneStatus(pane: string): PaneStatus {
   // Messages typed while it works wait in the CLI's queue, drawn grey above
   // the input with "ctrl+x ctrl+s to send now" (ctrl+enter on terminals that
   // tell it apart) — verified on a live 2.1.296 pane, 11/10.
-  const queued = /(?:ctrl\+x ctrl\+s|ctrl\+enter) to send now/i.test(plain);
-  const spinner = working ? parseSpinner(plain) : null;
+  // The hint stands on a line of its own, just above the input box.
+  const nearInput = promptAt >= 0 ? plainLines.slice(Math.max(0, promptAt - 14), promptAt) : plainLines.slice(-14);
+  const queued = nearInput.some((l) => /^\s*(?:ctrl\+x ctrl\+s|ctrl\+enter) to send now\s*$/i.test(l));
+  const spinner = working ? parseSpinner(nearInput.join("\n")) : null;
   const headsUp = parseHeadsUp(plain);
   // The LAST prompt line is the live input (the TUI keeps it at the bottom);
   // anything after the caret is text waiting to be sent. NBSP is what the
@@ -387,7 +407,9 @@ export function parseSpinner(plain: string): { verb: string; seconds: number; no
   let found: { verb: string; seconds: number; note: string } | null = null;
   for (const line of plain.split("\n")) {
     // The clock is "23s", "1m 9s", or — on a long turn — just "30m" / "1h 2m".
-    const m = /^\s*[·•✢✳✶✻✽*+]\s+(\S[^(\n]*?)\s*\(\s*(?:(\d+)h\s*)?(?:(\d+)m\s*)?(?:(\d+)s)?(?=\s*(?:[·•)]|$))([^)]*)\)/.exec(line);
+    // At the left edge (one space at most): the conversation's quotes of a
+    // live line are indented, and must not stand in for it.
+    const m = /^ ?[·•✢✳✶✻✽*+]\s+(\S[^(\n]*?)\s*\(\s*(?:(\d+)h\s*)?(?:(\d+)m\s*)?(?:(\d+)s)?(?=\s*(?:[·•)]|$))([^)]*)\)/.exec(line);
     if (!m || (m[2] === undefined && m[3] === undefined && m[4] === undefined)) continue;
     const seconds = Number(m[2] || 0) * 3600 + Number(m[3] || 0) * 60 + Number(m[4] || 0);
     const note = m[5]

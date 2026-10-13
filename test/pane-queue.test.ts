@@ -132,3 +132,38 @@ describe("Claude Code's heads-up notes (pane only, never in the transcript)", ()
     expect(parsePaneStatus(QUEUED_PANE).headsUp).toBeNull();
   });
 });
+
+describe("only the CLI's own lines count, never the conversation (12/10)", () => {
+  // An idle agent whose last reply QUOTED the phrases read as working and
+  // queued — the reply sits above the input box like any other text.
+  const IDLE_QUOTING = [
+    "● The footer says \"esc to interrupt\" while it works, and",
+    "  ctrl+x ctrl+s to send now",
+    "  ✻ Working… (12s · esc to interrupt)",
+    "✻ Cooked for 3s · done 1:09 AM",
+    "────────────",
+    "❯ ",
+    "────────────",
+    "  ⏵⏵ bypass permissions on (shift+tab to cycle)",
+  ].join("\n");
+
+  it("reads an idle pane as idle, whatever its conversation says", () => {
+    const st = parsePaneStatus(IDLE_QUOTING);
+    expect(st.working).toBe(false);
+    expect(st.spinner).toBeNull();
+  });
+
+  it("does not take a quoted hint inside a reply for the CLI's queue", () => {
+    expect(parsePaneStatus(IDLE_QUOTING.replace("  ctrl+x ctrl+s to send now", "  see the ctrl+x ctrl+s to send now hint")).queued).toBe(false);
+  });
+});
+
+describe("the terminal's first frame", () => {
+  it("sends a main-screen pane's history and clears the viewer's old copy first", async () => {
+    const fs = await import("node:fs");
+    const src = fs.readFileSync(new URL("../src/server/terminal.ts", import.meta.url), "utf8");
+    expect(src).toContain("#{alternate_on} #{history_size}");
+    expect(src).toContain("-S -${history}");
+    expect(src).toContain('"\\x1b[?25l\\x1b[0m\\x1b[3J\\x1b[2J\\x1b[H"');
+  });
+});
