@@ -37,6 +37,9 @@ import type { ControlClient, Tmux } from "./tmux.js";
  * Refuses absurd sizes before they reach tmux. The upper bound is not a real
  * terminal size, it is a sanity rail on a number that arrives over HTTP.
  */
+/** How much of a main-screen pane's history a viewer gets as scrollback. */
+export const TERMINAL_HISTORY_LINES = 1000;
+
 export const MAX_COLS = 500;
 export const MAX_ROWS = 200;
 
@@ -313,9 +316,9 @@ export class TerminalBridge {
     // history_size 0). Re-announcing the modes is what a real client does on
     // attach; it is why scrolling works in a Windows terminal and did not here.
     const info = await cc.command(
-      `display-message -p -t '${t}' '#{pane_id} #{pane_width} #{pane_height} #{cursor_x} #{cursor_y} #{cursor_flag} #{mouse_standard_flag} #{mouse_button_flag} #{mouse_all_flag} #{mouse_sgr_flag}'`,
+      `display-message -p -t '${t}' '#{pane_id} #{pane_width} #{pane_height} #{cursor_x} #{cursor_y} #{cursor_flag} #{mouse_standard_flag} #{mouse_button_flag} #{mouse_all_flag} #{mouse_sgr_flag} #{alternate_on} #{history_size}'`,
     );
-    const m = /^(%\d+) (\d+) (\d+) (\d+) (\d+) (\d+) (\d+) (\d+) (\d+) (\d+)$/.exec(info.out[0] ?? "");
+    const m = /^(%\d+) (\d+) (\d+) (\d+) (\d+) (\d+) (\d+) (\d+) (\d+) (\d+) (\d+) (\d+)$/.exec(info.out[0] ?? "");
     if (!info.ok || !m) {
       throw new Error(`could not read the pane state (${info.out.join(" ") || "no output"})`);
     }
@@ -335,15 +338,25 @@ export class TerminalBridge {
     //    than this capture; both writes land back-to-back on the control
     //    stream, and a mismatch would need pane output in between — microseconds
     //    — and self-heals on the app's next repaint.
-    const cap = await cc.command(`capture-pane -p -e -t '${t}'`);
+    //    Claude Code 2.1.29x no longer runs in the alternate screen (12/10:
+    //    every agent alternate_on 0, ~1900 lines of tmux history): what
+    //    scrolled off the top lives in the PANE's history now, and PageUp no
+    //    longer pages anything. So a pane on the main screen sends its recent
+    //    history too, and the viewer keeps it as scrollback; an alternate-
+    //    screen app (codex) still has none and still gets PageUp.
+    const alt = m[11] === "1";
+    const history = alt ? 0 : Math.min(Number(m[12]) || 0, TERMINAL_HISTORY_LINES);
+    const cap = await cc.command(`capture-pane -p -e${history > 0 ? ` -S -${history}` : ""} -t '${t}'`);
     if (!cap.ok) throw new Error(`capture-pane failed (${cap.out.join(" ")})`);
 
     // 4. Synthesize. \r\n, not \n: capture prints text LINES, and on a terminal
     //    \n only moves down — \r is what returns to column 0 (a frame without
     //    it painted as a staircase). Cursor hidden while painting, restored per
     //    the pane's own flag, positioned absolutely (ANSI is 1-based).
+    //    \x1b[3J first: a REframe re-sends the history, and the viewer's old
+    //    scrollback has to go or it would hold every copy.
     const frame = Buffer.from(
-      "\x1b[?25l\x1b[0m\x1b[2J\x1b[H" +
+      "\x1b[?25l\x1b[0m\x1b[3J\x1b[2J\x1b[H" +
         mouseModes +
         cap.out.join("\r\n") +
         `\x1b[${cursor.y + 1};${cursor.x + 1}H` +

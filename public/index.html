@@ -9299,18 +9299,19 @@
     }
 
     function mountTerminal(name) {
-      setScreenHint("live — type here to drive it · wheel pages the conversation (shift+wheel = raw)", false);
+      setScreenHint("live — type here to drive it · wheel scrolls the conversation (shift+wheel = raw)", false);
       const term = new Terminal({
         convertEol: false,
         cursorBlink: true,
-        // The pane has NO scrollback of its own — Claude Code runs in the
-        // alternate screen (tmux reports history_size 0), and the conversation
-        // you page through lives in Claude Code's own buffer, which redraws the
-        // screen when you scroll it. So xterm must NOT keep a scrollback and
-        // must NOT eat PageUp/PageDown to scroll one: those keys belong to the
-        // agent, exactly as in a real terminal window. Verified: PageUp
-        // (1b 5b 35 7e) sent as raw bytes scrolls Claude Code's history.
-        scrollback: 0,
+        // Claude Code 2.1.29x runs on the MAIN screen (12/10: alternate_on 0
+        // on every agent): what scrolls off the top goes to the pane's
+        // history, which the hub now sends with the first frame — so xterm
+        // keeps a scrollback and the wheel scrolls it, like any terminal.
+        // An app on the alternate screen (codex, older Claude Code) has no
+        // history; for those the wheel still sends PageUp/PageDown below.
+        // PageUp/PageDown KEYS stay the agent's either way (xterm only
+        // scrolls on shift+PageUp).
+        scrollback: 3000,
         fontFamily: getComputedStyle(document.body).getPropertyValue("--mono").trim(),
         fontSize: SCREEN_FONT_PX,
         theme: {
@@ -9354,6 +9355,10 @@
         "wheel",
         (ev) => {
           if (ev.shiftKey) return; // hand it to the app untouched
+          // A pane with history: xterm's own viewport scrolls it (its handler
+          // ran first, on the inner element). Nothing to send.
+          const buf = term.buffer.active;
+          if (buf.type === "normal" && buf.baseY > 0) return;
           ev.preventDefault();
           // One page per notch is already a lot, and a trackpad emits a stream
           // of small deltas — rate-limit to something a human can follow.
@@ -9393,7 +9398,7 @@
           if (term.cols !== parsed.cols || term.rows !== parsed.rows) {
             term.resize(parsed.cols, parsed.rows);
           }
-          setScreenHint("live — type here to drive it · wheel pages the conversation (shift+wheel = raw)", false);
+          setScreenHint("live — type here to drive it · wheel scrolls the conversation (shift+wheel = raw)", false);
           return;
         }
         // atob → bytes → xterm. The stream is raw terminal output, so it is

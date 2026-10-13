@@ -2382,3 +2382,10 @@ describe("a message's actions sit under it, never on its words (owner, 11/10)", 
     expect(embeddedFunctionSource("renderChat")).toContain('thread.addEventListener("click", onThreadTap);');
   });
 });
+
+describe("the terminal scrolls a main-screen pane's history (12/10)", () => {
+  it("keeps a scrollback and leaves the wheel to it when there is history", () => {
+    expect(embeddedFunctionSource("mountTerminal")).toContain("scrollback: 3000,");
+    expect(embeddedFunctionSource("mountTerminal")).toContain('if (buf.type === "normal" && buf.baseY > 0) return;');
+  });
+});
