@@ -1455,6 +1455,11 @@ export function createApiRouter(options: ApiOptions): express.Router {
       // because this list stopped at Downloads/Desktop (23/09). Whatever the
       // resolver will reference, the dashboard must be able to show.
       ...personalRoots(),
+      // The system temp dir: where agents build the pictures they hand over
+      // (SendUserFile with /tmp/…/x.jpg — the chat drew the preview, the
+      // fetch was refused, and the image vanished; owner, 13/10). The whole
+      // home is already in scope, so this widens nothing that matters more.
+      os.tmpdir(),
     ];
   }
 

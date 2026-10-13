@@ -4555,6 +4555,8 @@
     .usage-pop[data-open="false"] { display: none; }
     .usage-pop .usage-card-caret { transform: none; }
 
+    .chat-sent-missing { margin-top: 6px; font-family: var(--mono); font-size: 11px; color: var(--text-faint); }
+
     /* What the turn changed, after its answer. */
     .chat-changed { border: 1px solid var(--hair); background: rgba(255, 255, 255, 0.025); border-radius: 10px; }
     .chat-changed-head {
@@ -11745,7 +11747,9 @@
           img.loading = "lazy";
           img.src = raw;
           img.alt = f.name;
-          img.addEventListener("error", () => img.remove());
+          // Said, not swallowed: a preview that silently vanished is how a
+          // refused path went unnoticed (13/10).
+          img.addEventListener("error", () => img.replaceWith(el("div", "chat-sent-missing", "preview unavailable — try view or download")));
           img.addEventListener("click", (ev) => { ev.stopPropagation(); window.open(raw, "_blank", "noopener"); });
           box.appendChild(img);
         }

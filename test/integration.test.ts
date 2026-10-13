@@ -1449,6 +1449,21 @@ describe("auxiliary endpoints", () => {
     }
   });
 
+  it("GET /api/files/raw serves a picture an agent handed over from the temp dir", async () => {
+    // SendUserFile with /tmp/<dir>/x.jpg: the chat drew a preview of it, the
+    // fetch was refused (403), and the image vanished (owner, 13/10).
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sb-handed-"));
+    const file = path.join(dir, "ads.jpg");
+    fs.writeFileSync(file, Buffer.from([0xff, 0xd8, 0xff, 0xd9]));
+    try {
+      const res = await fetch(api(`/api/files/raw?path=${encodeURIComponent(file)}`));
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toBe("image/jpeg");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("GET /api/files/raw refuses a path outside every scope root", async () => {
     const res = await fetch(api(`/api/files/raw?path=${encodeURIComponent("/etc/hostname")}`));
     expect(res.status).toBe(403);
