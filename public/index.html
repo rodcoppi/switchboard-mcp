@@ -3348,15 +3348,48 @@
     }
     .rail-group .agent-card.leader:not(.active) .agent-name { color: #efd27a; }
 
-    /* Drag-to-reorder: the lifted card fades and shows a dashed berth so the gap
-       it will leave is legible while you place it. */
-    .agent-card.dragging {
-      opacity: 0.4;
-      outline: 1px dashed var(--accent-line);
-      outline-offset: -1px;
+    /* Drag-to-reorder: the family being carried stays in place, faded, until
+       it lands; a ghost of its head follows the pointer and a line marks the
+       landing spot. */
+    .agent-card.dragging { opacity: 0.35; }
+    .agent-card.satellite .card-grab { display: none; }
+    /* Above the face: its drawing overflows the portrait by a few pixels a
+       side and covered most of the grip, so a press landed on the face and
+       only the grip's top and bottom tips ever started a drag. */
+    .card-grab { touch-action: none; z-index: 4; }
+    html.rail-dragging, html.rail-dragging * { cursor: grabbing !important; user-select: none; }
+    .rail-drag-ghost {
+      position: fixed;
+      z-index: 120;
+      margin: 0;
+      pointer-events: none;
+      opacity: 0.88;
+      background: var(--bg-elev-2);
+      border: 1px solid var(--border-strong);
+      border-radius: 12px;
+      box-shadow: 0 16px 36px -12px rgba(0, 0, 0, 0.8);
+      transform: rotate(-1deg);
     }
-    .agent-card[draggable="true"] { cursor: grab; }
-    .agent-card.dragging { cursor: grabbing; }
+    .rail-drag-count {
+      position: absolute;
+      right: 10px;
+      bottom: 8px;
+      padding: 1px 7px;
+      border-radius: 99px;
+      background: var(--bg-hover);
+      color: var(--text-dim);
+      font: 600 10.5px var(--mono);
+    }
+    .rail-drop-line {
+      position: fixed;
+      z-index: 121; /* over the ghost, which sits right on top of it */
+      height: 2px;
+      border-radius: 2px;
+      background: var(--st-working, #5caaf6);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--st-working, #5caaf6) 20%, transparent);
+      pointer-events: none;
+    }
+    .rail-drop-line[hidden] { display: none; }
 
     /* ------------------------- Command palette (⌘K) --------------------- */
     .palette-backdrop {
@@ -6517,17 +6550,18 @@
       renderAgents();
     }
 
-    // --- Drag to reorder chats (and drop into another room) --------------
-    let dragName = null;
+    // --- Drag to reorder (and drop into another room) ----------------------
+    // Cards move by POINTER, not the browser's drag-and-drop (owner, 14/10:
+    // with children hanging under their agents "tá bem ruim de mexer, não
+    // consigo reorganizar nada"). What moves is a FAMILY — the agent and the
+    // satellites drawn under it — and it can only land between families,
+    // never inside one. Nothing is rearranged while you drag: a ghost follows
+    // the pointer and a line shows where it will land; the rail scrolls near
+    // its edges; Esc cancels. Works with a finger as well as a mouse.
+    // Group heads still reorder rooms with the browser's drag (dragGroup).
     let dragGroup = null;
-    function cardAfterY(box, y) {
-      const cards = [...box.querySelectorAll(":scope > .agent-card:not(.dragging)")];
-      for (const c of cards) {
-        const r = c.getBoundingClientRect();
-        if (y < r.top + r.height / 2) return c;
-      }
-      return null;
-    }
+    let railDrag = null;
+
     function boxAfterY(container, y, exclude) {
       const boxes = [...container.querySelectorAll(":scope > .rail-group")].filter((b) => b !== exclude);
       for (const b of boxes) {
@@ -6542,21 +6576,185 @@
       saveGroupOrder(groups);
       renderAgents();
     }
-    // Read the arrangement out of the DOM and persist it. If the card ended in a
-    // different room's box, that is also a move-to-group. Never falls back to
-    // `default`: a card dropped outside every box keeps its current room.
-    function commitDrag(moved) {
-      const container = $("#agents");
-      const agent = state.agents.get(moved);
-      const card = container.querySelector(`.agent-card[data-name="${CSS.escape(moved)}"]`);
-      const box = card ? card.closest(".rail-group") : null;
-      const targetGroup = box ? box.dataset.group : agent ? groupOf(agent) : DEFAULT_GROUP;
-      saveChatOrder([...container.querySelectorAll(".agent-card")].map((c) => c.dataset.name));
-      if (agent && targetGroup && groupOf(agent) !== targetGroup) {
-        moveAgentToGroup(moved, targetGroup); // server + re-render, honours the saved order
-      } else {
-        renderAgents();
+
+    /** A family's cards: the root and the satellites drawn right under it. */
+    function familyCards(rootCard) {
+      const out = [rootCard];
+      for (let n = rootCard.nextElementSibling; n && n.classList.contains("satellite"); n = n.nextElementSibling) out.push(n);
+      return out;
+    }
+
+    /** The families a box holds, top to bottom, with their extent on screen. */
+    function familiesIn(box, skip) {
+      const out = [];
+      for (const root of box.querySelectorAll(":scope > .agent-card:not(.satellite)")) {
+        if (root === skip) continue;
+        const cards = familyCards(root);
+        out.push({
+          root,
+          top: cards[0].getBoundingClientRect().top,
+          bottom: cards[cards.length - 1].getBoundingClientRect().bottom,
+        });
       }
+      return out;
+    }
+
+    /** Pointer down on a grabber: a drag starts once it has moved a few pixels. */
+    function armRailDrag(card, grab, ev) {
+      if (ev.button !== 0 || card.classList.contains("satellite")) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      const startX = ev.clientX;
+      const startY = ev.clientY;
+      try { grab.setPointerCapture(ev.pointerId); } catch { /* synthetic pointer */ }
+      const onMove = (e) => {
+        if (!railDrag) {
+          if (Math.hypot(e.clientX - startX, e.clientY - startY) < 4) return;
+          beginRailDrag(card, e);
+        }
+        moveRailDrag(e);
+      };
+      const finish = (commit) => {
+        grab.removeEventListener("pointermove", onMove);
+        grab.removeEventListener("pointerup", onUp);
+        grab.removeEventListener("pointercancel", onCancel);
+        window.removeEventListener("keydown", onKey, true);
+        if (railDrag) endRailDrag(commit);
+      };
+      const onUp = () => finish(true);
+      const onCancel = () => finish(false);
+      const onKey = (e) => {
+        if (e.key !== "Escape" || !railDrag) return;
+        e.preventDefault();
+        e.stopPropagation();
+        finish(false);
+      };
+      grab.addEventListener("pointermove", onMove);
+      grab.addEventListener("pointerup", onUp);
+      grab.addEventListener("pointercancel", onCancel);
+      window.addEventListener("keydown", onKey, true);
+    }
+
+    function beginRailDrag(card, ev) {
+      const members = familyCards(card);
+      const r = card.getBoundingClientRect();
+      const ghost = card.cloneNode(true);
+      ghost.classList.add("rail-drag-ghost");
+      ghost.classList.remove("active", "dragging");
+      ghost.style.width = `${r.width}px`;
+      ghost.style.left = `${r.left}px`;
+      ghost.style.top = `${r.top}px`;
+      if (members.length > 1) ghost.appendChild(el("span", "rail-drag-count", `+${members.length - 1}`));
+      const line = el("div", "rail-drop-line");
+      line.hidden = true;
+      document.body.append(ghost, line);
+      for (const c of members) c.classList.add("dragging");
+      document.documentElement.classList.add("rail-dragging");
+      railDrag = { card, members, ghost, line, offsetY: ev.clientY - r.top, target: null, scrollTimer: null, lastY: ev.clientY };
+    }
+
+    function moveRailDrag(ev) {
+      const d = railDrag;
+      if (!d) return;
+      d.lastY = ev.clientY;
+      d.ghost.style.top = `${ev.clientY - d.offsetY}px`;
+      placeRailDrop();
+      // Near the rail's top or bottom edge, the rail scrolls under the ghost.
+      const container = $("#agents");
+      const cr = container.getBoundingClientRect();
+      const edge = 48;
+      const speed = ev.clientY < cr.top + edge ? -12 : ev.clientY > cr.bottom - edge ? 12 : 0;
+      clearInterval(d.scrollTimer);
+      d.scrollTimer = speed
+        ? setInterval(() => {
+            container.scrollTop += speed;
+            placeRailDrop();
+          }, 30)
+        : null;
+    }
+
+    /** Where the family would land under the pointer: a room, and the family it goes before. */
+    function placeRailDrop() {
+      const d = railDrag;
+      if (!d) return;
+      const container = $("#agents");
+      const cr = container.getBoundingClientRect();
+      const y = Math.min(Math.max(d.lastY, cr.top + 1), cr.bottom - 1);
+      const hit = document.elementFromPoint(cr.left + cr.width / 2, y);
+      const grouped = !!container.querySelector(".rail-group");
+      const box = (hit && hit.closest && hit.closest("#agents .rail-group")) || (grouped ? null : container);
+      if (!box) {
+        d.target = null;
+        d.line.hidden = true;
+        return;
+      }
+      const families = familiesIn(box, d.card);
+      let before = null;
+      for (const f of families) {
+        if (y < (f.top + f.bottom) / 2) {
+          before = f;
+          break;
+        }
+      }
+      // The line: above the family it goes before, else under the box's last.
+      let lineY;
+      if (before) lineY = before.top - 3;
+      else if (families.length) lineY = families[families.length - 1].bottom + 2;
+      else {
+        const head = box.querySelector(":scope > .group-head");
+        lineY = head ? head.getBoundingClientRect().bottom + 4 : box.getBoundingClientRect().top + 8;
+      }
+      const br = box.getBoundingClientRect();
+      d.line.hidden = false;
+      d.line.style.top = `${lineY}px`;
+      d.line.style.left = `${br.left + 8}px`;
+      d.line.style.width = `${br.width - 16}px`;
+      d.target = { box, before: before ? before.root : null };
+    }
+
+    function endRailDrag(commit) {
+      const d = railDrag;
+      railDrag = null;
+      clearInterval(d.scrollTimer);
+      d.ghost.remove();
+      d.line.remove();
+      for (const c of d.members) c.classList.remove("dragging");
+      document.documentElement.classList.remove("rail-dragging");
+      if (!commit || !d.target) return;
+      const { box, before } = d.target;
+      // Put the family in place, then read the arrangement off the rail.
+      if (before) {
+        for (const c of d.members) box.insertBefore(c, before);
+      } else {
+        const cards = [...box.querySelectorAll(":scope > .agent-card")].filter((c) => !d.members.includes(c));
+        const last = cards.length ? cards[cards.length - 1] : box.querySelector(":scope > .group-head");
+        let at = last ? last.nextSibling : box.firstChild;
+        for (const c of d.members) {
+          box.insertBefore(c, at);
+          at = c.nextSibling;
+        }
+        box.querySelector(":scope > .rail-group-empty")?.remove();
+      }
+      const container = $("#agents");
+      saveChatOrder([...container.querySelectorAll(".agent-card")].map((c) => c.dataset.name));
+      // A different room: the whole family moves there.
+      const target = box.classList.contains("rail-group") ? box.dataset.group : null;
+      const moving = target
+        ? d.members.map((c) => c.dataset.name).filter((n) => {
+            const a = state.agents.get(n);
+            return a && groupOf(a) !== target;
+          })
+        : [];
+      lastRailSignature = "";
+      if (!moving.length) {
+        renderAgents();
+        return;
+      }
+      Promise.all(moving.map((n) => moveAgentToGroup(n, target, { quiet: true }))).then(() => {
+        toast(
+          moving.length > 1 ? `"${d.card.dataset.name}" and its family are now in ${target}.` : `"${moving[0]}" is now in the ${target} group.`,
+        );
+      });
     }
 
     function initDragReorder() {
@@ -6573,25 +6771,10 @@
           else container.insertBefore(box, after);
           return;
         }
-        if (!dragName) return;
-        const dragging = container.querySelector(".agent-card.dragging");
-        if (!dragging) return;
-        // Only a real drop zone: a group box, or the flat container when there
-        // are no groups. Dead space in grouped mode is left alone, so a card is
-        // never orphaned outside every room.
-        const box = e.target.closest(".rail-group");
-        const grouped = !!container.querySelector(".rail-group");
-        const zone = box || (grouped ? null : container);
-        if (!zone) return;
-        e.preventDefault();
-        e.dataTransfer.dropEffect = "move";
-        const after = cardAfterY(zone, e.clientY);
-        if (after == null) zone.appendChild(dragging);
-        else zone.insertBefore(dragging, after);
       });
       // drop only has to ACCEPT the gesture; dragend commits (it always fires).
       container.addEventListener("drop", (e) => {
-        if (dragName || dragGroup) e.preventDefault();
+        if (dragGroup) e.preventDefault();
       });
     }
 
@@ -6869,6 +7052,8 @@
       // typing and then kicks me out". The input only exists while editing —
       // Enter/Esc/blur all remove it, so the rail never stays frozen.
       if (container.querySelector(".agent-rename-input") || document.querySelector(".agent-menu:not([hidden])")) return;
+      // Nor in the middle of a drag: the cards being carried would vanish.
+      if (railDrag) return;
       // NOTHING TO DO IS THE COMMON CASE, and rebuilding anyway is what killed
       // the faces. Wiping the container REMOVES every card from the document,
       // and removing a node cancels its running CSS animations — so with 31
@@ -7501,25 +7686,10 @@
       );
       // Reorder ONLY via the grabber on the left — dragging the whole card
       // fought the click that opens the agent. The card itself is not draggable.
+      // A satellite (child, codex sibling) has none: it moves with its root.
       const grab = el("div", "card-grab", "⠿");
-      grab.title = "Drag to reorder";
-      grab.draggable = true;
-      grab.addEventListener("dragstart", (e) => {
-        dragName = agent.name;
-        card.classList.add("dragging");
-        e.dataTransfer.effectAllowed = "move";
-        try {
-          e.dataTransfer.setData("text/plain", agent.name);
-        } catch {
-          /* some browsers require a payload; the value itself is unused */
-        }
-      });
-      grab.addEventListener("dragend", () => {
-        card.classList.remove("dragging");
-        // dragend ALWAYS fires (drop does not), so the arrangement commits here.
-        if (dragName) commitDrag(dragName);
-        dragName = null;
-      });
+      grab.title = "Drag to reorder — its family comes along";
+      grab.addEventListener("pointerdown", (ev) => armRailDrag(card, grab, ev));
       grab.addEventListener("click", (e) => e.stopPropagation()); // never open the screen
       card.appendChild(grab);
       // Selected = the agent whose screen is open, or (in the Messages view) the
@@ -12485,7 +12655,7 @@
       });
     }
 
-    async function moveAgentToGroup(name, group) {
+    async function moveAgentToGroup(name, group, opts) {
       try {
         const res = await fetch(`/api/agents/${encodeURIComponent(name)}/group`, {
           method: "POST",
@@ -12503,7 +12673,7 @@
         renderAgents();
         renderFeed(); // the transcript is filtered by group — the card just moved
         if (!$("#groups-box").hidden) renderGroupsPanel();
-        toast(`"${name}" is now in the ${group} group.`);
+        if (!(opts && opts.quiet)) toast(`"${name}" is now in the ${group} group.`);
       } catch (err) {
         toast(`Could not move the agent: ${err && err.message ? err.message : err}`, "warn");
       }

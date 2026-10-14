@@ -2389,3 +2389,22 @@ describe("the terminal scrolls a main-screen pane's history (12/10)", () => {
     expect(embeddedFunctionSource("mountTerminal")).toContain('if (buf.type === "normal" && buf.baseY > 0) return;');
   });
 });
+
+describe("drag to reorder moves a family, by pointer (owner, 14/10)", () => {
+  it("starts from the grip by pointer, and never from a satellite", () => {
+    expect(embeddedFunctionSource("armRailDrag")).toContain('card.classList.contains("satellite")) return;');
+    expect(styles).toContain(".agent-card.satellite .card-grab { display: none; }");
+    // the face's drawing covered most of the grip
+    expect(styles).toMatch(/\.card-grab \{ touch-action: none; z-index: 4; \}/);
+  });
+
+  it("carries the root with the satellites drawn under it, and lands between families only", () => {
+    expect(embeddedFunctionSource("familyCards")).toContain('n.classList.contains("satellite")');
+    expect(embeddedFunctionSource("familiesIn")).toContain(':scope > .agent-card:not(.satellite)');
+    expect(embeddedFunctionSource("endRailDrag")).toContain("moveAgentToGroup(n, target, { quiet: true })");
+  });
+
+  it("does not rebuild the rail under a drag", () => {
+    expect(embeddedFunctionSource("renderAgents")).toContain("if (railDrag) return;");
+  });
+});
