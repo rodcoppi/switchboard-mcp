@@ -4452,6 +4452,38 @@
     .needs-sw { flex: none; width: 10px; height: 10px; border-radius: 50%; }
     .needs-row b { flex: none; font-size: 12.5px; font-weight: 600; white-space: nowrap; }
     .needs-why { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; color: var(--text-dim); }
+    .needs-head { display: flex; align-items: center; justify-content: space-between; }
+    .needs-clear {
+      padding: 1px 8px;
+      border: 1px solid transparent;
+      border-radius: 99px;
+      background: transparent;
+      color: var(--text-faint);
+      font: 10px var(--mono);
+      letter-spacing: 0.4px;
+      text-transform: lowercase;
+      cursor: pointer;
+    }
+    .needs-clear:hover { color: var(--text); border-color: var(--border); }
+    /* × to take one off without opening it: shows on hover, always on touch. */
+    .needs-dismiss {
+      flex: none;
+      width: 22px;
+      height: 22px;
+      margin-left: -2px;
+      border: 0;
+      border-radius: 50%;
+      background: transparent;
+      color: var(--text-faint);
+      font-size: 15px;
+      line-height: 1;
+      cursor: pointer;
+      opacity: 0;
+      transition: opacity 0.12s var(--ease);
+    }
+    .needs-row:hover .needs-dismiss, .needs-row:focus-within .needs-dismiss { opacity: 1; }
+    .needs-dismiss:hover { color: var(--text); background: var(--bg-hover); }
+    @media (hover: none) { .needs-dismiss { opacity: 0.7; width: 30px; height: 30px; } }
 
     /* The composer as a card (design pass, 11/10): the text on top, a row
        of pills and the buttons under it, the agent's question above it. */
@@ -7013,24 +7045,79 @@
      * not there when nobody needs you. The agent whose screen is open is
      * left out: you are already looking at it.
      */
+    // Questions waved off the strip (×): agent -> the question it was. It
+    // comes back when the agent asks something else. Page life only.
+    const snoozedAsks = new Map();
+    const askSignature = (a) => `${a.blockedPrompt || ""}|${(a.blockedOptions || []).join("|")}`;
+
+    /**
+     * Off the strip without opening the agent (owner, 14/10: "às vezes é só
+     * notificação que eu não quero ver agora"). A finished reply becomes SEEN
+     * — the card's green dot goes with it. A question is only hidden here,
+     * until the agent asks something else: the agent is still waiting on
+     * it, and its card stays amber.
+     */
+    function dismissNeed(a, st) {
+      if (st === "new") clearUnseen(a.name);
+      else snoozedAsks.set(a.name, askSignature(a));
+      lastRailSignature = "";
+      renderAgents();
+    }
+
     function buildNeedsStrip(roster) {
       const needy = roster
         .filter((a) => a.name !== screenState.name)
         .map((a) => ({ a, st: cardStatusOf(a) }))
-        .filter((x) => x.st === "needs" || x.st === "new")
+        .filter((x) => x.st === "new" || (x.st === "needs" && snoozedAsks.get(x.a.name) !== askSignature(x.a)))
         .sort((x, y) => (x.st === y.st ? 0 : x.st === "needs" ? -1 : 1));
       if (!needy.length) return null;
       const strip = el("div", "needs-strip");
-      strip.appendChild(el("div", "needs-head", `needs you · ${needy.length}`));
+      const head = el("div", "needs-head");
+      head.appendChild(el("span", null, `needs you · ${needy.length}`));
+      const clear = el("button", "needs-clear", "clear");
+      clear.type = "button";
+      clear.title = "Take them all off: replies count as seen, questions hide until the agent asks something else";
+      clear.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        for (const { a, st } of needy) {
+          if (st === "new") clearUnseen(a.name);
+          else snoozedAsks.set(a.name, askSignature(a));
+        }
+        lastRailSignature = "";
+        renderAgents();
+      });
+      head.appendChild(clear);
+      strip.appendChild(head);
       for (const { a, st } of needy) {
-        const row = el("button", `needs-row ${st}`);
-        row.type = "button";
+        // A div with a button role: it holds its own × button, and a button
+        // inside a button is not a thing.
+        const row = el("div", `needs-row ${st}`);
+        row.tabIndex = 0;
+        row.setAttribute("role", "button");
         const sw = el("span", "needs-sw");
         sw.style.background = chatColor(a.name) || (Faces && Faces.DEFAULT_COLOR) || "#4ade80";
         const why = st === "needs" ? "asking you" : "finished · not seen";
-        row.append(sw, el("b", null, displayOf(a)), el("span", "needs-why", why), el("span", `agent-stdot inline ${st}`));
+        const x = el("button", "needs-dismiss", "×");
+        x.type = "button";
+        x.title = st === "new" ? "Mark as seen without opening it" : "Hide this question here (the agent is still waiting on it)";
+        x.setAttribute("aria-label", x.title);
+        x.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          dismissNeed(a, st);
+        });
+        row.append(sw, el("b", null, displayOf(a)), el("span", "needs-why", why), el("span", `agent-stdot inline ${st}`), x);
         row.title = st === "needs" && a.blockedPrompt ? a.blockedPrompt : a.lastReply || why;
         row.addEventListener("click", () => openScreen(a.name));
+        row.addEventListener("keydown", (ev) => {
+          if (ev.target !== row) return;
+          if (ev.key === "Enter" || ev.key === " ") {
+            ev.preventDefault();
+            openScreen(a.name);
+          } else if (ev.key === "Delete" || ev.key === "Backspace") {
+            ev.preventDefault();
+            dismissNeed(a, st);
+          }
+        });
         strip.appendChild(row);
       }
       return strip;

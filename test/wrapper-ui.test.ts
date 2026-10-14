@@ -2408,3 +2408,18 @@ describe("drag to reorder moves a family, by pointer (owner, 14/10)", () => {
     expect(embeddedFunctionSource("renderAgents")).toContain("if (railDrag) return;");
   });
 });
+
+describe("the needs-you strip can be cleared without opening anyone (owner, 14/10)", () => {
+  it("× marks a reply seen, and only hides a question until the agent asks something else", () => {
+    const dismiss = embeddedFunctionSource("dismissNeed");
+    expect(dismiss).toContain('if (st === "new") clearUnseen(a.name);');
+    expect(dismiss).toContain("snoozedAsks.set(a.name, askSignature(a));");
+    expect(embeddedFunctionSource("buildNeedsStrip")).toContain("snoozedAsks.get(x.a.name) !== askSignature(x.a)");
+  });
+
+  it("has a clear-all, and rows that are not buttons inside buttons", () => {
+    const strip = embeddedFunctionSource("buildNeedsStrip");
+    expect(strip).toContain('el("button", "needs-clear", "clear")');
+    expect(strip).toContain('const row = el("div", `needs-row ${st}`);');
+  });
+});
