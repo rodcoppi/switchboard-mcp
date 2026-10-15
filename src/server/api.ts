@@ -62,6 +62,12 @@ import {
 // EventBus — SSE fan-out (PRD 10.1: GET /api/events).
 // ---------------------------------------------------------------------------
 
+/**
+ * How much of a transcript's END the chat's first dump reads. The dump shows
+ * the last 200 items; 24 MB holds far more than that, pictures included.
+ */
+export const CONVERSATION_TAIL_BYTES = 24 * 1024 * 1024;
+
 export type SseListener = (event: SseEvent) => void;
 
 export class EventBus {
@@ -2485,15 +2491,31 @@ export function createApiRouter(options: ApiOptions): express.Router {
         const size = fs.statSync(file).size;
         if (size < offset) offset = 0; // file rotated/truncated: restart
         if (size > offset) {
-          const buf = Buffer.alloc(size - offset);
+          // Opening the chat reads only the END of a big transcript: the
+          // first dump shows the last turns anyway, and reading all of it
+          // broke at ~512 MB — "Cannot create a string longer than
+          // 0x1fffffe8 characters", one agent's 537 MB log, 15/10 — and cost
+          // a second and half a gigabyte well before that.
+          let start = offset;
+          let cut = false;
+          if (offset === 0 && size > CONVERSATION_TAIL_BYTES) {
+            start = size - CONVERSATION_TAIL_BYTES;
+            cut = true;
+          }
+          const buf = Buffer.alloc(size - start);
           const fd = fs.openSync(file, "r");
           try {
-            fs.readSync(fd, buf, 0, buf.length, offset);
+            fs.readSync(fd, buf, 0, buf.length, start);
           } finally {
             fs.closeSync(fd);
           }
           offset = size;
-          const text = carry + buf.toString("utf8");
+          let text = carry + buf.toString("utf8");
+          if (cut) {
+            // The tail starts mid-line (maybe mid-character): drop that part.
+            const first = text.indexOf("\n");
+            text = first === -1 ? "" : text.slice(first + 1);
+          }
           const nl = text.lastIndexOf("\n");
           const complete = nl === -1 ? "" : text.slice(0, nl);
           carry = nl === -1 ? text : text.slice(nl + 1);

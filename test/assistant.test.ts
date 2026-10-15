@@ -8,6 +8,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Store, type StoreLogger } from "../src/server/store.js";
 import {
+  CONVERSATION_TAIL_BYTES,
   ASSISTANT_BRIEF,
   assistantDir,
   broadcastTargets,
@@ -167,6 +168,27 @@ describe("the conversation stream follows the agent", () => {
     expect(events[0]).toMatchObject({ items: [], initial: true });
     const later = events.slice(1).find((e) => e.initial && e.items.some((i) => i.text === "oi"));
     expect(later, JSON.stringify(events)).toBeTruthy();
+  });
+
+  it("opens a huge conversation by reading only its end (a 537 MB log broke the chat, 15/10)", async () => {
+    const cwd = path.join(dir, "huge");
+    fs.mkdirSync(cwd);
+    const id = "66666666-6666-4666-8666-666666666666";
+    const file = path.join(projectDirForCwd(cwd), `${id}.jsonl`);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const line = (rec: object) => JSON.stringify(rec) + "\n";
+    fs.writeFileSync(file, line({ type: "user", message: { role: "user", content: "the oldest" }, uuid: "u0" }));
+    // Bookkeeping lines (isMeta: never shown) push the oldest message past the tail.
+    const filler = line({ type: "user", isMeta: true, message: { role: "user", content: "x".repeat(1024 * 1024) }, uuid: "m" });
+    const fillerCount = Math.ceil(CONVERSATION_TAIL_BYTES / filler.length) + 1;
+    for (let i = 0; i < fillerCount; i++) fs.appendFileSync(file, filler);
+    fs.appendFileSync(file, line({ type: "user", message: { role: "user", content: "the newest" }, uuid: "u1" }));
+    hub.store.registerAgent({ name: "huge", tmuxSession: "sb-huge", cwd });
+    hub.store.updateAgent("huge", { sessionId: id });
+    const events = await readEvents("huge", 1500);
+    const texts = events[0].items.map((i) => i.text);
+    expect(texts).toContain("the newest");
+    expect(texts).not.toContain("the oldest");
   });
 
   it("empties when the agent moves to a new, unwritten conversation", async () => {
