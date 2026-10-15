@@ -24,6 +24,7 @@
 // channel (simulated keyboard) carries one short line; the content always
 // travels via MCP.
 
+import { defaultHeadsUpKeys } from "./headsup.js";
 import {
   toPublicAgent,
   type Agent,
@@ -480,7 +481,12 @@ export function parseHeadsUp(plain: string): HeadsUp | null {
         for (const o of line.matchAll(/(\d):\s+(.+?)(?=\s{2,}\d:|\s*$)/g)) options.push({ key: o[1], label: o[2].trim().slice(0, 40) });
         break;
       }
-      if (line.trim() && /^[\s\u2500-\u257F]+$/.test(line)) break; // the input box's rule
+      // The input box's rule — bare, or carrying the session's name
+      // ("──── SWITCHBOARD-PROJECT ─").
+      if (/^\s*[\u2500-\u257F]{3,}/.test(line)) break;
+      // A long note is cut to a few rows: "↓ 12 more" is the CLI's scroll
+      // hint, not part of the note (the full text comes from its store).
+      if (/^\s*[↓↑]\s*\d+\s+more\b/i.test(line)) continue;
       if (/^\s*[❯›>]/.test(line)) break;
       if (/^\s*✦\s*Heads up/i.test(line)) break; // the next note
       if (!line.trim()) {
@@ -529,6 +535,12 @@ export interface DispatcherOptions {
    * it believes the screen. Tests pass a no-op so nothing sleeps for real.
    */
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * The full text of a "Heads up" note whose one-liner is on screen, from
+   * Claude Code's own store (headsup.ts) — the pane cuts long ones to a few
+   * rows and scrolls their keys away. Absent in tests: screen only.
+   */
+  headsUpLookup?: (text: string) => { detail: string[]; kind: string } | null;
 }
 
 /** Outcome of a manual (forced) nudge — consumed by POST /api/agents/:name/nudge. */
@@ -547,6 +559,7 @@ export class Dispatcher {
   /** Injectable wait — the rescue has to let the TUI repaint (tests pass a no-op). */
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly flushIntervalMs: number;
+  private readonly headsUpLookup: DispatcherOptions["headsUpLookup"];
 
   /** Agents waiting for a nudge once their cooldown expires (coalescing). */
   private readonly pendingNudge = new Set<string>();
@@ -594,6 +607,7 @@ export class Dispatcher {
     this.now = options.now ?? Date.now;
     this.sleep = options.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
     this.flushIntervalMs = options.flushIntervalMs ?? FLUSH_INTERVAL_MS;
+    this.headsUpLookup = options.headsUpLookup;
   }
 
   /**
@@ -867,6 +881,24 @@ export class Dispatcher {
         // "" (not undefined) when nothing is pending: updateAgent IGNORES
         // undefined keys, so undefined could set the field but never clear it.
         const waitingFor = status.waitingFor ?? "";
+        // A note the screen cut short: its full text, and the keys of its
+        // state when they scrolled away, from Claude Code's own store.
+        let headsUp = status.headsUp;
+        if (headsUp && this.headsUpLookup) {
+          let full: { detail: string[]; kind: string } | null = null;
+          try {
+            full = this.headsUpLookup(headsUp.text);
+          } catch {
+            full = null;
+          }
+          if (full) {
+            headsUp = {
+              text: headsUp.text,
+              detail: full.detail.length ? full.detail : headsUp.detail,
+              options: headsUp.options.length ? headsUp.options : defaultHeadsUpKeys(full.kind),
+            };
+          }
+        }
         // The turn's start, from the CLI's OWN clock ("23s" into it) placed on
         // the hub's: the chat's live line counts from here. Kept while it
         // agrees within a few seconds, so a steady turn writes nothing.
@@ -890,7 +922,7 @@ export class Dispatcher {
           (agent.turnStartedAt ?? "") === turnStartedAt &&
           (agent.spinnerVerb ?? "") === spinnerVerb &&
           (agent.spinnerNote ?? "") === spinnerNote &&
-          JSON.stringify(agent.headsUp ?? null) === JSON.stringify(status.headsUp) &&
+          JSON.stringify(agent.headsUp ?? null) === JSON.stringify(headsUp) &&
           agent.permission === permission &&
           !!agent.goalActive === status.goalActive &&
           (agent.goalFor ?? undefined) === goalFor &&
@@ -913,7 +945,7 @@ export class Dispatcher {
           turnStartedAt,
           spinnerVerb,
           spinnerNote,
-          headsUp: status.headsUp, // null clears it: updateAgent skips only undefined
+          headsUp, // null clears it: updateAgent skips only undefined
           composerBusy,
           composerText,
           blockedPrompt,

@@ -3,6 +3,7 @@
 // the static dashboard (/). Exported as startHub() so tests can run it on an
 // ephemeral port with a temp data dir and close it cleanly.
 
+import { findHeadsUp } from "./headsup.js";
 import { LastReplies } from "./last-reply.js";
 import { toPublicAgent } from "../shared/types.js";
 import { AgentRequests } from "./agent-requests.js";
@@ -154,7 +155,7 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
     onMessage = options.onMessage;
   } else {
     const tmux = createTmux();
-    dispatcher = new Dispatcher({ store, config, log, bus, tmux });
+    dispatcher = new Dispatcher({ store, config, log, bus, tmux, headsUpLookup: (text) => findHeadsUp(text) });
     onMessage = dispatcher.onNewMessage;
     // The agent's screen in the dashboard. Same real tmux layer: tmux is the
     // pty, so this needs no second one (see terminal.ts). A hub with a stubbed
