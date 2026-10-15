@@ -66,6 +66,13 @@ import {
  * How much of a transcript's END the chat's first dump reads. The dump shows
  * the last 200 items; 24 MB holds far more than that, pictures included.
  */
+/** Types a browser only DISPLAYS — no script can run in them (SVG can). */
+export function isPassiveMime(mime: string): boolean {
+  const m = mime.toLowerCase().split(";")[0].trim();
+  if (m === "image/svg+xml") return false;
+  return m.startsWith("audio/") || m.startsWith("video/") || m.startsWith("image/") || m === "application/pdf";
+}
+
 export const CONVERSATION_TAIL_BYTES = 24 * 1024 * 1024;
 
 export type SseListener = (event: SseEvent) => void;
@@ -1555,8 +1562,15 @@ export function createApiRouter(options: ApiOptions): express.Router {
       res.status(400).json({ ok: false, error: `Not a file: ${real}` });
       return;
     }
-    res.setHeader("Content-Type", rawMime(real));
-    res.setHeader("Content-Security-Policy", "sandbox allow-scripts allow-popups");
+    const mime = rawMime(real);
+    res.setHeader("Content-Type", mime);
+    // The sandbox is for what can RUN: agent-authored HTML/SVG on the
+    // dashboard's origin could drive the hub with the operator's authority.
+    // Media cannot, and a sandboxed tab has an opaque origin — its player
+    // fetched the file WITHOUT the session cookie, so with remote access on
+    // every sent mp3/mp4 "view" came back 401 (owner, 15/10: "clico nisso e
+    // nunca funciona"). nosniff keeps a renamed .html from rendering as one.
+    if (!isPassiveMime(mime)) res.setHeader("Content-Security-Policy", "sandbox allow-scripts allow-popups");
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Cache-Control", "no-store");
     res.setHeader("Content-Length", String(stat.size));

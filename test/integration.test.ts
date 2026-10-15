@@ -1464,6 +1464,25 @@ describe("auxiliary endpoints", () => {
     }
   });
 
+  it("GET /api/files/raw sandboxes what can run, not media a player must fetch (15/10)", async () => {
+    // A sandboxed tab has an opaque origin: its player fetched the file
+    // without the session cookie, and with remote access on every sent
+    // mp3/mp4 "view" came back 401.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "sb-media-"));
+    try {
+      fs.writeFileSync(path.join(dir, "take.mp3"), Buffer.from([0x49, 0x44, 0x33]));
+      fs.writeFileSync(path.join(dir, "page.svg"), "<svg xmlns='http://www.w3.org/2000/svg'/>");
+      const mp3 = await fetch(api(`/api/files/raw?path=${encodeURIComponent(path.join(dir, "take.mp3"))}`));
+      expect(mp3.status).toBe(200);
+      expect(mp3.headers.get("content-security-policy")).toBeNull();
+      expect(mp3.headers.get("x-content-type-options")).toBe("nosniff");
+      const svg = await fetch(api(`/api/files/raw?path=${encodeURIComponent(path.join(dir, "page.svg"))}`));
+      expect(svg.headers.get("content-security-policy")).toBe("sandbox allow-scripts allow-popups");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("GET /api/files/raw refuses a path outside every scope root", async () => {
     const res = await fetch(api(`/api/files/raw?path=${encodeURIComponent("/etc/hostname")}`));
     expect(res.status).toBe(403);

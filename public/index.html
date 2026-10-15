@@ -4620,6 +4620,8 @@
     .usage-pop[data-open="false"] { display: none; }
     .usage-pop .usage-card-caret { transform: none; }
 
+    .chat-sent-media { display: block; width: min(100%, 420px); margin: 4px 0 10px; }
+    .chat-sent-media.video { max-height: 320px; border-radius: 10px; background: #000; }
     .chat-sent-missing { margin-top: 6px; font-family: var(--mono); font-size: 11px; color: var(--text-faint); }
 
     /* What the turn changed, after its answer. */
@@ -11970,7 +11972,7 @@
         const row = el("div", "chat-sent-row");
         const isImage = THUMB_EXT.test(f.path);
         row.append(
-          el("span", "chat-sent-icon", isImage ? "🖼" : "📎"),
+          el("span", "chat-sent-icon", isImage ? "🖼" : AUDIO_EXT.test(f.path) ? "♪" : VIDEO_EXT.test(f.path) ? "▶" : "📎"),
           el("span", "chat-sent-name", f.name),
         );
         const raw = `/api/files/raw?path=${encodeURIComponent(f.path)}`;
@@ -11998,6 +12000,24 @@
 
         row.append(dl, view);
         box.appendChild(row);
+        // Sound and video play right here — no new tab, no download first.
+        // Fetched by this page, so the session cookie rides along.
+        if (AUDIO_EXT.test(f.path)) {
+          const audio = el("audio", "chat-sent-media");
+          audio.controls = true;
+          audio.preload = "none";
+          audio.src = raw;
+          audio.addEventListener("error", () => audio.replaceWith(el("div", "chat-sent-missing", "can't play this here — try download")));
+          box.appendChild(audio);
+        } else if (VIDEO_EXT.test(f.path)) {
+          const video = el("video", "chat-sent-media video");
+          video.controls = true;
+          video.preload = "metadata";
+          video.playsInline = true;
+          video.src = raw;
+          video.addEventListener("error", () => video.replaceWith(el("div", "chat-sent-missing", "can't play this here — try download")));
+          box.appendChild(video);
+        }
         // An image sent this way shows itself, rather than being a filename.
         if (isImage) {
           const img = el("img", "chat-sent-preview");
@@ -12139,6 +12159,8 @@
      * would refuse; a file that is gone simply drops its thumbnail.
      */
     const THUMB_EXT = /\.(png|jpe?g|gif|webp|bmp|avif)$/i;
+    const AUDIO_EXT = /\.(mp3|wav|m4a|ogg|oga|opus|aac|flac)$/i;
+    const VIDEO_EXT = /\.(mp4|webm|mov|m4v)$/i;
     const THUMBS_PER_MESSAGE = 4; // a wall of pictures is not a chat
     function attachImageThumbs(container) {
       const seen = new Set();

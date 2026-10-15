@@ -2423,3 +2423,11 @@ describe("the needs-you strip can be cleared without opening anyone (owner, 14/1
     expect(strip).toContain('const row = el("div", `needs-row ${st}`);');
   });
 });
+
+describe("a sent sound or video plays in the chat (15/10)", () => {
+  it("draws a player for audio and video handed over with SendUserFile", () => {
+    const sent = embeddedFunctionSource("buildSentFiles");
+    expect(sent).toContain('el("audio", "chat-sent-media")');
+    expect(sent).toContain('el("video", "chat-sent-media video")');
+  });
+});
