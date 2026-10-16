@@ -16,12 +16,21 @@
 // walls — its own group, a client subgroup of it (or its agency, the groups it
 // can already talk to), or a child of itself. The faz-tudo, which reaches
 // everyone, may place an agent anywhere.
+//
+// Or a group of its OWN (owner, 16/10: an AI "CEO" that runs a microbusiness
+// in a group apart, "AGENTIC BUSINESS", and makes its own teammates there):
+// one request brings a new top-level group — name, display name, what it is
+// for — with its first agent inside, and may ask for lines to groups the
+// asker already reaches (allow_messages_with), so the new team can talk to
+// it. Same one-click approval; nothing exists until then. Whatever group it
+// lands in, a new agent never gets a folder that belongs to an agent of a
+// group it does not share walls with.
 
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { ulid } from "ulid";
-import { AGENT_NAME_RE, DEFAULT_GROUP, GROUP_NAME_RE, RESERVED_AGENT_NAMES, groupsTouch, resolveGroup, type Store } from "./store.js";
+import { AGENT_NAME_RE, DEFAULT_GROUP, GROUP_NAME_RE, RESERVED_AGENT_NAMES, groupsTouch, parentGroup, resolveGroup, type Store } from "./store.js";
 import { resolveAgentType } from "../shared/agent-types.js";
 
 /** What an agent sends with create_agent (snake_case, as models write it). */
@@ -35,6 +44,12 @@ export interface CreateAgentInput {
   group?: string;
   prd: string;
   first_message?: string;
+  /** A NEW top-level group for this agent (kebab-case). */
+  new_group?: string;
+  new_group_display_name?: string;
+  new_group_description?: string;
+  /** Groups the new group's agents may message (each one the asker already reaches). */
+  allow_messages_with?: string[];
 }
 
 /** A request waiting for the operator. */
@@ -55,6 +70,8 @@ export interface AgentRequest {
   group: string;
   prd: string;
   firstMessage?: string;
+  /** The group this request brings into being, with its lines to others. */
+  newGroup?: { name: string; displayName?: string; description?: string; linkWith: string[] };
   createdAt: string;
 }
 
@@ -73,7 +90,11 @@ export const CREATE_AGENT_DESCRIPTION =
   "and offer a few questions that would make the PRD richer; the operator may skip them. " +
   "Then call this tool ONCE with everything. It creates nothing by itself: the request goes to the operator, who approves it with one click " +
   "in the dashboard. You will receive a [switchboard] message with the outcome — do not call again for the same agent meanwhile. " +
-  "You may create agents in your own group, in a client subgroup of it, or a child of yourself.";
+  "You may create agents in your own group, in a client subgroup of it, or a child of yourself. " +
+  "When the operator wants the agent in a NEW group of its own, pass new_group (lowercase-hyphen name, top level), " +
+  "new_group_display_name and new_group_description, and — only if the operator wants the two teams to talk — " +
+  "allow_messages_with: groups you already reach whose agents the new group may message. The group and the agent are made " +
+  "together, on the same approval. An agent never gets a folder that belongs to another group's agent.";
 
 const exists = (p: string): boolean => {
   try {
@@ -188,6 +209,13 @@ export function planAgentRequest(
   }
 
   const mine = resolveGroup(caller.group);
+  if (typeof input.new_group === "string" && input.new_group.trim()) {
+    const plan = planNewGroup(store, pending, caller.everywhere === true, mine, input);
+    if (!plan.ok) return plan;
+    const clash = folderOfAnotherGroup(store, folder, plan.newGroup.name);
+    if (clash) return { ok: false, error: clash };
+    return { ok: true, request: { ...common, asChild: false, folder, createFolder, group: plan.newGroup.name, newGroup: plan.newGroup } };
+  }
   const rawGroup = typeof input.group === "string" && input.group.trim() ? input.group.trim() : mine;
   if (rawGroup !== DEFAULT_GROUP && !GROUP_NAME_RE.test(rawGroup)) {
     return { ok: false, error: `Invalid group "${rawGroup}": lowercase letters, digits and hyphens, with at most one "/" for a client ("agency/client").` };
@@ -198,7 +226,81 @@ export function planAgentRequest(
       error: `You can only create agents in your own group (${mine}), a client subgroup of it, or as your child — "${rawGroup}" is outside your walls. Ask the operator to create it from the dashboard.`,
     };
   }
+  const clash = folderOfAnotherGroup(store, folder, rawGroup);
+  if (clash) return { ok: false, error: clash };
   return { ok: true, request: { ...common, asChild: false, folder, createFolder, group: rawGroup } };
+}
+
+/** The new group a request asks for, checked — or an error the model can act on. */
+function planNewGroup(
+  store: Store,
+  pending: AgentRequests,
+  everywhere: boolean,
+  mine: string,
+  input: CreateAgentInput,
+): { ok: true; newGroup: NonNullable<AgentRequest["newGroup"]> } | { ok: false; error: string } {
+  const name = (input.new_group ?? "").trim();
+  if (name === DEFAULT_GROUP || !GROUP_NAME_RE.test(name) || name.includes("/")) {
+    return {
+      ok: false,
+      error: `Invalid new_group "${name}": a top-level group name — 2 to 31 lowercase letters, digits and hyphens, no "/" (e.g. "agentic-business").`,
+    };
+  }
+  if (store.listGroups().includes(name)) {
+    return { ok: false, error: `Group "${name}" already exists. Use group: "${name}" if you may create agents there, or pick another new_group name with the operator.` };
+  }
+  if (pending.list().some((r) => r.newGroup?.name === name)) {
+    return { ok: false, error: `A request for a new group "${name}" is already waiting for the operator.` };
+  }
+  if (typeof input.group === "string" && input.group.trim() && input.group.trim() !== name) {
+    return { ok: false, error: `group ("${input.group.trim()}") and new_group ("${name}") disagree. For an agent in a new group, pass new_group only.` };
+  }
+  const raw = Array.isArray(input.allow_messages_with) ? input.allow_messages_with : [];
+  const linkWith: string[] = [];
+  for (const g of raw) {
+    if (typeof g !== "string" || !g.trim()) continue;
+    const other = g.trim();
+    if (!store.listGroups().includes(other) || other === DEFAULT_GROUP) {
+      return { ok: false, error: `allow_messages_with: there is no group "${other}". Existing groups: ${store.listGroups().filter((x) => x !== DEFAULT_GROUP).join(", ") || "(none)"}.` };
+    }
+    if (!everywhere && !groupsTouch(mine, other)) {
+      return {
+        ok: false,
+        error: `allow_messages_with: "${other}" is outside your walls — you may only open a line to a group you already reach (${mine}${parentGroup(mine) ? `, ${parentGroup(mine)}` : ""}). The operator can link other groups in the dashboard.`,
+      };
+    }
+    if (!linkWith.includes(other)) linkWith.push(other);
+  }
+  const displayName = typeof input.new_group_display_name === "string" ? input.new_group_display_name.trim().slice(0, 48) : "";
+  const description = typeof input.new_group_description === "string" ? input.new_group_description.trim().slice(0, 300) : "";
+  return {
+    ok: true,
+    newGroup: { name, ...(displayName ? { displayName } : {}), ...(description ? { description } : {}), linkWith },
+  };
+}
+
+/**
+ * A folder already belonging to an agent of a group the new agent does not
+ * share walls with — the same folder, inside it, or around it — is refused:
+ * the owner's rule is "nem agente de um grupo mexendo na pasta de outro".
+ * A line between groups lets them TALK; it never lends a folder.
+ */
+export function folderOfAnotherGroup(store: Store, folder: string, group: string): string | null {
+  const within = (outer: string, inner: string) => {
+    const rel = path.relative(outer, inner);
+    return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+  };
+  for (const a of store.listAgents()) {
+    if (!a.cwd || groupsTouch(group, resolveGroup(a.group))) continue;
+    const cwd = path.normalize(a.cwd);
+    if (within(cwd, folder) || within(folder, cwd)) {
+      return (
+        `${folder} belongs to "${a.name}" (group ${resolveGroup(a.group)}, working in ${cwd}) — an agent never gets ` +
+        `a folder of another group's agent. Ask the operator for a folder of its own.`
+      );
+    }
+  }
+  return null;
 }
 
 /** The requests waiting for the operator (in memory: a restart drops them, and the agent can ask again). */

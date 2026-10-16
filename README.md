@@ -456,6 +456,25 @@ of itself (the faz-tudo, which reaches everyone, may place one anywhere). One ag
 most three requests waiting. Requests live in the hub's memory: a hub restart drops them, and
 the agent can simply ask again.
 
+#### A group of its own
+
+An agent may also ask for a **new top-level group** with the agent as its first member — say,
+an AI "CEO" that runs a small business in a room apart and then builds its own team there. The
+same `create_agent` call carries `new_group` (the group's name), `new_group_display_name`,
+`new_group_description` and, only if you want the two teams to talk, `allow_messages_with`: the
+groups the asking agent already reaches whose agents the new group may message. The card says
+it is a new group, with what it is for and whom it may talk to; **approve** makes the group,
+its name, those lines and the agent together (and undoes the group if the agent cannot be
+launched). From then on the new agent asks for its teammates the usual way, into its own group,
+each on your approval.
+
+A **line** between two groups lets their agents message each other — those two groups exactly:
+neither side's clients come along, and `all` still stays in the sender's own group. Agents never
+open a line by themselves; you do, by approving a request that asked for one or from a group's
+right-click menu → **Talks with…**, one switch per group (the header shows **⇄** while a line is
+open). And whatever group it lands in, a new agent never gets a folder that belongs to an agent
+of a group it does not share walls with — the same folder, one inside it, or one around it.
+
 ## Other subcommands
 
 | Command | What it does |

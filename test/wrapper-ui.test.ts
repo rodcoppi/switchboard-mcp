@@ -2431,3 +2431,23 @@ describe("a sent sound or video plays in the chat (15/10)", () => {
     expect(sent).toContain('el("video", "chat-sent-media video")');
   });
 });
+
+describe("groups an agent asked for, and lines between groups (owner, 16/10)", () => {
+  it("labels a group with the name it was given, and marks its lines", () => {
+    expect(embeddedFunctionSource("groupLabelOf")).toContain("meta.displayName");
+    expect(embeddedFunctionSource("buildGroupHead")).toContain('el("span", "group-links", "⇄")');
+    expect(embeddedFunctionSource("railSignature")).toContain("JSON.stringify(state.groupLinks || [])");
+  });
+
+  it("opens and closes lines from the group menu, one switch per group", () => {
+    const menu = embeddedFunctionSource("openGroupMenu");
+    expect(menu).toContain('label: "Talks with…"');
+    expect(menu).toContain('fetch("/api/group-links"');
+  });
+
+  it("shows a request that brings a group as such", () => {
+    const card = embeddedFunctionSource("renderAgentRequests");
+    expect(card).toContain("wants a new group, with its first agent");
+    expect(card).toContain('fact("talks with"');
+  });
+});

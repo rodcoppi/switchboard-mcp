@@ -55,10 +55,16 @@ describe("what an agent may ask for", () => {
     expect(!r.ok && r.error).toMatch(/outside your walls/);
   });
 
-  it("the faz-tudo may place an agent anywhere", () => {
+  it("the faz-tudo may place an agent in any group (in a folder of its own)", () => {
     store.registerAgent({ name: "faz-tudo", tmuxSession: "sb-faz-tudo", cwd: dir });
     store.updateAgent("faz-tudo", { everywhere: true });
-    expect(ask("faz-tudo", { name: "site-helper", folder: dir, group: "studio" }).ok).toBe(true);
+    // Apart from the fixture's root, where agents of other groups work.
+    const site = fs.mkdtempSync(path.join(os.tmpdir(), "sb-site-"));
+    try {
+      expect(ask("faz-tudo", { name: "site-helper", folder: site, group: "studio" }).ok).toBe(true);
+    } finally {
+      fs.rmSync(site, { recursive: true, force: true });
+    }
   });
 
   it("a child of itself: its folder and group, whatever was passed", () => {

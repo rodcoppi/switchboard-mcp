@@ -3200,6 +3200,7 @@
     .group-head .group-swatch { order: 1; }
     .group-head .rail-group-name { order: 2; }
     .group-head .tally { order: 3; }
+    .group-head .group-links { order: 3; }
     .group-head .group-rename { order: 4; }
     .group-head .group-addsub { order: 4; }
     .group-head .unread-badge { order: 5; }
@@ -4623,6 +4624,20 @@
     .chat-sent-media { display: block; width: min(100%, 420px); margin: 4px 0 10px; }
     .chat-sent-media.video { max-height: 320px; border-radius: 10px; background: #000; }
     .chat-sent-missing { margin-top: 6px; font-family: var(--mono); font-size: 11px; color: var(--text-faint); }
+
+    /* Groups: a line to another group, and a request that brings a group. */
+    .group-links {
+      flex: none;
+      padding: 0 6px;
+      border: 1px solid var(--border);
+      border-radius: 99px;
+      font: 10px/16px var(--mono);
+      letter-spacing: 0;
+      text-transform: none;
+      color: var(--text-dim);
+    }
+    .agent-menu .am-note { padding: 4px 10px 6px; font: 11.5px/1.45 var(--sans); color: var(--text-faint); }
+    .request-card.new-group { border-color: color-mix(in srgb, var(--st-working) 45%, var(--border)); }
 
     /* What the turn changed, after its answer. */
     .chat-changed { border: 1px solid var(--hair); background: rgba(255, 255, 255, 0.025); border-radius: 10px; }
@@ -6513,6 +6528,9 @@
     function groupLabelOf(group) {
       const saved = localStorage.getItem("sb.groupLabel." + group);
       if (saved) return saved;
+      // The name it was given when it was made (a request's display name).
+      const meta = state.groupMeta && state.groupMeta[group];
+      if (meta && meta.displayName) return meta.displayName;
       if (group === DEFAULT_GROUP) return "Desagrupados";
       const parent = parentOfGroup(group);
       return parent ? group.slice(parent.length + 1) : group; // a client reads as its own name
@@ -7037,6 +7055,7 @@
         state.filter || "", state.railSearch || "", screenState.name || "",
         [...state.reopening].sort().join(","), [...state.unseen].sort().join(","),
         [...collapsedGroups].sort().join(","), allGroups().join(","), state.group || "",
+        JSON.stringify(state.groupMeta || {}), JSON.stringify(state.groupLinks || []),
       ].join("\u0003");
     }
 
@@ -7295,12 +7314,20 @@
         : `Fold ${group} away`;
 
       const nameSpan = el("span", "rail-group-name", groupLabelOf(group));
-      if (groupLabelOf(group) !== group) nameSpan.title = group; // the id, one hover away
+      const meta = state.groupMeta && state.groupMeta[group];
+      nameSpan.title = [groupLabelOf(group) !== group ? group : "", meta && meta.description ? meta.description : ""].filter(Boolean).join(" — ");
       head.append(
         el("span", "caret", "▾"),
         nameSpan,
         el("span", "tally", `${online}/${members.length}`),
       );
+      // A line to another group: its agents may message that group's.
+      const lines = linkedGroupsOf(group);
+      if (lines.length) {
+        const chip = el("span", "group-links", "⇄");
+        chip.title = `Talks with: ${lines.map(groupLabelOf).join(", ")} — their agents may message each other (right-click → Talks with… to change)`;
+        head.appendChild(chip);
+      }
       // Relabel right here in the rail: a pencil that appears on hover turns the
       // name into an input (free text + emoji). `default` is not a room.
       if (group !== DEFAULT_GROUP) {
@@ -7487,7 +7514,50 @@
       top.append(dot, el("span", "am-title", groupLabelOf(group)));
       if (parentOfGroup(group)) top.appendChild(el("span", "am-sub", `client of ${groupLabelOf(parentOfGroup(group))}`));
       menu.appendChild(top);
+      const meta = state.groupMeta && state.groupMeta[group];
+      if (meta && meta.description) menu.appendChild(el("div", "am-note", meta.description));
       const page = el("div", "am-page");
+      // Talks with…: the lines between this group and others, one switch each.
+      // Only here (or by approving a request that asked for one) can a line be
+      // opened; agents never open one themselves.
+      const talks = el("div", "am-page");
+      talks.hidden = true;
+      talks.appendChild(
+        agentMenuRow({ icon: "back", label: "Talks with", cls: "am-back", title: "Back" }, () => {
+          talks.hidden = true;
+          page.hidden = false;
+          refitMenu(menu);
+        }),
+      );
+      talks.appendChild(el("div", "am-note", "Agents of linked groups may message each other. Folders, \"all\" and clients stay apart."));
+      const others = allGroups().filter((g) => g !== group && g !== DEFAULT_GROUP);
+      if (!others.length) talks.appendChild(el("div", "am-note", "No other group yet."));
+      for (const other of others) {
+        const row = agentMenuRow(
+          { icon: "group", label: groupPathLabel(other), cls: "group-link-row", toggle: linkedGroupsOf(group).includes(other), title: `Let ${groupLabelOf(group)} and ${groupLabelOf(other)} message each other` },
+          async (item) => {
+            const on = !item.classList.contains("on");
+            item.disabled = true;
+            try {
+              const res = await fetch("/api/group-links", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({ a: group, b: other, linked: on }),
+              });
+              const body = await res.json().catch(() => ({}));
+              if (!res.ok || !body.ok) throw new Error(body.error || `HTTP ${res.status}`);
+              state.groupLinks = body.links;
+              setMenuRowOn(item, on);
+              toast(on ? `${groupLabelOf(group)} ⇄ ${groupLabelOf(other)}: they can message each other now.` : `${groupLabelOf(group)} and ${groupLabelOf(other)} are apart again.`);
+            } catch (err) {
+              toast(`Could not change the line: ${err && err.message ? err.message : err}`, "warn");
+            } finally {
+              item.disabled = false;
+            }
+          },
+        );
+        talks.appendChild(row);
+      }
       if (!parentOfGroup(group)) {
         page.appendChild(
           agentMenuRow({ icon: "plus", label: "New client…", cls: "new-client-btn", title: `A client inside ${groupLabelOf(group)} — it reaches this group, never another client` }, () => {
@@ -7501,6 +7571,18 @@
           closeMenus();
           openLauncherInGroup(group);
         }),
+      );
+      page.appendChild(
+        agentMenuRow(
+          { icon: "group", label: "Talks with…", cls: "group-talks-btn", next: true, aside: linkedGroupsOf(group).length ? String(linkedGroupsOf(group).length) : "", title: "Which other groups this one's agents may message" },
+          () => {
+            page.hidden = true;
+            talks.hidden = false;
+            refitMenu(menu);
+            const first = talks.querySelector(".agent-menu-item:not(.am-back)");
+            if (first) first.focus({ preventScroll: true });
+          },
+        ),
       );
       page.appendChild(el("div", "am-sep"));
       page.appendChild(
@@ -7529,6 +7611,7 @@
         );
       }
       menu.appendChild(page);
+      menu.appendChild(talks);
       floatMenu(menu, head, null, point);
       menu.focus({ preventScroll: true });
     }
@@ -7543,9 +7626,12 @@
       if (!box) return;
       box.textContent = "";
       for (const req of state.agentRequests.values()) {
-        const card = el("div", "request-card");
+        const card = el("div", `request-card${req.newGroup ? " new-group" : ""}`);
         const head = el("div", "request-head");
-        head.append(el("span", "request-mark", "✦"), el("span", null, `${displayOf(req.from)} wants to create an agent`));
+        head.append(
+          el("span", "request-mark", "✦"),
+          el("span", null, req.newGroup ? `${displayOf(req.from)} wants a new group, with its first agent` : `${displayOf(req.from)} wants to create an agent`),
+        );
         card.appendChild(head);
         const facts = el("dl", "request-facts");
         const fact = (k, v) => {
@@ -7555,7 +7641,14 @@
         fact("name", req.displayName ? `${req.name} (“${req.displayName}”)` : req.name);
         fact("kind", req.asChild ? `child of ${displayOf(req.parent || req.from)}` : "new agent");
         fact("folder", `${req.folder}${req.createFolder ? "  (new)" : ""}`);
-        fact("group", req.group === DEFAULT_GROUP ? "Desagrupados" : req.group);
+        if (req.newGroup) {
+          const ng = req.newGroup;
+          fact("new group", ng.displayName ? `${ng.displayName} (${ng.name})` : ng.name);
+          fact("about", ng.description);
+          fact("talks with", ng.linkWith && ng.linkWith.length ? ng.linkWith.map(groupLabelOf).join(", ") : "nobody outside it");
+        } else {
+          fact("group", req.group === DEFAULT_GROUP ? "Desagrupados" : req.group);
+        }
         fact("role", req.role);
         card.appendChild(facts);
         // The PRD's first real sentence (a heading is just its title again).
@@ -13412,7 +13505,7 @@
           dropAgent(event.payload.name);
           break;
         case "groups_updated":
-          setKnownGroups(event.payload.groups);
+          setKnownGroups(event.payload.groups, event.payload.meta, event.payload.links);
           renderAgents();
           if (!$("#groups-box").hidden) renderGroupsPanel();
           break;
@@ -13911,7 +14004,7 @@
       for (const agent of list) mergeAgent(agent);
       // An empty group has no agent to carry it, so the groups come on their own.
       const body = groupsRes && groupsRes.ok ? await groupsRes.json().catch(() => null) : null;
-      if (body && Array.isArray(body.groups)) setKnownGroups(body.groups);
+      if (body && Array.isArray(body.groups)) setKnownGroups(body.groups, body.meta, body.links);
       // Requests waiting for you survive a reload of the page (not of the hub).
       try {
         const rr = await fetch("/api/agent-requests");
@@ -13928,8 +14021,18 @@
      * group, shown only while somebody is in it — kept here, it would linger
      * as an empty "Desagrupados" box after its last agent moved out.
      */
-    function setKnownGroups(list) {
+    function setKnownGroups(list, meta, links) {
       state.groups = new Set((list || []).filter((g) => g !== DEFAULT_GROUP));
+      // What the hub knows about groups (display name, description) and the
+      // lines between them. Absent from the create/delete replies: those
+      // leave them as they are, and groups_updated brings the full picture.
+      if (meta && typeof meta === "object") state.groupMeta = meta;
+      if (Array.isArray(links)) state.groupLinks = links;
+    }
+
+    /** The groups `group` has a line to (their agents may message each other). */
+    function linkedGroupsOf(group) {
+      return (state.groupLinks || []).filter(([a, b]) => a === group || b === group).map(([a, b]) => (a === group ? b : a));
     }
 
     async function loadMessages() {

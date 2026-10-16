@@ -533,6 +533,10 @@ export function createMcpEndpoint(options: McpOptions): McpEndpoint {
             group: z.string().optional().describe("Its group; default yours."),
             prd: z.string().describe("Its PRD in markdown, drafted with the operator."),
             first_message: z.string().optional().describe("Optional first assignment, sent from you once it is up."),
+            new_group: z.string().optional().describe("A NEW top-level group for this agent (lowercase-hyphen). Made with it, on the same approval."),
+            new_group_display_name: z.string().optional().describe("What the board shows for the new group (free text)."),
+            new_group_description: z.string().optional().describe("One or two lines: what the new group is for."),
+            allow_messages_with: z.array(z.string()).optional().describe("Groups you already reach whose agents the new group may message — only if the operator wants it."),
           },
         },
         async (args, extra) => {
@@ -543,7 +547,10 @@ export function createMcpEndpoint(options: McpOptions): McpEndpoint {
           if (!plan.ok) return jsonResult({ ok: false, error: plan.error });
           const request = requests.add(plan.request);
           bus.emit({ type: "agent_request", payload: request });
-          log.info(`[mcp] ${from} asked to create agent ${request.name} (${request.asChild ? "child" : request.folder}) — waiting for the operator.`);
+          log.info(
+            `[mcp] ${from} asked to create agent ${request.name} (${request.asChild ? "child" : request.folder})` +
+              `${request.newGroup ? ` in a NEW group ${request.newGroup.name}` : ""} — waiting for the operator.`,
+          );
           return jsonResult({
             ok: true,
             status: "waiting_for_operator",

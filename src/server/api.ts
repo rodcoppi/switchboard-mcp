@@ -134,7 +134,7 @@ export function reachableFrom(store: Store, from: string): string[] {
   const sender = store.getAgent(from);
   if (!sender) return [];
   return all
-    .filter((a) => agentsTouch(sender, a))
+    .filter((a) => store.touches(sender, a))
     .map((a) => a.name)
     .sort();
 }
@@ -1008,6 +1008,37 @@ export function createApiRouter(options: ApiOptions): express.Router {
       res.status(409).json({ ok: false, error: `"${request.name}" already exists now. Deny this request and ask for another name.` });
       return;
     }
+    // A request that brings its OWN group: the group, what it is, and the
+    // lines it asked for come into being with the agent — and go again if
+    // the agent cannot be launched (approving again redoes all of it).
+    let madeGroup = false;
+    if (request.newGroup) {
+      const ng = request.newGroup;
+      if (store.listGroups().includes(ng.name)) {
+        res.status(409).json({ ok: false, error: `Group "${ng.name}" exists now. Deny this request and ask again with another group name.` });
+        return;
+      }
+      try {
+        store.createGroup(ng.name);
+        madeGroup = true;
+        store.setGroupMeta(ng.name, { displayName: ng.displayName ?? "", description: ng.description ?? "" });
+        for (const other of ng.linkWith) if (store.listGroups().includes(other)) store.linkGroups(ng.name, other);
+      } catch (err) {
+        if (madeGroup) store.deleteGroup(ng.name);
+        res.status(400).json({ ok: false, error: `Could not create group "${ng.name}": ${(err as Error).message}` });
+        return;
+      }
+      emitGroups();
+    }
+    const undoGroup = () => {
+      if (!madeGroup || !request.newGroup) return;
+      try {
+        store.deleteGroup(request.newGroup.name);
+        emitGroups();
+      } catch {
+        /* someone is in it already: leave it */
+      }
+    };
     let prdFile: string;
     try {
       if (request.createFolder && !fs.existsSync(request.folder)) fs.mkdirSync(request.folder);
@@ -1018,6 +1049,7 @@ export function createApiRouter(options: ApiOptions): express.Router {
       const claudeMd = path.join(request.folder, "CLAUDE.md");
       if (!request.asChild && !fs.existsSync(claudeMd)) fs.writeFileSync(claudeMd, claudeMdPointer(path.basename(prdFile)));
     } catch (err) {
+      undoGroup();
       res.status(500).json({ ok: false, error: `Could not prepare ${request.folder}: ${(err as Error).message}` });
       return;
     }
@@ -1033,6 +1065,7 @@ export function createApiRouter(options: ApiOptions): express.Router {
         ...(request.asChild && request.parent ? { parent: request.parent } : {}),
       });
     } catch (err) {
+      undoGroup();
       const status = err instanceof LaunchError ? err.status : 500;
       res.status(status).json({ ok: false, error: (err as Error).message });
       return; // kept: fix what failed and approve again, or deny it
@@ -1058,7 +1091,10 @@ export function createApiRouter(options: ApiOptions): express.Router {
           to: request.from,
           body:
             `[switchboard] Approved: "${request.name}" is up${request.asChild ? ` as a child of ${request.parent}` : ""}, ` +
-            `in ${request.folder} (group ${request.group}). Its PRD is ${prdFile}; it was told to read it.`,
+            `in ${request.folder} (group ${request.group}${request.newGroup ? ", new" : ""}). Its PRD is ${prdFile}; it was told to read it.` +
+            (request.newGroup && request.newGroup.linkWith.length
+              ? ` Its group may message: ${request.newGroup.linkWith.join(", ")}.`
+              : ""),
         });
       }
     } catch (err) {
@@ -2712,8 +2748,45 @@ export function createApiRouter(options: ApiOptions): express.Router {
 
   // GET /api/groups → {ok, groups}: every group, empty ones included (an
   // empty group has no agent to carry it in /api/agents).
+  // Every group, what the hub knows about them, and the lines between them.
+  const groupsPayload = () => ({ groups: store.listGroups(), meta: store.listGroupMeta(), links: store.listGroupLinks() });
+  const emitGroups = () => bus.emit({ type: "groups_updated", payload: groupsPayload() });
+
   router.get("/api/groups", (_req, res) => {
-    res.json({ ok: true, groups: store.listGroups() });
+    res.json({ ok: true, ...groupsPayload() });
+  });
+
+  // POST /api/groups/:group/meta — body {display_name?, description?}: what
+  // the board shows for a group, and what it is for. "" clears a field.
+  router.post("/api/groups/:group/meta", (req, res) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const pick = (k: string) => (typeof body[k] === "string" ? (body[k] as string) : undefined);
+    try {
+      const meta = store.setGroupMeta(req.params.group, { displayName: pick("display_name"), description: pick("description") });
+      emitGroups();
+      res.json({ ok: true, group: req.params.group, meta });
+    } catch (err) {
+      res.status(404).json({ ok: false, error: (err as Error).message });
+    }
+  });
+
+  // POST /api/group-links — body {a, b, linked}: opens (linked: true) or
+  // closes the line between two groups. Their agents may then message each
+  // other across the wall; nothing else crosses (folders, "all", clients).
+  router.post("/api/group-links", (req, res) => {
+    const { a, b, linked } = (req.body ?? {}) as Record<string, unknown>;
+    if (typeof a !== "string" || typeof b !== "string" || typeof linked !== "boolean") {
+      res.status(400).json({ ok: false, error: `Invalid body: expected {"a": "<group>", "b": "<group>", "linked": true|false}.` });
+      return;
+    }
+    try {
+      const links = linked ? store.linkGroups(a, b) : store.unlinkGroups(a, b);
+      emitGroups();
+      log.info(`[api] groups ${a} ⇄ ${b} ${linked ? "linked" : "unlinked"}.`);
+      res.json({ ok: true, links });
+    } catch (err) {
+      res.status(400).json({ ok: false, error: (err as Error).message });
+    }
   });
 
   // POST /api/groups — body {name: "<group>"}: creates a group with nobody in
@@ -2732,7 +2805,14 @@ export function createApiRouter(options: ApiOptions): express.Router {
       res.status(400).json({ ok: false, error: (err as Error).message });
       return;
     }
-    bus.emit({ type: "groups_updated", payload: { groups } });
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    if (typeof body.display_name === "string" || typeof body.description === "string") {
+      store.setGroupMeta(name, {
+        displayName: typeof body.display_name === "string" ? body.display_name : undefined,
+        description: typeof body.description === "string" ? body.description : undefined,
+      });
+    }
+    emitGroups();
     log.info(`[api] group ${name} created.`);
     res.json({ ok: true, group: name, groups });
   });
@@ -2749,7 +2829,7 @@ export function createApiRouter(options: ApiOptions): express.Router {
       res.status(message.startsWith("Unknown group") ? 404 : 409).json({ ok: false, error: message });
       return;
     }
-    bus.emit({ type: "groups_updated", payload: { groups } });
+    emitGroups();
     log.info(`[api] group ${group} deleted.`);
     res.json({ ok: true, groups });
   });
@@ -2783,7 +2863,7 @@ export function createApiRouter(options: ApiOptions): express.Router {
     for (const agent of members) {
       bus.emit({ type: "agent_updated", payload: toPublicAgent(agent) });
     }
-    bus.emit({ type: "groups_updated", payload: { groups: store.listGroups() } });
+    emitGroups();
     log.info(`[api] group ${group} renamed to ${next} (${members.length} agent(s)).`);
     res.json({ ok: true, group: next, agents: members.map(toPublicAgent) });
   });

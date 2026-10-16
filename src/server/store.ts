@@ -71,6 +71,18 @@ export function agentsTouch(a: Agent, b: Agent): boolean {
   return groupsTouch(resolveGroup(a.group), resolveGroup(b.group));
 }
 
+/** A group's display name and description, as the operator (or a request) set them. */
+export interface GroupMeta {
+  displayName?: string;
+  description?: string;
+}
+
+const LINK_SEP = "\u0000";
+/** One key per unordered pair: a line between groups has no direction. */
+function linkKey(a: string, b: string): string {
+  return a < b ? `${a}${LINK_SEP}${b}` : `${b}${LINK_SEP}${a}`;
+}
+
 export function groupsTouch(a: string, b: string): boolean {
   return a === b || parentGroup(a) === b || parentGroup(b) === a;
 }
@@ -225,16 +237,32 @@ export class Store {
    */
   private groups = new Set<string>();
   private readonly groupsPath: string;
+  /**
+   * What the hub knows ABOUT groups (owner, 16/10: agents asking for a group
+   * of their own, "AGENTIC BUSINESS", that talks to ai-panorama):
+   * - meta: a display name and a description, set when a group is asked for
+   *   or edited in the dashboard;
+   * - links: pairs of groups whose agents may message each other across the
+   *   wall. Only the operator makes one — approving a request that asked for
+   *   it, or in the dashboard. A link is between those two groups EXACTLY:
+   *   neither side's client subgroups come along, and "all" stays in-group.
+   * Kept in group-info.json beside groups.json, written the same way.
+   */
+  private groupMeta = new Map<string, GroupMeta>();
+  private groupLinks = new Set<string>();
+  private readonly groupInfoPath: string;
 
   constructor(baseDir: string = defaultBaseDir(), logger: StoreLogger = console) {
     this.baseDir = baseDir;
     this.messagesPath = path.join(baseDir, "messages.jsonl");
     this.agentsPath = path.join(baseDir, "agents.json");
     this.groupsPath = path.join(baseDir, "groups.json");
+    this.groupInfoPath = path.join(baseDir, "group-info.json");
     this.log = logger;
     fs.mkdirSync(baseDir, { recursive: true });
     this.loadAgentsSnapshot();
     this.loadGroups();
+    this.loadGroupInfo();
     this.replayMessages();
   }
 
@@ -478,8 +506,12 @@ export class Store {
     for (const agent of children) agent.group = moved(resolveGroup(agent.group));
     this.groups = new Set([...this.groups].map(moved));
     this.groups.add(to);
+    // What the hub knows about the group, and its lines to others, move too.
+    this.groupMeta = new Map([...this.groupMeta].map(([g, m]) => [moved(g), m]));
+    this.groupLinks = new Set([...this.groupLinks].map((k) => linkKey(...(k.split(LINK_SEP) as [string, string]).map(moved) as [string, string])));
     this.saveAgentsSnapshot();
     this.saveGroups();
+    this.saveGroupInfo();
     return [...members, ...children];
   }
 
@@ -516,9 +548,110 @@ export class Store {
           `${inside.length === 1 ? "is" : "are"} still in it. Move ${inside.length === 1 ? "it" : "them"} out first.`,
       );
     }
-    for (const g of [...this.groups]) if (g === name || parentGroup(g) === name) this.groups.delete(g);
+    const gone = (g: string) => g === name || parentGroup(g) === name;
+    for (const g of [...this.groups]) if (gone(g)) this.groups.delete(g);
+    for (const g of [...this.groupMeta.keys()]) if (gone(g)) this.groupMeta.delete(g);
+    for (const k of [...this.groupLinks]) if (k.split(LINK_SEP).some(gone)) this.groupLinks.delete(k);
     this.saveGroups();
+    this.saveGroupInfo();
     return this.listGroups();
+  }
+
+  /** A group's display name and description ("" clears a field). */
+  setGroupMeta(name: string, meta: { displayName?: string; description?: string }): GroupMeta {
+    if (!this.listGroups().includes(name)) throw new Error(`Unknown group: "${name}".`);
+    const next: GroupMeta = { ...(this.groupMeta.get(name) ?? {}) };
+    if (meta.displayName !== undefined) {
+      const v = meta.displayName.trim().slice(0, 48);
+      if (v && v !== name) next.displayName = v;
+      else delete next.displayName;
+    }
+    if (meta.description !== undefined) {
+      const v = meta.description.trim().slice(0, 300);
+      if (v) next.description = v;
+      else delete next.description;
+    }
+    if (next.displayName || next.description) this.groupMeta.set(name, next);
+    else this.groupMeta.delete(name);
+    this.saveGroupInfo();
+    return next;
+  }
+
+  /** Every group's display name / description that was set. */
+  listGroupMeta(): Record<string, GroupMeta> {
+    return Object.fromEntries([...this.groupMeta].sort(([a], [b]) => (a < b ? -1 : 1)));
+  }
+
+  /** Opens a line between two groups: their agents may message each other. */
+  linkGroups(a: string, b: string): Array<[string, string]> {
+    if (a === b) throw new Error(`A group already talks to itself ("${a}").`);
+    for (const g of [a, b]) {
+      if (g === DEFAULT_GROUP || !this.listGroups().includes(g)) throw new Error(`Unknown group: "${g}".`);
+    }
+    this.groupLinks.add(linkKey(a, b));
+    this.saveGroupInfo();
+    return this.listGroupLinks();
+  }
+
+  /** Closes a line between two groups (closing one that is not there is fine). */
+  unlinkGroups(a: string, b: string): Array<[string, string]> {
+    this.groupLinks.delete(linkKey(a, b));
+    this.saveGroupInfo();
+    return this.listGroupLinks();
+  }
+
+  listGroupLinks(): Array<[string, string]> {
+    return [...this.groupLinks].sort().map((k) => k.split(LINK_SEP) as [string, string]);
+  }
+
+  groupsLinked(a: string, b: string): boolean {
+    return a !== b && this.groupLinks.has(linkKey(a, b));
+  }
+
+  /**
+   * Whether two agents may talk: the walls (agentsTouch), plus the lines the
+   * operator opened between groups. The one rule every delivery path asks.
+   */
+  touches(a: Agent, b: Agent): boolean {
+    return agentsTouch(a, b) || this.groupsLinked(resolveGroup(a.group), resolveGroup(b.group));
+  }
+
+  private saveGroupInfo(): void {
+    const tempPath = this.groupInfoPath + ".tmp";
+    const body = { meta: this.listGroupMeta(), links: this.listGroupLinks() };
+    fs.writeFileSync(tempPath, JSON.stringify(body, null, 2) + "\n");
+    fs.renameSync(tempPath, this.groupInfoPath);
+  }
+
+  /** Boot: a bad or missing file is no meta and no links — logged, never fatal. */
+  private loadGroupInfo(): void {
+    if (!fs.existsSync(this.groupInfoPath)) return;
+    let data: unknown;
+    try {
+      data = JSON.parse(fs.readFileSync(this.groupInfoPath, "utf8"));
+    } catch (err) {
+      this.log.warn(`[store] group-info.json corrupted (${String(err)}) — starting with no group names or links.`);
+      return;
+    }
+    const meta = (data as { meta?: unknown }).meta;
+    if (meta && typeof meta === "object") {
+      for (const [g, m] of Object.entries(meta as Record<string, unknown>)) {
+        if (!GROUP_NAME_RE.test(g) || !m || typeof m !== "object") continue;
+        const { displayName, description } = m as Record<string, unknown>;
+        const clean: GroupMeta = {};
+        if (typeof displayName === "string" && displayName.trim()) clean.displayName = displayName.trim().slice(0, 48);
+        if (typeof description === "string" && description.trim()) clean.description = description.trim().slice(0, 300);
+        if (clean.displayName || clean.description) this.groupMeta.set(g, clean);
+      }
+    }
+    const links = (data as { links?: unknown }).links;
+    for (const pair of Array.isArray(links) ? links : []) {
+      if (!Array.isArray(pair) || pair.length !== 2) continue;
+      const [a, b] = pair;
+      if (typeof a !== "string" || typeof b !== "string" || a === b) continue;
+      if (!GROUP_NAME_RE.test(a) || !GROUP_NAME_RE.test(b)) continue;
+      this.groupLinks.add(linkKey(a, b));
+    }
   }
 
   /** Adds a group to the persistent list — a subgroup brings its parent along. */
@@ -565,7 +698,7 @@ export class Store {
   listReachable(name: string): Agent[] {
     const self = this.getAgent(name);
     if (!self) return [];
-    return this.listAgents().filter((a) => agentsTouch(self, a));
+    return this.listAgents().filter((a) => this.touches(self, a));
   }
 
   /**
@@ -591,7 +724,7 @@ export class Store {
     const sender = this.getAgent(from);
     const recipient = this.getAgent(to);
     if (!sender || !recipient) return false;
-    return agentsTouch(sender, recipient);
+    return this.touches(sender, recipient);
   }
 
   /**

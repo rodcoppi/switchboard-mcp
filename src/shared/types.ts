@@ -330,7 +330,13 @@ export interface AgentRemovedEvent {
  */
 export interface GroupsUpdatedEvent {
   type: "groups_updated";
-  payload: { groups: string[] };
+  payload: {
+    groups: string[];
+    /** Display names and descriptions that were set (absent on an old hub). */
+    meta?: Record<string, { displayName?: string; description?: string }>;
+    /** Pairs of groups whose agents may message each other. */
+    links?: Array<[string, string]>;
+  };
 }
 
 /** An agent asked for a new agent (create_agent) — the operator approves or denies it. */
@@ -349,6 +355,8 @@ export interface AgentRequestEvent {
     group: string;
     prd: string;
     firstMessage?: string;
+    /** A request that brings its own group (name, display name, what for, lines to others). */
+    newGroup?: { name: string; displayName?: string; description?: string; linkWith: string[] };
     createdAt: string;
   };
 }
