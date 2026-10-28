@@ -35,6 +35,7 @@
 //   agent is redacted via toPublicAgent, and tmux failures are re-thrown with
 //   the token replaced by "<token-redacted>" (same defense as start.ts).
 
+import { withBrainHooks } from "./brain/hook.js";
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -321,6 +322,11 @@ export interface LauncherTuning {
 }
 
 export interface LauncherOptions extends LauncherTuning {
+  /**
+   * The hub's port, spelled into the brain hook of every Claude agent it
+   * launches (brain/hook.ts). Absent → no brain hook (tests with no hub).
+   */
+  hubPort?: number;
   store: Store;
   tmux: LauncherTmux;
   config: Config;
@@ -605,11 +611,16 @@ export function createLauncher(options: LauncherOptions): Launcher {
       // `--resume <id>` master session, special channel flags): then those
       // ARE the argv, verbatim, and the continue flag does not apply.
       const pinned = agent.cliArgs?.trim() ? null : sessionArgs(withContinue);
+      const built = pinned
+        ? descriptor.buildArgs({ continueConversation: false, extraArgs: pinned })
+        : descriptor.buildArgs({ continueConversation: withContinue });
+      // The group brain's prompt/session hook (it answers nothing while the
+      // agent's group has the brain off). Never on a pinned argv: verbatim.
       const claudeArgs = agent.cliArgs?.trim()
         ? agent.cliArgs
-        : pinned
-          ? descriptor.buildArgs({ continueConversation: false, extraArgs: pinned })
-          : descriptor.buildArgs({ continueConversation: withContinue });
+        : descriptor.type === "claude" && options.hubPort
+          ? withBrainHooks(built, options.hubPort)
+          : built;
       try {
         await tmux.newSession(
           session,

@@ -4931,6 +4931,7 @@
       group: null,         // active group tab, or null for "all groups"
       groups: new Set(),   // every group the hub keeps, empty ones included
       agentRequests: new Map(), // id -> a create_agent request waiting for you
+      brain: null, // GET /api/brain: which groups have the brain on, and how much each knows
       newborn: new Map(),  // name -> when it first appeared (the birth animation)
       search: "",          // free-text filter over the transcript, or ""
       railSearch: "",      // free-text filter over the agent rail, or ""
@@ -7584,6 +7585,55 @@
           },
         ),
       );
+      // The group brain: what this group's agents know, searchable by them
+      // (search_knowledge + the prompt hook). Off until turned on, per group.
+      if (group !== DEFAULT_GROUP) {
+        const brainOf = () => (state.brain && state.brain.groups && state.brain.groups[group]) || null;
+        const b = brainOf();
+        page.appendChild(
+          agentMenuRow(
+            {
+              icon: "brain",
+              label: "Brain",
+              cls: "group-brain-row",
+              toggle: !!(b && b.enabled),
+              aside: b && b.enabled ? `${b.chunks}` : "",
+              title: parentOfGroup(group)
+                ? `Let ${groupLabelOf(group)}'s agents search what this client group knows (its agency sees it too)`
+                : `Let ${groupLabelOf(group)}'s agents search what the group knows — memories, messages, files, conversations, commits`,
+            },
+            async (item) => {
+              const on = !item.classList.contains("on");
+              const label = item.querySelector(".mi-label");
+              item.disabled = true;
+              if (on) label.textContent = "Reading…";
+              try {
+                const res = await fetch(`/api/brain/groups/${encodeURIComponent(group)}`, {
+                  method: "POST",
+                  headers: { "content-type": "application/json" },
+                  body: JSON.stringify({ enabled: on }),
+                });
+                const body = await res.json().catch(() => ({}));
+                if (!res.ok || !body.ok) throw new Error(body.error || `HTTP ${res.status}`);
+                state.brain = body.status;
+                setMenuRowOn(item, on);
+                const now = brainOf();
+                let aside = item.querySelector(".mi-aside");
+                if (on && now) {
+                  if (!aside) item.insertBefore((aside = el("span", "mi-aside")), item.querySelector(".mi-switch"));
+                  aside.textContent = String(now.chunks);
+                } else if (aside) aside.remove();
+                toast(on ? `Brain on for ${groupLabelOf(group)} — ${now ? now.chunks : 0} pieces read. Its agents can search them now.` : `Brain off for ${groupLabelOf(group)} — forgotten.`);
+              } catch (err) {
+                toast(`Could not change the brain: ${err && err.message ? err.message : err}`, "warn");
+              } finally {
+                label.textContent = "Brain";
+                item.disabled = false;
+              }
+            },
+          ),
+        );
+      }
       page.appendChild(el("div", "am-sep"));
       page.appendChild(
         agentMenuRow({ icon: "rename", label: "Rename…", cls: "group-relabel-btn", title: "The name the board shows for this group — emoji welcome" }, () => {
@@ -8107,6 +8157,7 @@
       check: ["M20 6 9 17l-5-5"],
       plus: ["M12 5v14", "M5 12h14"],
       settings: ["M21 4h-7", "M10 4H3", "M21 12h-9", "M8 12H3", "M21 20h-5", "M12 20H3", "M14 2v4", "M8 10v4", "M16 18v4"],
+      brain: ["M9 18h6", "M10 22h4", "M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z"],
     };
     function menuIcon(key) {
       const NS = "http://www.w3.org/2000/svg";
@@ -14005,6 +14056,11 @@
       // An empty group has no agent to carry it, so the groups come on their own.
       const body = groupsRes && groupsRes.ok ? await groupsRes.json().catch(() => null) : null;
       if (body && Array.isArray(body.groups)) setKnownGroups(body.groups, body.meta, body.links);
+      // Which groups have the brain on (the group menu's switch).
+      fetch("/api/brain")
+        .then((r) => (r.ok ? r.json() : null))
+        .then((b) => { if (b && b.ok) state.brain = b; })
+        .catch(() => {});
       // Requests waiting for you survive a reload of the page (not of the hub).
       try {
         const rr = await fetch("/api/agent-requests");

@@ -26,6 +26,8 @@
 // synchronous appends, no waiting for recipients.
 
 import { AgentRequests, CREATE_AGENT_DESCRIPTION, planAgentRequest } from "./agent-requests.js";
+import { SEARCH_KNOWLEDGE_DESCRIPTION, type Brain } from "./brain/brain.js";
+import { BRAIN_SOURCES } from "./brain/index.js";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import express from "express";
 import { z } from "zod";
@@ -122,7 +124,7 @@ function joinTokenError(name: string, provided: string | undefined): string {
  * noise, not identity. Hex carries no case information, so lowercasing gives
  * up nothing; real mistypes (wrong characters) still fail.
  */
-function tokenMatches(expected: string, provided: string | undefined): boolean {
+export function tokenMatches(expected: string, provided: string | undefined): boolean {
   if (typeof provided !== "string" || provided.trim().length === 0) return false;
   const normalized = provided.trim().toLowerCase();
   const expectedDigest = createHash("sha256").update(expected, "utf8").digest();
@@ -185,6 +187,10 @@ export interface McpOptions {
    * the tool is not offered (a hub with no launcher cannot create anything).
    */
   agentRequests?: AgentRequests;
+  /**
+   * The group brain (search_knowledge). Undefined → the tool is not offered.
+   */
+  brain?: Brain;
 }
 
 export interface McpEndpoint {
@@ -558,6 +564,49 @@ export function createMcpEndpoint(options: McpOptions): McpEndpoint {
             note:
               `Sent to the operator for approval in the dashboard. You will get a [switchboard] message ` +
               `with the outcome — do not call create_agent again for "${request.name}" meanwhile.`,
+          });
+        },
+      );
+    }
+
+    if (options.brain) {
+      const brain = options.brain;
+      server.registerTool(
+        "search_knowledge",
+        {
+          description: SEARCH_KNOWLEDGE_DESCRIPTION,
+          inputSchema: {
+            query: z.string().describe("What you want to know, in your own words — names, IDs and dates help most."),
+            limit: z.number().int().min(1).max(20).optional().describe("How many results (default 8, max 20)."),
+            sources: z.array(z.enum(BRAIN_SOURCES as [string, ...string[]])).optional().describe("Only these sources."),
+            since: z.string().optional().describe("Only results on or after this date (ISO, e.g. 2026-10-01)."),
+            agent: z.string().optional().describe("Only what this agent wrote or said."),
+          },
+        },
+        async (args, extra) => {
+          const from = agentForSession(extra.sessionId);
+          if (!from) return jsonResult({ ok: false, error: NOT_JOINED_ERROR });
+          touchAgent(from);
+          // The scope is WHO asks — never a parameter.
+          const scope = brain.scopeFor(from);
+          if (!scope.size) {
+            return jsonResult({
+              ok: true,
+              results: [],
+              note: "The brain is off for your group — the operator turns it on in the dashboard. Nothing was searched.",
+            });
+          }
+          const out = brain.search(from, args.query, {
+            limit: args.limit,
+            sources: args.sources as never,
+            since: args.since,
+            agent: args.agent,
+          });
+          return jsonResult({
+            ok: true,
+            groups: out.scope,
+            results: out.results,
+            ...(out.stale.length ? { stale: out.stale, note: `Not refreshed for over 6 h: ${out.stale.join(", ")} — what they say may be outdated.` } : {}),
           });
         },
       );

@@ -475,6 +475,39 @@ right-click menu → **Talks with…**, one switch per group (the header shows *
 open). And whatever group it lands in, a new agent never gets a folder that belongs to an agent
 of a group it does not share walls with — the same folder, one inside it, or one around it.
 
+### The group brain — what a group already knows
+
+Agents forget what other agents settled: one claims a video is still pending a day after
+another published it, or asks you for a decision you already made in a different chat. Turn
+on a group's **Brain** (right-click the group → **Brain**) and its agents can search what the
+group knows, with dates and sources:
+
+- **memories** — each agent's Claude Code memory files (`~/.claude/projects/<folder>/memory/`);
+- **messages** — what the group's agents sent each other through the hub;
+- **project files** — the `.md`, `.txt` and `.json` in each agent's folder (markdown by section);
+- **conversations** — each exchange of each agent's Claude Code sessions (what was typed and
+  what was answered; never tool output);
+- **commits** — the history of each agent's repository.
+
+Two ways it reaches an agent. The `search_knowledge` MCP tool, for when it wants to look
+something up. And, for agents launched by the hub, a prompt hook (passed with `--settings` for
+that session — your own settings are never touched): on each prompt, the best one to three
+matches, only when they clearly match, are added to the agent's context; when a session
+starts, what others in the group changed since it was last here. Results are ranked by the
+words and by exact identifiers (`S60`, `rodada-2026-10-20`, a file path), weighed by source (a
+curated memory over a conversation) and by age (the newer wins, the old never vanishes), and
+two results that contradict each other about the same thing are flagged, the newer first.
+
+Who sees what follows the group walls, decided by **who asks** — never by the query: an agent
+sees its own group, and an agency also its client groups; a client never sees its agency; a
+**line** between two groups lends no knowledge; the faz-tudo and you see every group that is on.
+It is off for every group until you turn it on, one group at a time.
+
+Everything stays on this machine, read-only on the sources: an in-memory index (no database)
+rebuilt every 15 minutes from what changed, saved owner-only under `~/.switchboard/brain/`.
+Credentials, `.env` files, lockfiles, `node_modules`, archived memories and anything shaped
+like a token or key are never read or are redacted before they are stored.
+
 ## Other subcommands
 
 | Command | What it does |

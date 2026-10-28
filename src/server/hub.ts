@@ -21,6 +21,8 @@ import { PairRateLimiter } from "./ratelimit.js";
 import { EventBus, createApiRouter } from "./api.js";
 import { TerminalBridge } from "./terminal.js";
 import { createMcpEndpoint } from "./mcp.js";
+import { Brain } from "./brain/brain.js";
+import { createBrainRouter } from "./brain/routes.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createTmux } from "./tmux.js";
@@ -174,6 +176,7 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
       log,
       bus,
       terminalOpener,
+      hubPort: port,
       ...options.launcher,
     });
     // A launch that succeeded is checked on the spot instead of at the next
@@ -254,6 +257,20 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
   // Only on a hub that can launch — without one there is nothing to approve.
   const agentRequests = launcher ? new AgentRequests() : undefined;
 
+  // The group brain: off for every group until the operator turns one on.
+  const brain = new Brain({
+    store,
+    baseDir,
+    log: { info: (m) => log.info(m), warn: (m) => log.warn(m) },
+    projectDir: options.claudeProjectsDir
+      ? (cwd) => path.join(options.claudeProjectsDir!, cwd.replace(/[^a-zA-Z0-9]/g, "-"))
+      : undefined,
+  });
+  // A message is in the brain the moment it is stored, not at the next cycle.
+  const unsubscribeBrain = bus.subscribe((event) => {
+    if (event.type === "message_created") brain.noteMessage(event.payload);
+  });
+
   const mcp = createMcpEndpoint({
     store,
     config,
@@ -262,6 +279,7 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
     rateLimiter,
     onMessage,
     agentRequests,
+    brain,
     sessionIdleTimeoutMs: options.sessionIdleTimeoutMs,
     sessionSweepIntervalMs: options.sessionSweepIntervalMs,
     // A bound session (header auth or join) proves the agent is on the
@@ -269,6 +287,7 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
     onSessionBound: (name) => launcher?.cancelKickoffs(name),
   });
   app.use(mcp.router);
+  app.use(createBrainRouter(brain, store));
 
   app.use(
     createApiRouter({
@@ -424,6 +443,8 @@ export async function startHub(options: HubOptions = {}): Promise<Hub> {
     closed = true;
     log.info(`[hub] shutting down…`);
     clearInterval(replyTimer);
+    brain.stop();
+    unsubscribeBrain();
     dispatcher?.stop();
     launcher?.stop(); // cancel pending kickoff timers/polls
     localStt?.stop(); // free the speech model's RAM / kill the worker

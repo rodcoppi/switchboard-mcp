@@ -41,6 +41,9 @@ export interface RemoteGateOptions {
  */
 function isExempt(pathname: string): boolean {
   if (pathname === "/mcp" || pathname.startsWith("/mcp/")) return true;
+  // The group brain's prompt hook: the same agent name + token as /mcp, from
+  // the same local agent processes (brain/routes.ts checks them).
+  if (pathname === "/api/brain/hook") return true;
   if (pathname === "/login" || pathname === "/api/auth/login") return true;
   if (pathname === "/api/auth/status") return true;
   // The health probe answers a flat "is the hub up", with no data in it, and
