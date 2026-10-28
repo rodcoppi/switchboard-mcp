@@ -80,6 +80,9 @@ export interface ScanResult {
 const NEVER_DIRS = new Set([
   "node_modules", ".git", "dist", "build", "out", ".next", ".nuxt", ".cache", "coverage", "venv", ".venv",
   "__pycache__", "tool-results", "backups", "arquivo", "tmp", "temp", ".turbo", "vendor", "target",
+  // Scraped or downloaded material is other people's text, not the group's
+  // knowledge — and what the prompt hook would hand an agent unasked.
+  "raw", "scraped", "downloads",
 ]);
 const NEVER_PATH = [
   /(^|\/)state\/auth(\/|$)/,
@@ -227,7 +230,12 @@ export async function scanMemories(ctx: ScanContext): Promise<ScanResult> {
 // --- projectFiles -------------------------------------------------------------
 
 const PROJECT_EXT = /\.(md|txt|json)$/i;
-const MAX_FILE_BYTES = 2048 * 1024;
+/**
+ * Past these sizes a file is a dump, not notes: a fetched changelog, a radar
+ * of feeds, an export (a dry run on 28/10 found 1.9 MB of JSON among them).
+ */
+const MAX_TEXT_BYTES = 512 * 1024;
+const MAX_JSON_BYTES = 256 * 1024;
 const MAX_FILES_PER_ROOT = 4000;
 const MAX_DEPTH = 8;
 
@@ -328,7 +336,7 @@ export async function scanProjectFiles(ctx: ScanContext): Promise<ScanResult> {
           } catch {
             continue;
           }
-          if (st.size > MAX_FILE_BYTES) continue;
+          if (st.size > (/\.json$/i.test(e.name) ? MAX_JSON_BYTES : MAX_TEXT_BYTES)) continue;
           const known = ctx.state.files[full];
           if (known && known.mtimeMs === st.mtimeMs && known.size === st.size) continue;
           const agent = owner(agents, full);

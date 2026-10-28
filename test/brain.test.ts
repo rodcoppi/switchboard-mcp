@@ -31,6 +31,7 @@ describe("text (F)", () => {
       expect.arrayContaining(["s60", "redes/data/publicacoes.json", "publicacoes.json"]),
     );
     expect(entities("uma frase sem identificador")).toEqual([]);
+    expect(entities("em 2026, 10 vezes")).toEqual([]); // a bare number names nothing
   });
 
   it("drops the stopwords of both languages", () => {
@@ -275,6 +276,8 @@ describe("the connectors, on a temp board", () => {
     const hq = store.getAgent("hq")!.cwd;
     write(path.join(hq, "planos", "plano.md"), "# Plano\n## Domínio\nComprar o .com.br até sexta.\n## Capa\nRefazer a capa.\n");
     write(path.join(hq, "node_modules", "x", "README.md"), "domínio node_modules");
+    write(path.join(hq, "data", "raw", "reddit.json"), '{"t": "domínio raspado da web"}');
+    write(path.join(hq, "dump.json"), JSON.stringify({ d: "domínio ".repeat(40_000) }));
     write(path.join(hq, "tokens.json"), '{"domínio": "secret"}');
     // A studio agent working INSIDE the agency's folder: never walked into.
     const inside = path.join(hq, "studio-inside");

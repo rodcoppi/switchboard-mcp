@@ -40,9 +40,12 @@ export function stem(word: string): string {
   return /^[a-z]+$/.test(word) && word.length > 6 ? word.slice(0, 6) : word;
 }
 
-/** A token that identifies something: has a digit or joins parts with - _ . / */
+/**
+ * A token that identifies something: has a digit or joins parts with - _ . /
+ * A bare number does not ("10", "2026" name nothing in particular).
+ */
 function isIdentifier(token: string): boolean {
-  return token.length >= 2 && (/\d/.test(token) || /[-_./]/.test(token)) && /[a-z0-9]/.test(token);
+  return token.length >= 2 && (/\d/.test(token) || /[-_./]/.test(token)) && /[a-z0-9]/.test(token) && !/^\d+$/.test(token);
 }
 
 const COMPOUND_RE = /[a-z0-9]+(?:[-_./][a-z0-9]+)*/g;

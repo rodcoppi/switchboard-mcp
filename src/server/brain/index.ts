@@ -80,12 +80,31 @@ const SOURCE_WEIGHT: Record<BrainSource, number> = {
 };
 const DAY = 86_400_000;
 
+/**
+ * One indexed chunk, compact: its terms as ids into the index's dictionary
+ * (sorted, for a binary search) with their counts, and its identifiers. A Map
+ * per chunk cost fifteen times the text it indexed (447 MB for 29 MB, 28/10).
+ */
 interface Doc {
   chunk: Chunk;
-  tf: Map<string, number>; // title terms counted TITLE_WEIGHT times
+  terms: Uint32Array; // ascending
+  freqs: Uint16Array; // title terms counted TITLE_WEIGHT times
   len: number;
-  entities: Set<string>;
+  entities: Uint32Array; // ascending, ids of "#<entity>"
   time: number;
+}
+
+function tfOf(doc: Doc, id: number): number {
+  let lo = 0;
+  let hi = doc.terms.length - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const v = doc.terms[mid];
+    if (v === id) return doc.freqs[mid];
+    if (v < id) lo = mid + 1;
+    else hi = mid - 1;
+  }
+  return 0;
 }
 
 /** Newer wins, capped at +50%, never zeroing the old: 1 + 0.5 · 0.5^(age/30d). */
@@ -107,83 +126,102 @@ const STATE_PAIRS: Array<[RegExp, RegExp, string]> = [
 ];
 
 export class BrainIndex {
-  private readonly docs = new Map<string, Doc>();
-  private readonly postings = new Map<string, Set<string>>();
-  private readonly entityPostings = new Map<string, Set<string>>();
+  /** Every term (and every "#identifier") seen, to a small id. */
+  private readonly dict = new Map<string, number>();
+  private readonly names: string[] = [];
+  /** id → the slots of the docs that hold it. */
+  private readonly postings: number[][] = [];
+  private readonly slots: Array<Doc | undefined> = [];
+  private readonly free: number[] = [];
+  private readonly byId = new Map<string, number>();
   private totalLen = 0;
   /** When a chunk was last among a search's top results (it ages slower). */
   private readonly lastUsed = new Map<string, number>();
 
   get size(): number {
-    return this.docs.size;
+    return this.byId.size;
   }
 
   has(id: string): boolean {
-    return this.docs.has(id);
+    return this.byId.has(id);
   }
 
   get(id: string): Chunk | undefined {
-    return this.docs.get(id)?.chunk;
+    const slot = this.byId.get(id);
+    return slot === undefined ? undefined : this.slots[slot]?.chunk;
   }
 
   /** Every chunk id from one source (to find the ones a scan no longer produced). */
   idsOf(source: BrainSource, prefix = ""): string[] {
     const out: string[] = [];
-    for (const [id, d] of this.docs) if (d.chunk.source === source && id.startsWith(prefix)) out.push(id);
+    for (const d of this.slots) if (d && d.chunk.source === source && d.chunk.id.startsWith(prefix)) out.push(d.chunk.id);
     return out;
   }
 
   chunks(): IterableIterator<Chunk> {
-    const it = this.docs.values();
+    const slots = this.slots;
     return (function* () {
-      for (const d of it) yield d.chunk;
+      for (const d of slots) if (d) yield d.chunk;
     })();
+  }
+
+  private idOf(key: string): number {
+    let id = this.dict.get(key);
+    if (id === undefined) {
+      id = this.names.length;
+      this.dict.set(key, id);
+      this.names.push(key);
+      this.postings.push([]);
+    }
+    return id;
   }
 
   /** Adds or replaces a chunk. */
   add(chunk: Chunk): void {
-    if (this.docs.has(chunk.id)) this.remove(chunk.id);
-    const tf = new Map<string, number>();
-    for (const t of termsOf(chunk.title)) tf.set(t, (tf.get(t) ?? 0) + TITLE_WEIGHT);
-    for (const t of termsOf(chunk.text)) tf.set(t, (tf.get(t) ?? 0) + 1);
+    if (this.byId.has(chunk.id)) this.remove(chunk.id);
+    const counts = new Map<number, number>();
+    for (const t of termsOf(chunk.title)) {
+      const id = this.idOf(t);
+      counts.set(id, (counts.get(id) ?? 0) + TITLE_WEIGHT);
+    }
+    for (const t of termsOf(chunk.text)) {
+      const id = this.idOf(t);
+      counts.set(id, (counts.get(id) ?? 0) + 1);
+    }
+    const ids = [...counts.keys()].sort((a, b) => a - b);
+    const terms = Uint32Array.from(ids);
+    const freqs = Uint16Array.from(ids, (id) => Math.min(counts.get(id)!, 65535));
     let len = 0;
-    for (const n of tf.values()) len += n;
-    const ents = new Set(entitiesOf(`${chunk.title}\n${chunk.text}`));
+    for (const n of counts.values()) len += n;
+    const ents = Uint32Array.from(
+      [...new Set(entitiesOf(`${chunk.title}\n${chunk.text}`).map((e) => this.idOf(`#${e}`)))].sort((a, b) => a - b),
+    );
     const time = Date.parse(chunk.date);
-    const doc: Doc = { chunk, tf, len, entities: ents, time: Number.isNaN(time) ? 0 : time };
-    this.docs.set(chunk.id, doc);
+    const slot = this.free.length ? this.free.pop()! : this.slots.length;
+    this.slots[slot] = { chunk, terms, freqs, len, entities: ents, time: Number.isNaN(time) ? 0 : time };
+    this.byId.set(chunk.id, slot);
     this.totalLen += len;
-    for (const t of tf.keys()) {
-      let set = this.postings.get(t);
-      if (!set) this.postings.set(t, (set = new Set()));
-      set.add(chunk.id);
-    }
-    for (const e of ents) {
-      let set = this.entityPostings.get(e);
-      if (!set) this.entityPostings.set(e, (set = new Set()));
-      set.add(chunk.id);
-    }
+    for (const id of terms) this.postings[id].push(slot);
+    for (const id of ents) this.postings[id].push(slot);
   }
 
   remove(id: string): boolean {
-    const doc = this.docs.get(id);
-    if (!doc) return false;
-    this.docs.delete(id);
+    const slot = this.byId.get(id);
+    if (slot === undefined) return false;
+    const doc = this.slots[slot]!;
+    const drop = (key: number) => {
+      const list = this.postings[key];
+      const at = list.indexOf(slot);
+      if (at === -1) return;
+      list[at] = list[list.length - 1];
+      list.pop();
+    };
+    for (const t of doc.terms) drop(t);
+    for (const e of doc.entities) drop(e);
+    this.slots[slot] = undefined;
+    this.free.push(slot);
+    this.byId.delete(id);
     this.totalLen -= doc.len;
-    for (const t of doc.tf.keys()) {
-      const set = this.postings.get(t);
-      if (set) {
-        set.delete(id);
-        if (set.size === 0) this.postings.delete(t);
-      }
-    }
-    for (const e of doc.entities) {
-      const set = this.entityPostings.get(e);
-      if (set) {
-        set.delete(id);
-        if (set.size === 0) this.entityPostings.delete(e);
-      }
-    }
     this.lastUsed.delete(id);
     return true;
   }
@@ -207,61 +245,62 @@ export class BrainIndex {
       (!options.excludeAgent || doc.chunk.agent !== options.excludeAgent);
 
     // 1. BM25 (title-weighted), over the docs that hold any query term.
-    const n = this.docs.size || 1;
+    const n = this.byId.size || 1;
     const avg = this.totalLen / n || 1;
-    const bm25 = new Map<string, number>();
-    const matched = new Map<string, number>(); // how many distinct query terms a doc holds
+    const bm25 = new Map<number, number>();
+    const matched = new Map<number, number>(); // how many distinct query terms a doc holds
+    let known = 0;
     for (const t of qTerms) {
-      const set = this.postings.get(t);
-      if (!set) continue;
-      const idf = Math.log(1 + (n - set.size + 0.5) / (set.size + 0.5));
-      for (const id of set) {
-        const doc = this.docs.get(id)!;
+      const id = this.dict.get(t);
+      const list = id === undefined ? undefined : this.postings[id];
+      if (!list || list.length === 0) continue;
+      known++;
+      const idf = Math.log(1 + (n - list.length + 0.5) / (list.length + 0.5));
+      for (const slot of list) {
+        const doc = this.slots[slot]!;
         if (!allowed(doc)) continue;
-        const f = doc.tf.get(t) ?? 0;
+        const f = tfOf(doc, id!);
         const s = idf * ((f * (K1 + 1)) / (f + K1 * (1 - B + (B * doc.len) / avg)));
-        bm25.set(id, (bm25.get(id) ?? 0) + s);
-        matched.set(id, (matched.get(id) ?? 0) + 1);
+        bm25.set(slot, (bm25.get(slot) ?? 0) + s);
+        matched.set(slot, (matched.get(slot) ?? 0) + 1);
       }
     }
     // 2. Identifiers, by equality: the more named, the higher; then the newer.
-    // Unasked (strict), a bare number or an identifier half the index shares
-    // ("2026") identifies nothing.
-    const entityHits = new Map<string, number>();
+    // Unasked (strict), an identifier half the index shares identifies nothing.
+    const entityHits = new Map<number, number>();
     for (const e of qEntities) {
-      const posting = this.entityPostings.get(e);
-      if (!posting) continue;
-      if (options.strict && (/^\d+$/.test(e) || posting.size > Math.max(20, n * 0.01))) continue;
-      for (const id of posting) {
-        const doc = this.docs.get(id)!;
-        if (!allowed(doc)) continue;
-        entityHits.set(id, (entityHits.get(id) ?? 0) + 1);
+      const id = this.dict.get(`#${e}`);
+      const list = id === undefined ? undefined : this.postings[id];
+      if (!list || list.length === 0) continue;
+      if (options.strict && list.length > Math.max(20, n * 0.01)) continue;
+      for (const slot of list) {
+        if (!allowed(this.slots[slot]!)) continue;
+        entityHits.set(slot, (entityHits.get(slot) ?? 0) + 1);
       }
     }
     // A hit needs a real match: an identifier, or enough of the query's words.
     // Asked, only the words the index knows count (an unknown word cannot
     // punish what matches the rest); unasked, every word counts, so one stray
     // common word in a long prompt is not a match.
-    const known = qTerms.filter((t) => this.postings.has(t)).length;
     const need = options.strict
       ? Math.max(2, Math.min(6, Math.ceil(qTerms.length * 0.5)))
       : Math.max(1, Math.ceil(known * 0.4));
     const bmRanked = [...bm25.entries()]
-      .filter(([id]) => (matched.get(id) ?? 0) >= need || entityHits.has(id))
+      .filter(([slot]) => (matched.get(slot) ?? 0) >= need || entityHits.has(slot))
       .sort((a, b) => b[1] - a[1])
       .slice(0, 300);
     const entRanked = [...entityHits.entries()]
-      .sort((a, b) => b[1] - a[1] || this.docs.get(b[0])!.time - this.docs.get(a[0])!.time)
+      .sort((a, b) => b[1] - a[1] || this.slots[b[0]]!.time - this.slots[a[0]]!.time)
       .slice(0, 300);
 
     // 3. Fusion, then source and age.
-    const fused = new Map<string, number>();
-    bmRanked.forEach(([id], i) => fused.set(id, (fused.get(id) ?? 0) + 1 / (RRF_K + i + 1)));
-    entRanked.forEach(([id], i) => fused.set(id, (fused.get(id) ?? 0) + 1 / (RRF_K + i + 1)));
-    const scored = [...fused.entries()].map(([id, rrf]) => {
-      const doc = this.docs.get(id)!;
+    const fused = new Map<number, number>();
+    bmRanked.forEach(([slot], i) => fused.set(slot, (fused.get(slot) ?? 0) + 1 / (RRF_K + i + 1)));
+    entRanked.forEach(([slot], i) => fused.set(slot, (fused.get(slot) ?? 0) + 1 / (RRF_K + i + 1)));
+    const scored = [...fused.entries()].map(([slot, rrf]) => {
+      const doc = this.slots[slot]!;
       // Found again lately: it is still alive, so it ages as if newer.
-      const used = this.lastUsed.get(id);
+      const used = this.lastUsed.get(doc.chunk.id);
       const effective = used && used > doc.time ? doc.time + (used - doc.time) / 2 : doc.time;
       return { doc, score: rrf * SOURCE_WEIGHT[doc.chunk.source] * recencyBoost(effective, now) };
     });
@@ -280,7 +319,12 @@ export class BrainIndex {
       anchor: doc.chunk.anchor,
       score: Math.round(score * 1e6) / 1e6,
     }));
-    flagConflicts(hits, top.map((t) => t.doc));
+    flagConflicts(
+      hits,
+      top.map((t) => t.doc),
+      (e) => this.names[e].slice(1),
+      (e) => this.postings[e].length <= Math.max(20, n * 0.01),
+    );
     return hits;
   }
 
@@ -288,8 +332,8 @@ export class BrainIndex {
   recent(scope: ReadonlySet<string>, sinceMs: number, options: { excludeAgent?: string; sources?: BrainSource[]; limit?: number } = {}): Chunk[] {
     const sources = options.sources?.length ? new Set(options.sources) : null;
     const out: Doc[] = [];
-    for (const doc of this.docs.values()) {
-      if (doc.time < sinceMs) continue;
+    for (const doc of this.slots) {
+      if (!doc || doc.time < sinceMs) continue;
       if (!doc.chunk.groups.some((g) => scope.has(g))) continue;
       if (sources && !sources.has(doc.chunk.source)) continue;
       if (options.excludeAgent && doc.chunk.agent === options.excludeAgent) continue;
@@ -301,25 +345,37 @@ export class BrainIndex {
 }
 
 /**
- * Two hits about the same identifier, one saying "pending" and the other
+ * Two hits about the same thing — an identifier with a letter AND a digit
+ * (`s60`, `ep02`, `rodada-2026-10-20`) that few chunks share; a bare year or
+ * date names nothing in particular — one saying "pending" and the other
  * "published" (and the like): the older is flagged, and the newer is moved
  * ahead of it if it was not already.
  */
-function flagConflicts(hits: Hit[], docs: Doc[]): void {
+function flagConflicts(hits: Hit[], docs: Doc[], nameOf: (e: number) => string, distinctive: (e: number) => boolean): void {
+  const subject = (e: number) => {
+    const name = nameOf(e);
+    return /[a-z]/.test(name) && /\d/.test(name) && distinctive(e);
+  };
   for (let i = 0; i < docs.length; i++) {
     for (let j = 0; j < docs.length; j++) {
       if (i === j) continue;
       const a = docs[i];
       const b = docs[j];
       if (a.time >= b.time) continue; // a is the older one
-      const shared = [...a.entities].find((e) => b.entities.has(e) && /\d/.test(e));
-      if (!shared) continue;
+      let shared: number | undefined;
+      for (const e of a.entities) {
+        if (subject(e) && b.entities.includes(e)) {
+          shared = e;
+          break;
+        }
+      }
+      if (shared === undefined) continue;
       const ta = fold(`${a.chunk.title} ${a.chunk.text}`);
       const tb = fold(`${b.chunk.title} ${b.chunk.text}`);
       for (const [left, right, note] of STATE_PAIRS) {
         const opposite = (left.test(ta) && right.test(tb)) || (right.test(ta) && left.test(tb));
         if (!opposite) continue;
-        if (!hits[i].conflict) hits[i].conflict = { with: b.chunk.id, date: b.chunk.date, note: `${note} about ${shared} — the newer one says otherwise` };
+        if (!hits[i].conflict) hits[i].conflict = { with: b.chunk.id, date: b.chunk.date, note: `${note} about ${nameOf(shared)} — the newer one says otherwise` };
         break;
       }
     }
