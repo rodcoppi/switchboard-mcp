@@ -96,6 +96,9 @@ const NEVER_PATH = [
   /(^|\/)\.switchboard\/(remote|agents)\.json$/,
   /(^|\/)\.codex\/auth\.json$/,
   /(^|\/)\.config\/gcloud(\/|$)/,
+  // The operator's own prompt history (owner's call, 28/10): what is typed to
+  // an agent enters only as part of that agent's conversation, never this log.
+  /(^|\/)history\.jsonl$/,
 ];
 export function neverIndexed(file: string): boolean {
   return NEVER_PATH.some((re) => re.test(file));
@@ -468,6 +471,7 @@ export async function scanSessions(ctx: ScanContext): Promise<ScanResult> {
     }
     for (const name of names) {
       const file = path.join(dir, name);
+      if (neverIndexed(file)) continue;
       let st: fs.Stats;
       try {
         st = await fs.promises.stat(file);

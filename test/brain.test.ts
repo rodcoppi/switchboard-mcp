@@ -174,8 +174,8 @@ describe("sources (F)", () => {
     expect(s.map((x) => [x.heading, x.line])).toEqual([["", 1], ["Um", 3], ["Dois", 5]]);
   });
 
-  it("never reads credentials, env files, lockfiles or archived memory", () => {
-    for (const p of ["/p/state/auth/x.json", "/p/tokens.json", "/p/.env", "/p/.env.local", "/h/.claude/.credentials.json", "/p/memory/arquivo/a.md", "/p/package-lock.json"]) {
+  it("never reads credentials, env files, lockfiles, archived memory or the operator's prompt history", () => {
+    for (const p of ["/p/state/auth/x.json", "/p/tokens.json", "/p/.env", "/p/.env.local", "/h/.claude/.credentials.json", "/p/memory/arquivo/a.md", "/p/package-lock.json", "/h/.claude/history.jsonl"]) {
       expect(neverIndexed(p), p).toBe(true);
     }
     expect(neverIndexed("/p/planos/plano.md")).toBe(false);
@@ -309,6 +309,8 @@ describe("the connectors, on a temp board", () => {
       { type: "user", timestamp: at(3), message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t", content: "segredo-do-tool zumbarte" }] } },
       { type: "user", uuid: "u2", timestamp: at(4), message: { role: "user", content: "[switchboard] 1 new message from hq — call check_messages" } },
     ]);
+    // The operator's prompt history never enters, wherever it sits.
+    transcript(cwd, "history", [{ type: "user", uuid: "h1", timestamp: at(1), message: { role: "user", content: "zumbarte do histórico do operador" } }, { type: "assistant", timestamp: at(2), message: { role: "assistant", content: [{ type: "text", text: "zumbarte" }] } }]);
     const brain = brainOf();
     await brain.setGroup("agency", { enabled: true });
     const hits = brain.search("hq", "zumbarte").results;

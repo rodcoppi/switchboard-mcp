@@ -7623,6 +7623,7 @@
                   if (!aside) item.insertBefore((aside = el("span", "mi-aside")), item.querySelector(".mi-switch"));
                   aside.textContent = String(now.chunks);
                 } else if (aside) aside.remove();
+                readAgain.hidden = !on;
                 toast(on ? `Brain on for ${groupLabelOf(group)} — ${now ? now.chunks : 0} pieces read. Its agents can search them now.` : `Brain off for ${groupLabelOf(group)} — forgotten.`);
               } catch (err) {
                 toast(`Could not change the brain: ${err && err.message ? err.message : err}`, "warn");
@@ -7633,6 +7634,40 @@
             },
           ),
         );
+        // It re-reads what changed every 15 minutes by itself; this is for
+        // right now (a folder moved, a file just written that matters).
+        const last = state.brain && state.brain.lastCycle ? new Date(state.brain.lastCycle.at) : null;
+        const readAgain = agentMenuRow(
+          {
+            icon: "reload",
+            label: "Read again",
+            cls: "group-brain-reindex",
+            aside: last ? last.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "",
+            title: "Forget what the brain read and read every group that is on again, now (it also catches up by itself every 15 minutes)",
+          },
+          async (item) => {
+            const label = item.querySelector(".mi-label");
+            item.disabled = true;
+            label.textContent = "Reading…";
+            try {
+              const res = await fetch("/api/brain/reindex", { method: "POST" });
+              const body = await res.json().catch(() => ({}));
+              if (!res.ok || !body.ok) throw new Error(body.error || `HTTP ${res.status}`);
+              state.brain = body.status;
+              const now = brainOf();
+              const aside = item.querySelector(".mi-aside");
+              if (aside) aside.textContent = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+              toast(`Brain read again — ${now ? now.chunks : 0} pieces for ${groupLabelOf(group)}.`);
+            } catch (err) {
+              toast(`Could not read again: ${err && err.message ? err.message : err}`, "warn");
+            } finally {
+              label.textContent = "Read again";
+              item.disabled = false;
+            }
+          },
+        );
+        readAgain.hidden = !(b && b.enabled);
+        page.appendChild(readAgain);
       }
       page.appendChild(el("div", "am-sep"));
       page.appendChild(
@@ -8158,6 +8193,7 @@
       plus: ["M12 5v14", "M5 12h14"],
       settings: ["M21 4h-7", "M10 4H3", "M21 12h-9", "M8 12H3", "M21 20h-5", "M12 20H3", "M14 2v4", "M8 10v4", "M16 18v4"],
       brain: ["M9 18h6", "M10 22h4", "M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z"],
+      reload: ["M21 12a9 9 0 1 1-3-6.7", "M21 3v6h-6"],
     };
     function menuIcon(key) {
       const NS = "http://www.w3.org/2000/svg";
